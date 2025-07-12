@@ -1,4 +1,4 @@
-// pages/auth/callback.js
+// src/pages/auth/callback.js
 import { useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../../lib/supabaseClient'
@@ -11,17 +11,14 @@ export default function AuthCallback() {
       const { error } = await supabase.auth.getSession()
 
       if (error) {
-        console.error('Error during session:', error.message)
+        console.error('Fout bij sessie ophalen:', error.message)
       }
 
-      // Redirect naar dashboard
-      router.push('/dashboard')
+      router.push('/dashboard') // Verander dit indien gewenst
     }
 
     handleCallback()
   }, [])
 
-  return (
-    <p className="text-center mt-20">Je wordt ingelogd...</p>
-  )
+  return <p className="text-center mt-20">Je wordt ingelogd...</p>
 }
