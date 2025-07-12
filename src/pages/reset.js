@@ -11,7 +11,7 @@ export default function ResetPassword() {
     setLoading(true)
 
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: 'http://localhost:3000/update-password', // 🔁 zie stap 4
+      redirectTo: `${window.location.origin}/update-password`,
     })
 
     if (error) {
@@ -24,27 +24,38 @@ export default function ResetPassword() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <form onSubmit={handleReset} className="bg-white p-6 rounded shadow-md w-full max-w-sm">
-        <h2 className="text-xl font-bold mb-4">Wachtwoord vergeten</h2>
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+      <form
+        onSubmit={handleReset}
+        className="bg-white border border-gray-200 p-8 rounded-xl shadow-lg w-full max-w-md space-y-4"
+      >
+        <h2 className="text-2xl font-bold text-gray-800">Wachtwoord vergeten</h2>
 
-        <input
-          type="email"
-          placeholder="E-mailadres"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="border p-2 w-full mb-4"
-          required
-        />
+        <div>
+          <label htmlFor="email" className="block text-sm text-gray-700 mb-1">
+            E-mailadres
+          </label>
+          <input
+            id="email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="border border-gray-300 rounded w-full px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            required
+          />
+        </div>
+
+        {message && (
+          <p className="text-sm text-center text-red-600">{message}</p>
+        )}
+
         <button
           type="submit"
-          className="bg-blue-600 text-white px-4 py-2 rounded w-full"
+          className="bg-blue-600 text-white w-full py-2 rounded font-medium hover:bg-blue-700 transition"
           disabled={loading}
         >
           {loading ? 'Bezig...' : 'Verstuur reset-link'}
         </button>
-
-        {message && <p className="mt-4 text-center">{message}</p>}
       </form>
     </div>
   )
