@@ -34,8 +34,9 @@ export default function Layout({ children }) {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
+  <div className="min-h-screen bg-gray-50">
+    {/* Header alleen tonen als je op /dashboard bent */}
+{(router.pathname === "/dashboard" || router.pathname === "/account") && (
       <header className="bg-white border-b px-4 py-3 flex justify-between items-center">
         <Link href="/">
           <div className="flex items-center gap-2 cursor-pointer">
@@ -104,9 +105,11 @@ export default function Layout({ children }) {
           </div>
         )}
       </header>
+    )}
 
-      {/* Page Content */}
-      <main>{children}</main>
-    </div>
-  );
+    {/* Page Content */}
+    <main>{children}</main>
+  </div>
+);
+;
 }
