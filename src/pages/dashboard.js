@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 import { supabase } from "../lib/supabaseClient";
 import LabelManager from "@/components/LabelManager";
+import { useEffect, useRef, useState } from "react";
+
+
 
 export default function Dashboard() {
   const router = useRouter();
@@ -22,6 +24,14 @@ export default function Dashboard() {
   const [locationSearch, setLocationSearch] = useState("");
   const [newLabel, setNewLabel] = useState("");
   const [openLabelMenus, setOpenLabelMenus] = useState({});
+  const [editingLabelId, setEditingLabelId] = useState(null);
+  const [editedLabelName, setEditedLabelName] = useState("");
+  const labelMenuContainerRef = useRef(null);
+  const labelMenuRef = useRef(null);
+  const companyRefs = useRef({});
+  const [companySearch, setCompanySearch] = useState("");
+
+
 
   function getRandomPastelColor() {
     const hue = Math.floor(Math.random() * 360);
@@ -119,6 +129,24 @@ export default function Dashboard() {
     return newSet;
   });
 };
+useEffect(() => {
+  function handleClickOutside(event) {
+    let clickedInsideAnyCompany = Object.values(companyRefs.current).some((ref) =>
+      ref?.contains(event.target)
+    );
+
+    let clickedInsideAnyMenu = labelMenuRef.current?.contains(event.target);
+
+    if (!clickedInsideAnyCompany && !clickedInsideAnyMenu) {
+      setOpenLabelMenus({});
+    }
+  }
+
+  document.addEventListener("mousedown", handleClickOutside);
+  return () => {
+    document.removeEventListener("mousedown", handleClickOutside);
+  };
+}, [openLabelMenus]);
 
 
   const toggleLabelMenu = (companyName) => {
@@ -303,6 +331,90 @@ export default function Dashboard() {
       </option>
     ))}
   </select>
+<div className="space-y-1">
+  {Array.from(
+    new Map(
+      labels
+        .filter((l) => !l.company_name)
+        .map((l) => [l.label, l])
+    ).values()
+  ).map((label) => (
+    <div
+      key={label.id}
+      className="flex items-center justify-between bg-gray-50 border rounded px-2 py-1 text-xs"
+    >
+      {editingLabelId === label.id ? (
+        <input
+  type="text"
+  value={editedLabelName}
+  onChange={(e) => setEditedLabelName(e.target.value)}
+  onKeyDown={async (e) => {
+    if (e.key === "Enter") {
+      if (!editedLabelName.trim()) {
+        alert("Labelnaam mag niet leeg zijn.");
+        return;
+      }
+
+      const { error } = await supabase
+  .from("labels")
+  .update({ label: editedLabelName.trim() })
+  .eq("user_id", user.id)
+  .eq("label", label.label);
+
+
+      if (error) {
+        console.log("Labels bijgewerkt.");
+      } else {
+        console.log("Labels bijgewerkt:");
+        setEditingLabelId(null);
+        setEditedLabelName("");
+        await refreshLabels();
+      }
+    }
+  }}
+  className="border text-xs px-1 py-0.5 rounded w-full"
+  autoFocus
+/>
+
+      ) : (
+        <span>{label.label}</span>
+      )}
+
+      <div className="flex gap-1">
+        {editingLabelId !== label.id && (
+          <button
+            onClick={() => {
+              setEditingLabelId(label.id);
+              setEditedLabelName(label.label);
+            }}
+            className="hover:text-blue-600"
+            title="Bewerken"
+          >
+            ✏️
+          </button>
+        )}
+        <button
+          onClick={async () => {
+            const { error } = await supabase
+              .from("labels")
+              .delete()
+              .eq("id", label.id);
+            if (error) {
+              console.error("Label verwijderen mislukt:", error.message);
+            } else {
+              refreshLabels();
+            }
+          }}
+          className="hover:text-red-600"
+          title="Verwijderen"
+        >
+          ✕
+        </button>
+      </div>
+    </div>
+  ))}
+</div>
+
   <div className="flex">
     <input
       type="text"
@@ -333,6 +445,14 @@ export default function Dashboard() {
     </button>
   </div>
 </div>
+
+<input
+  type="text"
+  placeholder="Zoek bedrijfsnaam"
+  value={companySearch}
+  onChange={(e) => setCompanySearch(e.target.value)}
+  className="w-full border rounded px-3 py-2 text-sm"
+/>
 
           <input
             type="text"
@@ -365,22 +485,27 @@ export default function Dashboard() {
         </div>
 
           {/* Bedrijvenlijst */}
-        <div className="bg-white border p-4 rounded-xl shadow-sm space-y-2 md:col-span-3">
+<div
+  ref={labelMenuContainerRef}
+  className="bg-white border p-4 rounded-xl shadow-sm space-y-2 md:col-span-3"
+>
           <h2 className="text-lg font-semibold text-gray-800">Bedrijven</h2>
           {companies.length === 0 && (
             <p className="text-sm text-gray-500">Geen bezoekers binnen dit filter.</p>
           )}
           {companies
             .filter((c) =>
-              c.company_name.toLowerCase().includes(searchTerm.toLowerCase())
+c.company_name.toLowerCase().includes(searchTerm.toLowerCase()) &&
+c.company_name.toLowerCase().includes(companySearch.toLowerCase())
             )
             .map((company) => (
               <div
                 key={company.company_name}
-                onClick={() => {
-                  setSelectedCompany(company.company_name);
-                  setInitialVisitorSet(false);
-                }}
+  ref={(el) => (companyRefs.current[company.company_name] = el)}
+  onClick={() => {
+    setSelectedCompany(company.company_name);
+    setInitialVisitorSet(false);
+  }}
                 className={`cursor-pointer flex flex-col gap-1 px-3 py-2 rounded ${
                   selectedCompany === company.company_name
                     ? "bg-blue-100 text-blue-700 font-semibold"
@@ -403,30 +528,32 @@ export default function Dashboard() {
         .filter((l) => l.company_name === company.company_name)
         .map((label) => (
           <span
-            key={label.id}
-            style={{ backgroundColor: label.color }}
-            className="flex items-center gap-1 text-xs text-gray-700 px-2 py-0.5 rounded"
-          >
-            {label.label}
-            <button
-              onClick={async (e) => {
-                e.stopPropagation();
-                const { error } = await supabase
-                  .from("labels")
-                  .delete()
-                  .eq("id", label.id);
-                if (error) {
-                  console.error("Label verwijderen mislukt:", error.message);
-                } else {
-                  refreshLabels();
-                }
-              }}
-              className="hover:text-red-600"
-              title="Verwijderen"
-            >
-              ✕
-            </button>
-          </span>
+  key={label.id}
+  style={{ backgroundColor: label.color }}
+  className="flex items-center gap-1 text-xs text-gray-700 px-2 py-0.5 rounded"
+>
+  {label.label}
+  <button
+    onClick={async (e) => {
+      e.stopPropagation();
+      const { error } = await supabase
+        .from("labels")
+        .delete()
+        .eq("id", label.id);
+      if (error) {
+        console.error("Label verwijderen mislukt:", error.message);
+      } else {
+        refreshLabels();
+      }
+    }}
+    className="hover:text-red-600"
+    title="Verwijderen"
+  >
+    ✕
+  </button>
+</span>
+
+
         ))}
     </div>
   </div>
@@ -441,7 +568,11 @@ export default function Dashboard() {
   </button>
 
   {openLabelMenus[company.company_name] && (
-    <div className="mt-2 space-y-2 bg-gray-50 border rounded p-2">
+  <div
+    ref={labelMenuRef}
+    className="mt-2 space-y-2 bg-gray-50 border rounded p-2"
+  >
+
       <select
         onChange={async (e) => {
   const selected = e.target.value;
@@ -575,27 +706,54 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             {/* Bedrijfsgegevens */}
             <div className="space-y-1 text-sm text-gray-700">
-              {selectedCompanyData.company_domain && (
-                <div>
-                  <strong>Domein:</strong> {selectedCompanyData.company_domain}
-                </div>
-              )}
-              {selectedCompanyData.kvk_street && (
-                <div>
-                  <strong>Straat:</strong> {selectedCompanyData.kvk_street}
-                </div>
-              )}
-              {selectedCompanyData.kvk_postal_code && (
-                <div>
-                  <strong>Postcode:</strong> {selectedCompanyData.kvk_postal_code}
-                </div>
-              )}
-              {selectedCompanyData.kvk_city && (
-                <div>
-                  <strong>Stad:</strong> {selectedCompanyData.kvk_city}
-                </div>
-              )}
-            </div>
+  {selectedCompanyData.kvk_street && (
+    <div>
+      <strong>Straat:</strong> {selectedCompanyData.kvk_street}
+    </div>
+  )}
+  {selectedCompanyData.kvk_postal_code && (
+    <div>
+      <strong>Postcode:</strong> {selectedCompanyData.kvk_postal_code}
+    </div>
+  )}
+  {selectedCompanyData.kvk_city && (
+    <div>
+      <strong>Stad:</strong> {selectedCompanyData.kvk_city}
+    </div>
+  )}
+  {selectedCompanyData.company_domain && (
+    <div>
+      <strong>Website:</strong>{" "}
+      <a
+        href={`https://${selectedCompanyData.company_domain}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-blue-600 hover:underline"
+      >
+        {selectedCompanyData.company_domain}
+      </a>
+    </div>
+  )}
+  {selectedCompanyData.linkedin_url && (
+    <div>
+      <strong>LinkedIn:</strong>{" "}
+      <a
+        href={selectedCompanyData.linkedin_url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-blue-600 hover:underline"
+      >
+        Bekijk profiel
+      </a>
+    </div>
+  )}
+  {selectedCompanyData.kvk_number && (
+    <div>
+      <strong>KVK:</strong> {selectedCompanyData.kvk_number}
+    </div>
+  )}
+</div>
+
 
             {/* OpenStreetMap */}
             <div className="w-full h-48 rounded border overflow-hidden">
