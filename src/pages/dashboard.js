@@ -1,8 +1,6 @@
 import { useRouter } from "next/router";
 import { supabase } from "../lib/supabaseClient";
-import LabelManager from "@/components/LabelManager";
 import { useEffect, useRef, useState } from "react";
-
 
 
 export default function Dashboard() {
@@ -26,13 +24,21 @@ export default function Dashboard() {
   const [openLabelMenus, setOpenLabelMenus] = useState({});
   const [editingLabelId, setEditingLabelId] = useState(null);
   const [editedLabelName, setEditedLabelName] = useState("");
-  const labelMenuContainerRef = useRef(null);
   const labelMenuRef = useRef(null);
   const companyRefs = useRef({});
+  const columnRefs = useRef([]);
   const [companySearch, setCompanySearch] = useState("");
+  const [sortOrder, setSortOrder] = useState("recent");
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+  const [mapCoords, setMapCoords] = useState(null);
+  const [globalSearch, setGlobalSearch] = useState("");
 
+  useEffect(() => {
+  setGlobalSearch((router.query.search || "").toLowerCase());
+}, [router.query.search]);
 
-
+  
   function getRandomPastelColor() {
     const hue = Math.floor(Math.random() * 360);
     return `hsl(${hue}, 70%, 85%)`;
@@ -63,6 +69,15 @@ export default function Dashboard() {
     a.click();
     document.body.removeChild(a);
   }
+
+  // Laat Layout luisteren naar dit event
+  useEffect(() => {
+    const handleExport = () => {
+      exportLeadsToCSV(filteredLeads);
+    };
+    window.addEventListener("exportLeads", handleExport);
+    return () => window.removeEventListener("exportLeads", handleExport);
+  }, [allLeads, labels]);
 
   useEffect(() => {
     const getData = async () => {
@@ -110,7 +125,7 @@ export default function Dashboard() {
     getData();
   }, [router]);
 
-  const refreshLabels = async () => {
+    const refreshLabels = async () => {
     const { data } = await supabase
       .from("labels")
       .select("*")
@@ -119,42 +134,42 @@ export default function Dashboard() {
   };
 
   const toggleVisitor = (visitorId) => {
-  setOpenVisitors((prev) => {
-    const newSet = new Set(prev);
-    if (newSet.has(visitorId)) {
-      newSet.delete(visitorId);
-    } else {
-      newSet.add(visitorId);
-    }
-    return newSet;
-  });
-};
-useEffect(() => {
-  function handleClickOutside(event) {
-    let clickedInsideAnyCompany = Object.values(companyRefs.current).some((ref) =>
-      ref?.contains(event.target)
-    );
-
-    let clickedInsideAnyMenu = labelMenuRef.current?.contains(event.target);
-
-    if (!clickedInsideAnyCompany && !clickedInsideAnyMenu) {
-      setOpenLabelMenus({});
-    }
-  }
-
-  document.addEventListener("mousedown", handleClickOutside);
-  return () => {
-    document.removeEventListener("mousedown", handleClickOutside);
+    setOpenVisitors((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(visitorId)) {
+        newSet.delete(visitorId);
+      } else {
+        newSet.add(visitorId);
+      }
+      return newSet;
+    });
   };
-}, [openLabelMenus]);
 
+  useEffect(() => {
+    function handleClickOutside(event) {
+      let clickedInsideAnyCompany = Object.values(companyRefs.current).some(
+        (ref) => ref?.contains(event.target)
+      );
+
+      let clickedInsideAnyMenu = labelMenuRef.current?.contains(event.target);
+
+      if (!clickedInsideAnyCompany && !clickedInsideAnyMenu) {
+        setOpenLabelMenus({});
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [openLabelMenus]);
 
   const toggleLabelMenu = (companyName) => {
-  setOpenLabelMenus((prev) => ({
-    ...prev,
-    [companyName]: !prev[companyName]
-  }));
-};
+    setOpenLabelMenus((prev) => ({
+      ...prev,
+      [companyName]: !prev[companyName],
+    }));
+  };
 
   const isInDateRange = (dateStr) => {
     const date = new Date(dateStr);
@@ -204,8 +219,6 @@ useEffect(() => {
 
   const filteredLeads = allLeads.filter((l) => {
     if (!isInDateRange(l.timestamp)) return false;
-    if (locationSearch && !(l.location?.toLowerCase() ?? "").includes(locationSearch.toLowerCase())) return false;
-    if (pageSearch && !(l.page_url?.toLowerCase() ?? "").includes(pageSearch.toLowerCase())) return false;
     if (minDuration && (!l.duration_seconds || l.duration_seconds < parseInt(minDuration))) return false;
     if (labelFilter) {
       const hasLabel = labels.find(
@@ -226,12 +239,14 @@ useEffect(() => {
     return acc;
   }, {});
 
-  const activeCompanyNames = Object.keys(groupedCompanies).filter((companyName) => {
-    if (minVisits) {
-      return groupedCompanies[companyName].length >= parseInt(minVisits);
+  const activeCompanyNames = Object.keys(groupedCompanies).filter(
+    (companyName) => {
+      if (minVisits) {
+        return groupedCompanies[companyName].length >= parseInt(minVisits);
+      }
+      return true;
     }
-    return true;
-  });
+  );
 
   const companies = allCompanies.filter((c) =>
     activeCompanyNames.includes(c.company_name)
@@ -240,22 +255,83 @@ useEffect(() => {
   ? allCompanies.find((c) => c.company_name === selectedCompany)
   : null;
 
-  const filteredActivities = filteredLeads.filter(
-    (l) => l.company_name === selectedCompany
+  useEffect(() => {
+  if (
+    selectedCompanyData &&
+    selectedCompanyData.kvk_street &&
+    selectedCompanyData.kvk_city
+  ) {
+    const query = `${selectedCompanyData.kvk_street}, ${selectedCompanyData.kvk_city}`;
+    fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json`
+    )
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.length > 0) {
+          setMapCoords({
+            lat: data[0].lat,
+            lon: data[0].lon,
+          });
+        }
+      })
+      .catch((err) => {
+        console.error("Geocode error:", err);
+      });
+  } else {
+    setMapCoords(null); // reset als je ander bedrijf kiest
+  }
+}, [selectedCompanyData]);
+
+const filteredActivities = filteredLeads.filter(
+  (l) => l.company_name === selectedCompany
+);
+
+const groupedByVisitor = filteredActivities.reduce((acc, activity) => {
+  const key = activity.anon_id || `onbekend-${activity.id}`;
+  acc[key] = acc[key] || [];
+  acc[key].push(activity);
+  return acc;
+}, {});
+
+const sortedVisitors = Object.entries(groupedByVisitor).sort((a, b) => {
+  const lastA = new Date(a[1][0].timestamp);
+  const lastB = new Date(b[1][0].timestamp);
+  return lastB - lastA;
+});
+
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todaysLeads = allLeads.filter((lead) => {
+    const date = new Date(lead.timestamp);
+    return date >= today;
+  });
+  const todaysUniqueVisitors = new Set(
+    todaysLeads.map((lead) => lead.anon_id)
   );
 
-  const groupedByVisitor = filteredActivities.reduce((acc, activity) => {
-    const key = activity.anon_id || `onbekend-${activity.id}`;
-    acc[key] = acc[key] || [];
-    acc[key].push(activity);
-    return acc;
-  }, {});
+  const startResizing = (e, index) => {
+  e.preventDefault();
+  const startX = e.clientX;
+  const startWidth = columnRefs.current[index].offsetWidth;
 
-  const sortedVisitors = Object.entries(groupedByVisitor).sort((a, b) => {
-    const lastA = new Date(a[1][0].timestamp);
-    const lastB = new Date(b[1][0].timestamp);
-    return lastB - lastA;
-  });
+  const handleMouseMove = (moveEvent) => {
+    const delta = moveEvent.clientX - startX;
+    const newWidth = Math.max(150, startWidth + delta);
+    columnRefs.current[index].style.flexBasis = `${newWidth}px`;
+  };
+
+  const handleMouseUp = () => {
+    window.removeEventListener("mousemove", handleMouseMove);
+    window.removeEventListener("mouseup", handleMouseUp);
+
+    // Optioneel: hier kun je eventueel breedtes opslaan in state
+  };
+
+  window.addEventListener("mousemove", handleMouseMove);
+  window.addEventListener("mouseup", handleMouseUp);
+};
+
 
   if (loading) {
     return (
@@ -265,20 +341,21 @@ useEffect(() => {
     );
   }
 
+return (
+  <div className="w-full">
+   {/*< <div className="mb-4">
+      <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
+    </div>*/}
 
-  return (
-    <div className="w-full max-w-none mx-auto px-4 py-10 space-y-6">
-      <div className="flex flex-wrap justify-between items-center gap-2 mb-4">
-        <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
-        <button
-          onClick={() => exportLeadsToCSV(filteredLeads)}
-          className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 transition"
-        >
-          📁 Exporteer CSV
-        </button>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-        <div className="bg-white border p-4 rounded-xl shadow-sm space-y-4 md:col-span-2">
+    <div className="flex w-full h-[calc(100vh-6rem)]">
+
+        <div
+  ref={(el) => (columnRefs.current[0] = el)}
+  className="flex flex-col h-full overflow-y-auto bg-white border border-gray-200 p-4 shadow space-y-4"
+  style={{ flexBasis: "250px", flexShrink: 0 }}
+>
+
+
           <h2 className="text-lg font-semibold text-gray-800">Filters</h2>
           <select
             value={filterType}
@@ -299,7 +376,7 @@ useEffect(() => {
             <option value="aangepast">Aangepast</option>
           </select>
           {filterType === "aangepast" && (
-            <div className="space-y-2">
+            <div className="space-y-4">
               <input
                 type="date"
                 value={customRange.from}
@@ -318,7 +395,7 @@ useEffect(() => {
               />
             </div>
           )}
-          <div className="space-y-2">
+          <div className="space-y-4">
   <select
     value={labelFilter}
     onChange={(e) => setLabelFilter(e.target.value)}
@@ -445,34 +522,12 @@ useEffect(() => {
     </button>
   </div>
 </div>
-
-<input
-  type="text"
-  placeholder="Zoek bedrijfsnaam"
-  value={companySearch}
-  onChange={(e) => setCompanySearch(e.target.value)}
-  className="w-full border rounded px-3 py-2 text-sm"
-/>
-
-          <input
-            type="text"
-            placeholder="Zoek land/stad"
-            value={locationSearch}
-            onChange={(e) => setLocationSearch(e.target.value)}
-            className="w-full border rounded px-3 py-2 text-sm"
-          />
+      
           <input
             type="number"
             placeholder="Minimaal bezoeken"
             value={minVisits}
             onChange={(e) => setMinVisits(e.target.value)}
-            className="w-full border rounded px-3 py-2 text-sm"
-          />
-          <input
-            type="text"
-            placeholder="Zoek pagina"
-            value={pageSearch}
-            onChange={(e) => setPageSearch(e.target.value)}
             className="w-full border rounded px-3 py-2 text-sm"
           />
           <input
@@ -482,194 +537,301 @@ useEffect(() => {
             onChange={(e) => setMinDuration(e.target.value)}
             className="w-full border rounded px-3 py-2 text-sm"
           />
-        </div>
-
-          {/* Bedrijvenlijst */}
-<div
-  ref={labelMenuContainerRef}
-  className="bg-white border p-4 rounded-xl shadow-sm space-y-2 md:col-span-3"
+          <select
+  value={sortOrder}
+  onChange={(e) => setSortOrder(e.target.value)}
+  className="w-full border rounded px-3 py-2 text-sm"
 >
-          <h2 className="text-lg font-semibold text-gray-800">Bedrijven</h2>
-          {companies.length === 0 && (
-            <p className="text-sm text-gray-500">Geen bezoekers binnen dit filter.</p>
-          )}
-          {companies
-            .filter((c) =>
-c.company_name.toLowerCase().includes(searchTerm.toLowerCase()) &&
-c.company_name.toLowerCase().includes(companySearch.toLowerCase())
-            )
-            .map((company) => (
-              <div
-                key={company.company_name}
-  ref={(el) => (companyRefs.current[company.company_name] = el)}
-  onClick={() => {
-    setSelectedCompany(company.company_name);
-    setInitialVisitorSet(false);
-  }}
-                className={`cursor-pointer flex flex-col gap-1 px-3 py-2 rounded ${
-                  selectedCompany === company.company_name
-                    ? "bg-blue-100 text-blue-700 font-semibold"
-                    : "hover:bg-gray-100"
-                }`}
-              >
-                <div className="flex gap-2">
-  {company.company_domain && (
-    <img
-      src={`https://img.logo.dev/${company.company_domain}?token=pk_R_r8ley_R_C7tprVCpFASQ`}
-      alt="logo"
-      className="w-5 h-5 object-contain rounded-sm"
-      onError={(e) => (e.target.style.display = "none")}
-    />
+  <option value="recent">Sorteer op laatst bezocht</option>
+  <option value="aantal">Sorteer op aantal bezoeken</option>
+</select>
+
+        </div>
+<div
+  className="w-1 cursor-col-resize bg-gray-200 hover:bg-gray-400 transition"
+  onMouseDown={(e) => startResizing(e, 0)}
+></div>
+
+{/* Bedrijvenlijst */}
+
+
+<div
+  ref={(el) => (columnRefs.current[1] = el)}
+  className="flex flex-col h-full bg-white border border-gray-200 shadow"
+  style={{ flexBasis: "400px", flexShrink: 0 }}
+>
+
+  <div className="bg-blue-50 border-b border-blue-200 p-3 space-y-1">
+  <h2 className="text-base font-semibold text-gray-800">Websitebezoekers</h2>
+  <p className="text-sm text-gray-800">
+    <strong>Bezoekers vandaag:</strong> {todaysLeads.length}
+  </p>
+  <p className="text-sm text-gray-800">
+    <strong>Nieuwe bezoekers:</strong> {todaysUniqueVisitors.size}
+  </p>
+</div>
+
+
+<div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+  {companies.length === 0 && (
+    <p className="text-sm text-gray-500 col-span-full">
+      Geen bezoekers binnen dit filter.
+    </p>
   )}
-  <div className="flex flex-col">
-    <span>{company.company_name}</span>
-    <div className="flex flex-wrap gap-1 mt-1">
-      {labels
-        .filter((l) => l.company_name === company.company_name)
-        .map((label) => (
-          <span
+  {companies
+  .filter((c) => {
+  const naam = (c.company_name || "").toLowerCase();
+  const stad = (c.kvk_city || "").toLowerCase();
+  const heeftPage = groupedCompanies[c.company_name]?.some((l) =>
+    (l.page_url || "").toLowerCase().includes(globalSearch)
+  );
+  return (
+    naam.includes(globalSearch) ||
+    stad.includes(globalSearch) ||
+    heeftPage
+  );
+})
+
+  .sort((a, b) => {
+    if (sortOrder === "aantal") {
+      return (groupedCompanies[b.company_name]?.length || 0) - (groupedCompanies[a.company_name]?.length || 0);
+    } else if (sortOrder === "recent") {
+      const lastA = groupedCompanies[a.company_name]?.[0]?.timestamp || "";
+      const lastB = groupedCompanies[b.company_name]?.[0]?.timestamp || "";
+      return new Date(lastB) - new Date(lastA);
+    }
+    return 0;
+  })
+    .slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
+  .map((company) => {
+
+      const leads = groupedCompanies[company.company_name] || [];
+      const totalDuration = leads.reduce(
+        (sum, l) => sum + (l.duration_seconds || 0),
+        0
+      );
+      const minutes = Math.floor(totalDuration / 60);
+      const seconds = totalDuration % 60;
+
+      return (
+        <div
+          key={company.company_name}
+          onClick={() => {
+            setSelectedCompany(company.company_name);
+            setInitialVisitorSet(false);
+          }}
+          className={`cursor-pointer bg-white border border-gray-200 rounded-xl p-4 shadow hover:shadow-lg hover:scale-[1.02] transition-transform duration-200 ${
+  selectedCompany === company.company_name
+    ? "border-blue-500 ring-1 ring-blue-500 bg-blue-50"
+    : ""
+}`}
+
+
+
+        >
+          <div className="flex justify-between items-start">
+            <div>
+              <div className="flex items-center gap-2">
+                {company.company_domain && (
+                  <img
+                    src={`https://img.logo.dev/${company.company_domain}?token=pk_R_r8ley_R_C7tprVCpFASQ`}
+                    alt="logo"
+                    className="w-6 h-6 object-contain rounded"
+                    onError={(e) => (e.target.style.display = "none")}
+                  />
+                )}
+                <h3 className="text-base font-semibold text-gray-800">
+                  {company.company_name}
+                </h3>
+              </div>
+              {company.kvk_city && (
+                <p className="text-xs text-gray-500 mt-0.5">📍 {company.kvk_city}</p>
+              )}
+              {company.company_domain && (
+                <p className="text-xs text-gray-500 truncate">
+                  🌐 {company.company_domain}
+                </p>
+              )}
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-gray-500">
+  {new Set(leads.map(l => l.anon_id)).size} bezoekers
+</p>
+
+              <p className="text-xs text-gray-500">
+                {minutes}m {seconds}s
+              </p>
+            </div>
+          </div>
+
+          {labels
+            .filter((l) => l.company_name === company.company_name)
+            .map((label) => (
+              <span
   key={label.id}
   style={{ backgroundColor: label.color }}
-  className="flex items-center gap-1 text-xs text-gray-700 px-2 py-0.5 rounded"
+  className="inline-flex items-center text-[11px] text-gray-700 px-2 py-0.5 rounded-full mt-2 mr-2"
 >
-  {label.label}
-  <button
-    onClick={async (e) => {
-      e.stopPropagation();
-      const { error } = await supabase
-        .from("labels")
-        .delete()
-        .eq("id", label.id);
-      if (error) {
-        console.error("Label verwijderen mislukt:", error.message);
-      } else {
-        refreshLabels();
-      }
-    }}
-    className="hover:text-red-600"
-    title="Verwijderen"
-  >
-    ✕
-  </button>
-</span>
 
-
-        ))}
-    </div>
-  </div>
-</div>
-
-<div className="mt-1">
-  <button
-    onClick={() => toggleLabelMenu(company.company_name)}
-    className="text-blue-600 text-sm hover:underline"
-  >
-    + Label
-  </button>
-
-  {openLabelMenus[company.company_name] && (
-  <div
-    ref={labelMenuRef}
-    className="mt-2 space-y-2 bg-gray-50 border rounded p-2"
-  >
-
-      <select
-        onChange={async (e) => {
-  const selected = e.target.value;
-  if (!selected) return;
-
-  // Check of het label al gekoppeld is
-  const alreadyExists = labels.find(
-    (l) =>
-      l.company_name === company.company_name &&
-      l.label === selected
-  );
-
-  if (alreadyExists) {
-    alert("Dit label is al gekoppeld aan dit bedrijf.");
-    return;
-  }
-
-  const { error } = await supabase.from("labels").insert({
-    user_id: user.id,
-    company_name: company.company_name,
-    label: selected,
-    color: getRandomPastelColor(),
-  });
-  if (error) {
-    console.error("Label koppelen mislukt:", error.message);
-  } else {
-    refreshLabels();
-  }
-}}
-
-
-        defaultValue=""
-        className="w-full border rounded px-2 py-1 text-sm"
-      >
-        <option value="" disabled>
-          Kies bestaand label
-        </option>
-        {Array.from(new Set(labels.map((l) => l.label))).map((label) => (
-          <option key={label} value={label}>
-            {label}
-          </option>
-        ))}
-      </select>
-
-      <div className="flex">
-        <input
-          type="text"
-          placeholder="Nieuw label"
-          value={newLabel}
-          onChange={(e) => setNewLabel(e.target.value)}
-          className="border px-2 py-1 text-sm rounded-l w-full"
-        />
-        <button
-          onClick={async () => {
-  const trimmed = newLabel.trim();
-  if (!trimmed) return;
-
-  const alreadyExists = labels.find(
-    (l) =>
-      l.company_name === company.company_name &&
-      l.label === trimmed
-  );
-
-  if (alreadyExists) {
-    alert("Dit label is al gekoppeld aan dit bedrijf.");
-    return;
-  }
-
-  const { error } = await supabase.from("labels").insert({
-    user_id: user.id,
-    company_name: company.company_name,
-    label: trimmed,
-    color: getRandomPastelColor(),
-  });
-  if (error) {
-    console.error("Label toevoegen mislukt:", error.message);
-  } else {
-    setNewLabel("");
-    refreshLabels();
-  }
-}}
-
-          className="bg-blue-600 text-white px-3 rounded-r text-sm"
-        >
-          +
-        </button>
-      </div>
-    </div>
-  )}
-</div>
-              </div>
+                {label.label}
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    const { error } = await supabase
+                      .from("labels")
+                      .delete()
+                      .eq("id", label.id);
+                    if (error) {
+                      console.error("Label verwijderen mislukt:", error.message);
+                    } else {
+                      refreshLabels();
+                    }
+                  }}
+                  className="hover:text-red-600 ml-1"
+                  title="Verwijderen"
+                >
+                  ✕
+                </button>
+              </span>
             ))}
-        </div>
 
-<div className="space-y-4 md:col-span-7">
+          <button
+  onClick={(e) => {
+    e.stopPropagation();
+    toggleLabelMenu(company.company_name);
+  }}
+  className="mt-2 inline-flex items-center gap-1 text-blue-600 text-xs hover:underline"
+>
+  + Label
+</button>
+
+
+          {openLabelMenus[company.company_name] && (
+            <div ref={labelMenuRef} className="mt-2 space-y-2 bg-gray-50 border rounded p-2">
+              {/* Select bestaand label */}
+              <select
+                onChange={async (e) => {
+                  const selected = e.target.value;
+                  if (!selected) return;
+                  const alreadyExists = labels.find(
+                    (l) =>
+                      l.company_name === company.company_name &&
+                      l.label === selected
+                  );
+                  if (alreadyExists) {
+                    alert("Dit label is al gekoppeld aan dit bedrijf.");
+                    return;
+                  }
+                  const { error } = await supabase.from("labels").insert({
+                    user_id: user.id,
+                    company_name: company.company_name,
+                    label: selected,
+                    color: getRandomPastelColor(),
+                  });
+                  if (error) {
+                    console.error("Label koppelen mislukt:", error.message);
+                  } else {
+                    refreshLabels();
+                  }
+                }}
+                defaultValue=""
+                className="w-full border rounded px-2 py-1 text-sm"
+              >
+                <option value="" disabled>
+                  Kies bestaand label
+                </option>
+                {Array.from(new Set(labels.map((l) => l.label))).map((label) => (
+                  <option key={label} value={label}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+
+              {/* Nieuw label toevoegen */}
+              <div className="flex">
+                <input
+                  type="text"
+                  placeholder="Nieuw label"
+                  value={newLabel}
+                  onChange={(e) => setNewLabel(e.target.value)}
+                  className="border px-2 py-1 text-sm rounded-l w-full"
+                />
+                <button
+                  onClick={async () => {
+                    const trimmed = newLabel.trim();
+                    if (!trimmed) return;
+                    const alreadyExists = labels.find(
+                      (l) =>
+                        l.company_name === company.company_name &&
+                        l.label === trimmed
+                    );
+                    if (alreadyExists) {
+                      alert("Dit label is al gekoppeld aan dit bedrijf.");
+                      return;
+                    }
+                    const { error } = await supabase.from("labels").insert({
+                      user_id: user.id,
+                      company_name: company.company_name,
+                      label: trimmed,
+                      color: getRandomPastelColor(),
+                    });
+                    if (error) {
+                      console.error("Label toevoegen mislukt:", error.message);
+                    } else {
+                      setNewLabel("");
+                      refreshLabels();
+                    }
+                  }}
+                  className="bg-blue-600 text-white px-3 rounded-r text-sm"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    })}
+    <div className="flex justify-center gap-2 mt-4">
+  <button
+    onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+    disabled={currentPage === 1}
+    className={`px-3 py-1 border rounded ${
+      currentPage === 1
+        ? "bg-gray-200 text-gray-500 cursor-not-allowed"
+        : "bg-white hover:bg-gray-50"
+    }`}
+  >
+    Vorige
+  </button>
+  <span className="px-3 py-1 text-sm text-gray-700">
+    Pagina {currentPage}
+  </span>
+  <button
+    onClick={() => setCurrentPage((prev) => prev + 1)}
+    disabled={currentPage * itemsPerPage >= companies.length}
+    className={`px-3 py-1 border rounded ${
+      currentPage * itemsPerPage >= companies.length
+        ? "bg-gray-200 text-gray-500 cursor-not-allowed"
+        : "bg-white hover:bg-gray-50"
+    }`}
+  >
+    Volgende
+  </button>
+</div>
+</div>
+</div>
+
+<div
+  className="w-1 cursor-col-resize bg-gray-200 hover:bg-gray-400 transition"
+  onMouseDown={(e) => startResizing(e, 1)}
+></div>
+
+
+<div className="flex flex-col flex-grow overflow-y-auto bg-white border border-gray-200 p-4 shadow">
   {selectedCompany ? (
-    <div className="bg-white border p-4 rounded-xl shadow-sm">
+    <div className="bg-white border p-4 shadow-sm">
       {selectedCompanyData && (
         <>
           <div className="mb-4 flex items-center gap-3">
@@ -752,26 +914,25 @@ c.company_name.toLowerCase().includes(companySearch.toLowerCase())
       <strong>KVK:</strong> {selectedCompanyData.kvk_number}
     </div>
   )}
-</div>
+ </div>
 
 
             {/* OpenStreetMap */}
             <div className="w-full h-48 rounded border overflow-hidden">
-              <iframe
-                title="Locatie kaart"
-                width="100%"
-                height="100%"
-                style={{ border: 0 }}
-                loading="lazy"
-                src={
-                  selectedCompanyData.kvk_street
-                    ? `https://www.openstreetmap.org/export/embed.html?search=${encodeURIComponent(
-                        `${selectedCompanyData.kvk_street}, ${selectedCompanyData.kvk_postal_code} ${selectedCompanyData.kvk_city}`
-                      )}`
-                    : `https://www.openstreetmap.org/export/embed.html?bbox=3.2,50.7,7.2,53.6&layer=mapnik`
-                }
-              />
-            </div>
+  {mapCoords ? (
+    <iframe
+      title="Locatie kaart"
+      width="100%"
+      height="100%"
+      style={{ border: 0 }}
+      loading="lazy"
+      src={`https://www.openstreetmap.org/export/embed.html?bbox=${parseFloat(mapCoords.lon) - 0.01},${parseFloat(mapCoords.lat) - 0.01},${parseFloat(mapCoords.lon) + 0.01},${parseFloat(mapCoords.lat) + 0.01}&marker=${mapCoords.lat},${mapCoords.lon}`}
+    />
+  ) : (
+    <p className="text-sm text-gray-500 p-2">Locatie wordt geladen...</p>
+  )}
+</div>
+
           </div>
         </>
       )}
@@ -799,23 +960,28 @@ c.company_name.toLowerCase().includes(companySearch.toLowerCase())
               </button>
               {isOpen && (
                 <div className="mt-3 space-y-2">
-                  {sessions.map((s) => (
-                    <div
-                      key={s.id}
-                      className="bg-white border rounded p-3 text-sm shadow-sm grid grid-cols-1 md:grid-cols-3 gap-4"
-                    >
-                      <div className="truncate">
-                        <strong>Pagina:</strong> {s.page_url}
-                      </div>
-                      <div>
-                        <strong>Tijdstip:</strong>{" "}
-                        {new Date(s.timestamp).toLocaleString()}
-                      </div>
-                      <div>
-                        <strong>Duur:</strong> {s.duration_seconds ?? "-"}
-                      </div>
-                    </div>
-                  ))}
+                  <ul className="divide-y divide-gray-200 text-sm">
+  {sessions.map((s, idx) => (
+    <li key={s.id} className="py-3">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-2">
+        <div className="truncate">
+          <span className="text-gray-800">{s.page_url}</span>
+          {idx === 0 && (
+            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-blue-50 text-xs text-blue-700">
+              laatste bekeken pagina
+            </span>
+          )}
+        </div>
+        <div className="flex flex-col md:flex-row md:gap-4 text-gray-500 text-xs">
+          <span>{new Date(s.timestamp).toLocaleString()}</span>
+          <span>{s.duration_seconds ?? "-"} sec</span>
+        </div>
+      </div>
+    </li>
+  ))}
+</ul>
+
+
                 </div>
               )}
             </div>
