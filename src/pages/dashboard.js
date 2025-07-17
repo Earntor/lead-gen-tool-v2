@@ -1,6 +1,8 @@
 import { useRouter } from "next/router";
 import { supabase } from "../lib/supabaseClient";
 import { useEffect, useRef, useState } from "react";
+import DatePicker from "react-datepicker";
+import "react-datepicker/dist/react-datepicker.css";
 
 
 export default function Dashboard() {
@@ -14,8 +16,8 @@ export default function Dashboard() {
   const [initialVisitorSet, setInitialVisitorSet] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [labelFilter, setLabelFilter] = useState("");
-  const [filterType, setFilterType] = useState("alles");
-  const [customRange, setCustomRange] = useState({ from: "", to: "" });
+  const [filterType, setFilterType] = useState("vandaag");
+  const [customRange, setCustomRange] = useState([null, null]);
   const [minVisits, setMinVisits] = useState("");
   const [pageSearch, setPageSearch] = useState("");
   const [minDuration, setMinDuration] = useState("");
@@ -33,16 +35,20 @@ export default function Dashboard() {
   const itemsPerPage = 10;
   const [mapCoords, setMapCoords] = useState(null);
   const [globalSearch, setGlobalSearch] = useState("");
+  const [visitorTypeFilter, setVisitorTypeFilter] = useState([]);
+
+
 
   useEffect(() => {
   setGlobalSearch((router.query.search || "").toLowerCase());
 }, [router.query.search]);
 
   
-  function getRandomPastelColor() {
-    const hue = Math.floor(Math.random() * 360);
-    return `hsl(${hue}, 70%, 85%)`;
-  }
+  function getRandomColor() {
+  const hue = Math.floor(Math.random() * 360);
+  return `hsl(${hue}, 80%, 50%)`;
+}
+
 
   function exportLeadsToCSV(leads) {
     if (!leads || leads.length === 0) {
@@ -164,12 +170,14 @@ export default function Dashboard() {
     };
   }, [openLabelMenus]);
 
-  const toggleLabelMenu = (companyName) => {
-    setOpenLabelMenus((prev) => ({
-      ...prev,
-      [companyName]: !prev[companyName],
-    }));
-  };
+  const toggleLabelMenu = (companyName, type) => {
+  const key = `${type}:${companyName}`;
+  setOpenLabelMenus((prev) => ({
+    ...prev,
+    [key]: !prev[key],
+  }));
+};
+
 
   const isInDateRange = (dateStr) => {
     const date = new Date(dateStr);
@@ -205,29 +213,84 @@ export default function Dashboard() {
         const nextYear = new Date(today.getFullYear() + 1, 0, 1);
         return date >= janFirst && date < nextYear;
       case "aangepast":
-        if (customRange.from && customRange.to) {
-          const from = new Date(customRange.from);
-          const to = new Date(customRange.to);
-          to.setDate(to.getDate() + 1);
-          return date >= from && date < to;
-        }
-        return true;
+  if (customRange[0] && customRange[1]) {
+    const toPlusOne = new Date(customRange[1]);
+    toPlusOne.setDate(toPlusOne.getDate() + 1);
+    return date >= customRange[0] && date < toPlusOne;
+  }
+  return true;
+
       default:
         return true;
     }
   };
 
   const filteredLeads = allLeads.filter((l) => {
-    if (!isInDateRange(l.timestamp)) return false;
-    if (minDuration && (!l.duration_seconds || l.duration_seconds < parseInt(minDuration))) return false;
-    if (labelFilter) {
-      const hasLabel = labels.find(
-        (lab) => lab.company_name === l.company_name && lab.label === labelFilter
-      );
-      if (!hasLabel) return false;
-    }
-    return true;
-  });
+  if (!isInDateRange(l.timestamp)) return false;
+  if (minDuration && (!l.duration_seconds || l.duration_seconds < parseInt(minDuration))) return false;
+  if (labelFilter) {
+    const hasLabel = labels.find(
+      (lab) => lab.company_name === l.company_name && lab.label === labelFilter
+    );
+    if (!hasLabel) return false;
+  }
+
+  if (visitorTypeFilter.length > 0) {
+    const visits = allLeads.filter(
+      (v) => v.company_name === l.company_name
+    );
+
+    const uniqueVisitors = new Set(
+      visits.map((v) => v.anon_id || `onbekend-${v.id}`)
+    );
+
+    const match = visitorTypeFilter.some((type) => {
+      if (type === "first") {
+        return uniqueVisitors.size === 1;
+      }
+      if (type === "returning") {
+        return uniqueVisitors.size > 1;
+      }
+      if (type === "highEngagement") {
+        const totalDuration = visits.reduce(
+          (sum, v) => sum + (v.duration_seconds || 0),
+          0
+        );
+        const latestVisit = visits[0]?.timestamp
+          ? new Date(visits[0].timestamp)
+          : null;
+        const now = new Date();
+        const recencyDays = latestVisit
+          ? (now - latestVisit) / (1000 * 60 * 60 * 24)
+          : 999;
+
+        const visitsScore = Math.min(visits.length / 10, 1);
+        const durationScore = Math.min(totalDuration / 600, 1);
+        const recencyScore =
+          recencyDays < 1
+            ? 1
+            : recencyDays < 7
+            ? 0.7
+            : recencyDays < 30
+            ? 0.4
+            : 0.1;
+
+        const leadRating = Math.round(
+          (visitsScore * 0.4 + durationScore * 0.3 + recencyScore * 0.3) * 100
+        );
+
+        return leadRating >= 60;
+      }
+      return false;
+    });
+
+    if (!match) return false;
+  }
+
+  return true;
+});
+
+
 
   const allCompanies = [
     ...new Map(allLeads.map((lead) => [lead.company_name, lead])).values(),
@@ -332,6 +395,17 @@ const sortedVisitors = Object.entries(groupedByVisitor).sort((a, b) => {
   window.addEventListener("mouseup", handleMouseUp);
 };
 
+const resetFilters = () => {
+  setFilterType("vandaag");
+  setCustomRange([null, null]);
+  setLabelFilter("");
+  setMinVisits("");
+  setMinDuration("");
+  setSortOrder("recent");
+  setSelectedCompany(null);
+  setGlobalSearch("");
+  setVisitorTypeFilter([]);
+};
 
   if (loading) {
     return (
@@ -351,12 +425,12 @@ return (
 
         <div
   ref={(el) => (columnRefs.current[0] = el)}
-  className="flex flex-col h-full overflow-y-auto bg-white border border-gray-200 p-4 shadow space-y-4"
+  className="flex flex-col h-full overflow-y-auto bg-gray-50 border border-gray-200 p-4 shadow-md rounded-xl space-y-4"
   style={{ flexBasis: "250px", flexShrink: 0 }}
 >
 
 
-          <h2 className="text-lg font-semibold text-gray-800">Filters</h2>
+          <h2 className="text-xl font-semibold text-gray-700 mb-2">Filters</h2>
           <select
             value={filterType}
             onChange={(e) => {
@@ -364,7 +438,7 @@ return (
               setSelectedCompany(null);
               setInitialVisitorSet(false);
             }}
-            className="w-full border rounded px-3 py-2 text-sm"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
           >
             <option value="alles">Alles</option>
             <option value="vandaag">Vandaag</option>
@@ -376,175 +450,163 @@ return (
             <option value="aangepast">Aangepast</option>
           </select>
           {filterType === "aangepast" && (
-            <div className="space-y-4">
-              <input
-                type="date"
-                value={customRange.from}
-                onChange={(e) =>
-                  setCustomRange((prev) => ({ ...prev, from: e.target.value }))
-                }
-                className="w-full"
-              />
-              <input
-                type="date"
-                value={customRange.to}
-                onChange={(e) =>
-                  setCustomRange((prev) => ({ ...prev, to: e.target.value }))
-                }
-                className="w-full"
-              />
-            </div>
-          )}
-          <div className="space-y-4">
-  <select
-    value={labelFilter}
-    onChange={(e) => setLabelFilter(e.target.value)}
+  <DatePicker
+    selectsRange
+    startDate={customRange[0]}
+    endDate={customRange[1]}
+    onChange={(update) => setCustomRange(update)}
+    isClearable
+    placeholderText="Selecteer datumrange"
+    dateFormat="dd-MM-yyyy"
     className="w-full border rounded px-3 py-2 text-sm"
-  >
-    <option value="">Alle labels</option>
-    {Array.from(new Set(labels.map((l) => l.label))).map((label) => (
-      <option key={label} value={label}>
-        {label}
-      </option>
-    ))}
-  </select>
-<div className="space-y-1">
-  {Array.from(
-    new Map(
-      labels
-        .filter((l) => !l.company_name)
-        .map((l) => [l.label, l])
-    ).values()
-  ).map((label) => (
-    <div
-      key={label.id}
-      className="flex items-center justify-between bg-gray-50 border rounded px-2 py-1 text-xs"
-    >
-      {editingLabelId === label.id ? (
-        <input
-  type="text"
-  value={editedLabelName}
-  onChange={(e) => setEditedLabelName(e.target.value)}
-  onKeyDown={async (e) => {
-    if (e.key === "Enter") {
-      if (!editedLabelName.trim()) {
-        alert("Labelnaam mag niet leeg zijn.");
-        return;
-      }
-
-      const { error } = await supabase
-  .from("labels")
-  .update({ label: editedLabelName.trim() })
-  .eq("user_id", user.id)
-  .eq("label", label.label);
+    popperClassName="!z-50 custom-datepicker"
+    calendarClassName="rounded-lg shadow-lg border border-gray-200"
+  />
+)}
 
 
-      if (error) {
-        console.log("Labels bijgewerkt.");
-      } else {
-        console.log("Labels bijgewerkt:");
-        setEditingLabelId(null);
-        setEditedLabelName("");
-        await refreshLabels();
-      }
-    }
-  }}
-  className="border text-xs px-1 py-0.5 rounded w-full"
-  autoFocus
-/>
 
-      ) : (
-        <span>{label.label}</span>
-      )}
 
-      <div className="flex gap-1">
-        {editingLabelId !== label.id && (
-          <button
-            onClick={() => {
-              setEditingLabelId(label.id);
-              setEditedLabelName(label.label);
-            }}
-            className="hover:text-blue-600"
-            title="Bewerken"
-          >
-            ✏️
-          </button>
-        )}
-        <button
-          onClick={async () => {
-            const { error } = await supabase
-              .from("labels")
-              .delete()
-              .eq("id", label.id);
-            if (error) {
-              console.error("Label verwijderen mislukt:", error.message);
-            } else {
-              refreshLabels();
-            }
-          }}
-          className="hover:text-red-600"
-          title="Verwijderen"
-        >
-          ✕
-        </button>
-      </div>
-    </div>
-  ))}
-</div>
-
-  <div className="flex">
-    <input
-      type="text"
-      placeholder="Nieuw label toevoegen"
-      value={newLabel}
-      onChange={(e) => setNewLabel(e.target.value)}
-      className="border px-2 py-1 text-sm rounded-l w-full"
-    />
+          <div className="mt-4">
+  <div className="flex items-center justify-between">
+    <h2 className="text-sm font-semibold text-gray-700">Labels</h2>
     <button
-      onClick={async () => {
-        if (!newLabel.trim()) return;
-        const { error } = await supabase.from("labels").insert({
-          user_id: user.id,
-          company_name: null,
-          label: newLabel.trim(),
-          color: getRandomPastelColor(),
-        });
-        if (error) {
-          console.error("Label toevoegen mislukt:", error.message);
-        } else {
-          setNewLabel("");
-          refreshLabels();
-        }
-      }}
-      className="bg-blue-600 text-white px-3 rounded-r text-sm"
+      onClick={() => setEditingLabelId("new")}
+      className="text-blue-600 text-xl leading-none hover:text-blue-800"
+      title="Nieuw label"
     >
       +
     </button>
   </div>
+
+  {editingLabelId === "new" && (
+    <div className="mt-2 space-y-2">
+      <input
+        type="text"
+        placeholder="Labelnaam"
+        value={newLabel}
+        onChange={(e) => setNewLabel(e.target.value)}
+        className="w-full border px-2 py-1 text-sm rounded"
+      />
+      <div className="flex gap-2">
+        <button
+          onClick={async () => {
+            if (!newLabel.trim()) return;
+            const { error } = await supabase.from("labels").insert({
+              user_id: user.id,
+              company_name: null,
+              label: newLabel.trim(),
+              color: getRandomColor(),
+            });
+            if (!error) {
+              setNewLabel("");
+              setEditingLabelId(null);
+              refreshLabels();
+            }
+          }}
+          className="bg-blue-600 text-white px-3 py-1 rounded text-sm"
+        >
+          Opslaan
+        </button>
+        <button
+          onClick={() => {
+            setNewLabel("");
+            setEditingLabelId(null);
+          }}
+          className="border px-3 py-1 rounded text-sm"
+        >
+          Annuleren
+        </button>
+      </div>
+    </div>
+  )}
+
+  <div className="mt-2 space-y-1">
+    {labels
+      .filter((l) => !l.company_name)
+      .map((label) => (
+        <div
+          key={label.id}
+          className="flex items-center justify-between px-2 py-1 rounded"
+          style={{ backgroundColor: label.color }}
+        >
+          <span className="text-xs">{label.label}</span>
+          <button
+            onClick={async () => {
+              await supabase.from("labels").delete().eq("id", label.id);
+              refreshLabels();
+            }}
+            className="text-xs text-gray-700 hover:text-red-600"
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+  </div>
 </div>
+
       
           <input
             type="number"
             placeholder="Minimaal bezoeken"
             value={minVisits}
             onChange={(e) => setMinVisits(e.target.value)}
-            className="w-full border rounded px-3 py-2 text-sm"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
           />
           <input
             type="number"
             placeholder="Minimale duur (s)"
             value={minDuration}
             onChange={(e) => setMinDuration(e.target.value)}
-            className="w-full border rounded px-3 py-2 text-sm"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
           />
           <select
   value={sortOrder}
   onChange={(e) => setSortOrder(e.target.value)}
-  className="w-full border rounded px-3 py-2 text-sm"
+  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
 >
   <option value="recent">Sorteer op laatst bezocht</option>
   <option value="aantal">Sorteer op aantal bezoeken</option>
 </select>
+
+<div className="space-y-2">
+  <label className="block text-sm font-bold text-gray-700">
+    Bezoekersgedrag
+  </label>
+  <div className="flex flex-col gap-1">
+    {[
+      { value: "first", label: "Eerste keer bezocht" },
+      { value: "returning", label: "Terugkerende bezoeker" },
+      { value: "highEngagement", label: "Hoge betrokkenheid" },
+    ].map((option) => (
+      <label key={option.value} className="inline-flex items-center gap-2">
+        <input
+          type="checkbox"
+          value={option.value}
+          checked={visitorTypeFilter.includes(option.value)}
+          onChange={(e) => {
+            if (e.target.checked) {
+              setVisitorTypeFilter([...visitorTypeFilter, option.value]);
+            } else {
+              setVisitorTypeFilter(visitorTypeFilter.filter((v) => v !== option.value));
+            }
+          }}
+          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        />
+        <span className="text-sm text-gray-700">{option.label}</span>
+      </label>
+    ))}
+  </div>
+</div>
+
+
+
+<button
+  onClick={resetFilters}
+  className="w-full mt-2 bg-gray-100 border border-gray-300 text-gray-700 px-3 py-2 rounded-lg text-sm hover:bg-gray-200 transition"
+>
+  Reset filters
+</button>
 
         </div>
 <div
@@ -558,7 +620,7 @@ return (
 <div
   ref={(el) => (columnRefs.current[1] = el)}
   className="flex flex-col h-full bg-white border border-gray-200 shadow"
-  style={{ flexBasis: "400px", flexShrink: 0 }}
+  style={{ flexBasis: "500px", flexShrink: 0 }}
 >
 
   <div className="bg-blue-50 border-b border-blue-200 p-3 space-y-1">
@@ -607,6 +669,10 @@ return (
   .map((company) => {
 
       const leads = groupedCompanies[company.company_name] || [];
+          const uniqueVisitorCount = new Set(
+      leads.map(l => l.anon_id || `onbekend-${l.id}`)
+    ).size;
+
       const totalDuration = leads.reduce(
         (sum, l) => sum + (l.duration_seconds || 0),
         0
@@ -614,6 +680,48 @@ return (
       const minutes = Math.floor(totalDuration / 60);
       const seconds = totalDuration % 60;
 
+      // Bepaal laatste bezoek
+const latestVisit = leads[0]?.timestamp
+  ? new Date(leads[0].timestamp)
+  : null;
+const now = new Date();
+const recencyDays = latestVisit
+  ? (now - latestVisit) / (1000 * 60 * 60 * 24)
+  : 999;
+
+// Normaliseer
+const visitsScore = Math.min(leads.length / 10, 1);
+const durationScore = Math.min(totalDuration / 600, 1);
+const recencyScore =
+  recencyDays < 1
+    ? 1
+    : recencyDays < 7
+    ? 0.7
+    : recencyDays < 30
+    ? 0.4
+    : 0.1;
+
+// Combineer
+const leadRating = Math.round(
+  (visitsScore * 0.4 +
+    durationScore * 0.3 +
+    recencyScore * 0.3) *
+    100
+);
+// Kies kleur per range
+let ratingColor = "#ef4444"; // standaard rood
+
+if (leadRating >= 80) {
+  ratingColor = "#22c55e"; // groen
+} else if (leadRating >= 61) {
+  ratingColor = "#eab308"; // geel
+} else if (leadRating >= 31) {
+  ratingColor = "#f97316"; // oranje
+}
+
+
+
+      new Set(leads.map(l => l.anon_id || `onbekend-${l.id}`)).size;
       return (
         <div
           key={company.company_name}
@@ -631,6 +739,9 @@ return (
 
         >
           <div className="flex justify-between items-start">
+           
+
+
             <div>
               <div className="flex items-center gap-2">
                 {company.company_domain && (
@@ -650,18 +761,41 @@ return (
               )}
               {company.company_domain && (
                 <p className="text-xs text-gray-500 truncate">
+
                   🌐 {company.company_domain}
                 </p>
+                
               )}
             </div>
             <div className="text-right">
               <p className="text-xs text-gray-500">
-  {new Set(leads.map(l => l.anon_id)).size} bezoekers
+  {uniqueVisitorCount} {uniqueVisitorCount === 1 ? "bezoeker" : "bezoekers"}
 </p>
 
               <p className="text-xs text-gray-500">
                 {minutes}m {seconds}s
               </p>
+              <div className="mt-3">
+  <div className="w-full bg-gray-200 rounded-full h-2 relative">
+    <div
+      className="h-2 rounded-full"
+      style={{
+        width: `${leadRating}%`,
+        backgroundColor: ratingColor
+      }}
+    ></div>
+  </div>
+  <div className="text-xs text-gray-500 mt-1">
+    Lead score: {leadRating}/100
+  </div>
+</div>
+<div className="text-[10px] text-gray-400">
+  {leadRating < 31 && "Laag"}
+  {leadRating >= 31 && leadRating <= 60 && "Gemiddeld"}
+  {leadRating >= 61 && leadRating <= 79 && "Hoog"}
+  {leadRating >= 80 && "Zeer hoog"}
+</div>
+
             </div>
           </div>
 
@@ -696,130 +830,40 @@ return (
               </span>
             ))}
 
-          <button
-  onClick={(e) => {
-    e.stopPropagation();
-    toggleLabelMenu(company.company_name);
-  }}
-  className="mt-2 inline-flex items-center gap-1 text-blue-600 text-xs hover:underline"
->
-  + Label
-</button>
-
-
-          {openLabelMenus[company.company_name] && (
-            <div ref={labelMenuRef} className="mt-2 space-y-2 bg-gray-50 border rounded p-2">
-              {/* Select bestaand label */}
-              <select
-                onChange={async (e) => {
-                  const selected = e.target.value;
-                  if (!selected) return;
-                  const alreadyExists = labels.find(
-                    (l) =>
-                      l.company_name === company.company_name &&
-                      l.label === selected
-                  );
-                  if (alreadyExists) {
-                    alert("Dit label is al gekoppeld aan dit bedrijf.");
-                    return;
-                  }
-                  const { error } = await supabase.from("labels").insert({
-                    user_id: user.id,
-                    company_name: company.company_name,
-                    label: selected,
-                    color: getRandomPastelColor(),
-                  });
-                  if (error) {
-                    console.error("Label koppelen mislukt:", error.message);
-                  } else {
-                    refreshLabels();
-                  }
-                }}
-                defaultValue=""
-                className="w-full border rounded px-2 py-1 text-sm"
-              >
-                <option value="" disabled>
-                  Kies bestaand label
-                </option>
-                {Array.from(new Set(labels.map((l) => l.label))).map((label) => (
-                  <option key={label} value={label}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-
-              {/* Nieuw label toevoegen */}
-              <div className="flex">
-                <input
-                  type="text"
-                  placeholder="Nieuw label"
-                  value={newLabel}
-                  onChange={(e) => setNewLabel(e.target.value)}
-                  className="border px-2 py-1 text-sm rounded-l w-full"
-                />
-                <button
-                  onClick={async () => {
-                    const trimmed = newLabel.trim();
-                    if (!trimmed) return;
-                    const alreadyExists = labels.find(
-                      (l) =>
-                        l.company_name === company.company_name &&
-                        l.label === trimmed
-                    );
-                    if (alreadyExists) {
-                      alert("Dit label is al gekoppeld aan dit bedrijf.");
-                      return;
-                    }
-                    const { error } = await supabase.from("labels").insert({
-                      user_id: user.id,
-                      company_name: company.company_name,
-                      label: trimmed,
-                      color: getRandomPastelColor(),
-                    });
-                    if (error) {
-                      console.error("Label toevoegen mislukt:", error.message);
-                    } else {
-                      setNewLabel("");
-                      refreshLabels();
-                    }
-                  }}
-                  className="bg-blue-600 text-white px-3 rounded-r text-sm"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-          )}
+          
         </div>
       );
     })}
-    <div className="flex justify-center gap-2 mt-4">
+ <div className="flex justify-center items-center gap-2 mt-6">
   <button
     onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
     disabled={currentPage === 1}
-    className={`px-3 py-1 border rounded ${
+    className={`flex items-center gap-1 px-3 py-1.5 rounded-full border shadow-sm text-sm transition ${
       currentPage === 1
-        ? "bg-gray-200 text-gray-500 cursor-not-allowed"
-        : "bg-white hover:bg-gray-50"
+        ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+        : "bg-white hover:bg-gray-50 text-gray-700"
     }`}
   >
-    Vorige
+    ◀
+    <span className="hidden md:inline">Vorige</span>
   </button>
-  <span className="px-3 py-1 text-sm text-gray-700">
+  <span className="px-3 py-1.5 text-sm text-gray-600 border rounded-full bg-gray-50 shadow-sm">
     Pagina {currentPage}
   </span>
   <button
     onClick={() => setCurrentPage((prev) => prev + 1)}
     disabled={currentPage * itemsPerPage >= companies.length}
-    className={`px-3 py-1 border rounded ${
+    className={`flex items-center gap-1 px-3 py-1.5 rounded-full border shadow-sm text-sm transition ${
       currentPage * itemsPerPage >= companies.length
-        ? "bg-gray-200 text-gray-500 cursor-not-allowed"
-        : "bg-white hover:bg-gray-50"
+        ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+        : "bg-white hover:bg-gray-50 text-gray-700"
     }`}
   >
-    Volgende
+    <span className="hidden md:inline">Volgende</span>
+    ▶
   </button>
 </div>
+
 </div>
 </div>
 
@@ -831,39 +875,107 @@ return (
 
 <div className="flex flex-col flex-grow overflow-y-auto bg-white border border-gray-200 p-4 shadow">
   {selectedCompany ? (
-    <div className="bg-white border p-4 shadow-sm">
+    <div className="bg-white border border-gray-200 rounded-xl p-4 shadow">
       {selectedCompanyData && (
         <>
-          <div className="mb-4 flex items-center gap-3">
-            {selectedCompanyData.company_domain && (
-              <img
-                src={`https://img.logo.dev/${selectedCompanyData.company_domain}?token=pk_R_r8ley_R_C7tprVCpFASQ`}
-                alt="logo"
-                className="w-8 h-8 object-contain rounded border"
-                onError={(e) => (e.target.style.display = "none")}
-              />
-            )}
-            <div>
-              <div className="font-semibold text-gray-800">
-                {selectedCompanyData.company_name}
-              </div>
-              {selectedCompanyData.linkedin_url && (
-                <a
-                  href={selectedCompanyData.linkedin_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-600 text-sm hover:underline"
+         <div className="mb-4 flex items-center gap-3">
+  {selectedCompanyData.company_domain && (
+    <img
+      src={`https://img.logo.dev/${selectedCompanyData.company_domain}?token=pk_R_r8ley_R_C7tprVCpFASQ`}
+      alt="logo"
+      className="w-14 h-14 object-contain rounded-xl border border-gray-200 shadow"
+      onError={(e) => (e.target.style.display = "none")}
+    />
+  )}
+  <div>
+    <div className="flex items-center gap-2 relative">
+      <span className="font-semibold text-gray-800">
+        {selectedCompanyData.company_name}
+      </span>
+      <div className="relative">
+        <button
+          onClick={() =>
+            setOpenLabelMenus({
+              [`detail:${selectedCompanyData.company_name}`]: true,
+            })
+          }
+          className="inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-full shadow transition"
+        >
+          <span className="text-base leading-none">+</span>
+          Label toevoegen
+        </button>
+
+        {openLabelMenus[`detail:${selectedCompanyData.company_name}`] && (
+          <div
+            ref={labelMenuRef}
+            className="absolute left-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg p-2 z-50"
+          >
+            {labels
+              .filter((l) => !l.company_name)
+              .map((label) => (
+                <button
+                  key={label.id}
+                  onClick={async () => {
+                    const alreadyExists = labels.find(
+                      (l2) =>
+                        l2.company_name === selectedCompanyData.company_name &&
+                        l2.label === label.label
+                    );
+                    if (alreadyExists) return;
+
+                    await supabase.from("labels").insert({
+                      user_id: user.id,
+                      company_name: selectedCompanyData.company_name,
+                      label: label.label,
+                      color: label.color,
+                    });
+                    refreshLabels();
+                    setOpenLabelMenus({});
+                  }}
+                  className="w-full flex items-center justify-start text-xs px-2 py-1 mb-1 rounded hover:bg-gray-100 transition"
+                  style={{ backgroundColor: label.color }}
                 >
-                  LinkedIn-profiel
-                </a>
-              )}
-              {selectedCompanyData.kvk_number && (
-                <div className="text-xs text-gray-500">
-                  KVK: {selectedCompanyData.kvk_number}
-                </div>
-              )}
-            </div>
+                  {label.label}
+                </button>
+              ))}
           </div>
+        )}
+      </div>
+    </div>
+
+    {selectedCompanyData.linkedin_url && (
+      <a
+        href={selectedCompanyData.linkedin_url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-blue-600 text-sm hover:underline"
+      >
+        LinkedIn-profiel
+      </a>
+    )}
+    {selectedCompanyData.kvk_number && (
+      <div className="text-xs text-gray-500">
+        KVK: {selectedCompanyData.kvk_number}
+      </div>
+    )}
+  </div>
+</div>
+
+
+<div className="mb-2 flex flex-wrap gap-1">
+  {labels
+    .filter((l) => l.company_name === selectedCompany)
+    .map((label) => (
+      <span
+        key={label.id}
+        style={{ backgroundColor: label.color }}
+        className="inline-flex items-center text-xs text-gray-700 px-2 py-0.5 rounded-full"
+      >
+        {label.label}
+      </span>
+    ))}
+</div>
+
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             {/* Bedrijfsgegevens */}
@@ -918,7 +1030,7 @@ return (
 
 
             {/* OpenStreetMap */}
-            <div className="w-full h-48 rounded border overflow-hidden">
+            <div className="w-full h-65 rounded-xl border border-gray-200 shadow overflow-hidden">
   {mapCoords ? (
     <iframe
       title="Locatie kaart"
@@ -949,7 +1061,11 @@ return (
           return (
             <div
               key={visitorId}
-              className="rounded-lg border bg-gray-50 p-4 mb-4 shadow-sm"
+              className={`mb-6 bg-white border border-gray-200 rounded-xl p-4 shadow hover:shadow-lg hover:scale-[1.02] transition-transform duration-200 ${
+  isOpen ? "bg-blue-50" : ""
+}`}
+
+
             >
               <button
                 onClick={() => toggleVisitor(visitorId)}

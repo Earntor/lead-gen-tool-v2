@@ -81,19 +81,27 @@ export default function Layout({ children }) {
                   className="flex items-center gap-1 border border-gray-300 rounded px-3 py-1.5 text-sm hover:bg-gray-50 transition"
                 >
                   <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-4 w-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1M12 12v8m0 0l-4-4m4 4l4-4m0-4V4m0 0L8 4"
-                    />
-                  </svg>
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 24 24"
+  fill="none"
+  className="w-4 h-4"
+>
+  <path
+    d="M12 3V16M8 12l4 4 4-4"
+    stroke="#2CA9BC"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  />
+  <path
+    d="M20 16v4a1.08,1.08,0,0,1-1.14 1H5.14A1.08,1.08,0,0,1,4,20V16"
+    stroke="#000"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  />
+</svg>
+
                   Export
                 </button>
               )}
