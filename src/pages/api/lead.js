@@ -35,6 +35,19 @@ export default async function handler(req, res) {
 
   const { ip_address, user_id, page_url } = req.body;
 
+
+  try {
+  const url = new URL(page_url);
+  if (url.hostname.endsWith("leadtool.nl")) {
+    console.log("⛔️ dashboard-bezoek gedetecteerd, wordt niet opgeslagen:", page_url);
+    return res.status(200).json({ ignored: true, reason: "dashboard visit" });
+  }
+} catch (e) {
+  console.warn("⚠️ Ongeldige page_url ontvangen, genegeerd:", page_url);
+  return res.status(200).json({ ignored: true, reason: "invalid page_url" });
+}
+
+
   try {
     console.log('--- API LEAD DEBUG ---');
     console.log('Request body:', { ip_address, user_id, page_url });

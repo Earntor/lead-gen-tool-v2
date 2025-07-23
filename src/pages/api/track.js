@@ -26,6 +26,18 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "projectId and pageUrl are required" })
   }
 
+  try {
+  const url = new URL(pageUrl);
+  if (url.hostname.endsWith("leadtool.nl")) {
+    console.log("❌ Dashboard bezoek genegeerd in backend:", pageUrl);
+    return res.status(200).json({ success: true, message: "Dashboard visit ignored" });
+  }
+} catch (e) {
+  console.warn("⚠️ Ongeldige pageUrl ontvangen, genegeerd:", pageUrl);
+  return res.status(200).json({ success: true, message: "Invalid pageUrl ignored" });
+}
+
+
   // IP ophalen
   const ipAddress =
     req.headers["x-forwarded-for"]?.split(",")[0] ||

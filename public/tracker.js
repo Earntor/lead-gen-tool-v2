@@ -1,5 +1,12 @@
 (function () {
   try {
+    // ⛔️ STOP als we op het dashboard zitten (leadtool.nl of subdomeinen daarvan)
+    const currentHost = window.location.hostname;
+    if (currentHost.endsWith("leadtool.nl")) {
+      console.log("Tracking gestopt: dit is het dashboard.");
+      return;
+    }
+
     const scriptTag = document.currentScript;
     const projectId = scriptTag.getAttribute("data-project-id");
     if (!projectId) return;

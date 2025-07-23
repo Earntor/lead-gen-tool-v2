@@ -138,11 +138,13 @@ console.log("Gelezen leads:", allData);
     const lead = payload.new;
 
     const isValidVisitor =
-      lead.user_id === user.id &&
-      lead.source === "tracker" && // ✅ alleen via tracking script
-      !!lead.ip_address &&
-      !!lead.page_url &&
-      !!lead.timestamp;
+  lead.user_id === user.id &&
+  lead.source === "tracker" &&
+  !!lead.ip_address &&
+  !!lead.page_url &&
+  !!lead.timestamp &&
+  !lead.page_url.includes("leadtool.nl");
+
 
     if (isValidVisitor) {
       setAllLeads((prev) => [lead, ...prev]);
@@ -331,6 +333,14 @@ console.log("Gelezen leads:", allData);
     acc[lead.company_name].push(lead);
     return acc;
   }, {});
+
+  const fullVisitMap = allLeads.reduce((acc, lead) => {
+  if (!lead.company_name) return acc;
+  if (!acc[lead.company_name]) acc[lead.company_name] = [];
+  acc[lead.company_name].push(lead);
+  return acc;
+}, {});
+
 
   const activeCompanyNames = Object.keys(groupedCompanies).filter(
     (companyName) => {
@@ -726,7 +736,7 @@ return (
     .slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
   .map((company) => {
 
-      const leads = groupedCompanies[company.company_name] || [];
+      const leads = fullVisitMap[company.company_name] || [];
           const uniqueVisitorCount = new Set(
       leads.map(l => l.anon_id || `onbekend-${l.id}`)
     ).size;
