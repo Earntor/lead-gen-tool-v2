@@ -16,19 +16,9 @@ export default function Account() {
   const [updating, setUpdating] = useState(false)
   const [copySuccess, setCopySuccess] = useState('')
 
-  const trackingScript = `<script>
-(function(){
-  fetch("https://jouwdomein.com/api/track-lead", {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({
-      projectId: "${user?.id}",
-      pageUrl: window.location.href,
-      anonId: localStorage.getItem('anonId') || null
-    })
-  });
-})();
-</script>`
+  const trackingScript = `<script src="https://leadtool.nl/tracker.js" data-project-id="${user?.id}" async></script>`;
+
+
 
   useEffect(() => {
     const fetchUser = async () => {

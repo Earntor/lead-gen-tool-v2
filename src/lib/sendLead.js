@@ -1,33 +1,62 @@
 // lib/sendLead.js
 
-export async function sendLead({ user_id, page_url }) {
+// Haal een waarde op uit de URL (zoals utm_source)
+function getUTMParam(param) {
+  if (typeof window === 'undefined') return null;
+  const urlParams = new URLSearchParams(window.location.search);
+  return urlParams.get(param);
+}
+
+// Genereer of haal bestaande anon_id uit localStorage
+function getOrCreateAnonId() {
+  let anonId = localStorage.getItem("anon_id");
+  if (!anonId) {
+    anonId = crypto.randomUUID();
+    localStorage.setItem("anon_id", anonId);
+  }
+  return anonId;
+}
+
+export async function sendLead({ user_id }) {
   try {
-    // 🔍 Haal het IP-adres van de bezoeker op
-    const ipRes = await fetch('https://api.ipify.org?format=json')
-    const ipData = await ipRes.json()
-    const ip_address = ipData.ip
-
-    // 📤 Verstuur de lead naar je eigen API
-    const res = await fetch('/api/lead', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        user_id,
-        ip_address,
-        page_url,
-      }),
-    })
-
-    const data = await res.json()
-
-    if (!res.ok) {
-      throw new Error(data.error || 'Fout bij opslaan lead')
+    if (!user_id) {
+      throw new Error("user_id is verplicht in sendLead");
     }
 
-    console.log('✅ Lead verstuurd:', data.message)
+    const page_url = window.location.href;
+    const referrer = document.referrer || null;
+    const anon_id = getOrCreateAnonId();
+    const utm_source = getUTMParam("utm_source");
+    const utm_medium = getUTMParam("utm_medium");
+    const utm_campaign = getUTMParam("utm_campaign");
+
+    const payload = {
+      user_id,
+      page_url,
+      anon_id,
+      referrer,
+      utm_source,
+      utm_medium,
+      utm_campaign,
+      timestamp: new Date().toISOString(),
+    };
+
+    const res = await fetch("/api/lead", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || "Fout bij versturen van lead");
+    }
+
+    console.log("✅ Lead verstuurd:", data.message || "success");
   } catch (err) {
-    console.error('❌ Fout bij versturen lead:', err.message)
+    console.error("❌ sendLead fout:", err.message);
   }
 }

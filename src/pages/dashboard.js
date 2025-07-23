@@ -25,7 +25,7 @@ export default function Dashboard() {
   const [newLabel, setNewLabel] = useState("");
   const [openLabelMenus, setOpenLabelMenus] = useState({});
   const [editingLabelId, setEditingLabelId] = useState(null);
-  const [editedLabelName, setEditedLabelName] = useState("");
+  const [editLabelText, setEditLabelText] = useState("");
   const labelMenuRef = useRef(null);
   const companyRefs = useRef({});
   const columnRefs = useRef([]);
@@ -46,8 +46,11 @@ export default function Dashboard() {
   
   function getRandomColor() {
   const hue = Math.floor(Math.random() * 360);
-  return `hsl(${hue}, 80%, 50%)`;
+  const saturation = 70 + Math.random() * 10;  // 70–80%
+  const lightness = 85 + Math.random() * 10;   // 85–95%
+  return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
 }
+
 
 
   function exportLeadsToCSV(leads) {
@@ -98,11 +101,25 @@ export default function Dashboard() {
       setUser(user);
 
       const { data: allData } = await supabase
-        .from("leads")
-        .select("*")
-        .eq("user_id", user.id)
-        .not("company_name", "is", null);
-      setAllLeads(allData || []);
+  .from("leads")
+  .select(`
+    *,
+    phone,
+    email,
+    linkedin_url,
+    facebook_url,
+    instagram_url,
+    twitter_url,
+    meta_description,
+    category
+  `)
+  .eq("user_id", user.id)
+  .not("company_name", "is", null);
+
+setAllLeads(allData || []);
+console.log("Gelezen leads:", allData);
+
+
 
       const { data: labelData } = await supabase
         .from("labels")
@@ -113,16 +130,29 @@ export default function Dashboard() {
       setLoading(false);
 
       const subscription = supabase
-        .channel("public:leads")
+        .channel(`leads:user:${user.id}`)
         .on(
-          "postgres_changes",
-          { event: "INSERT", schema: "public", table: "leads" },
-          (payload) => {
-            if (payload.new.user_id === user.id) {
-              setAllLeads((prev) => [payload.new, ...prev]);
-            }
-          }
-        )
+  "postgres_changes",
+  { event: "INSERT", schema: "public", table: "leads" },
+  (payload) => {
+    const lead = payload.new;
+
+    const isValidVisitor =
+      lead.user_id === user.id &&
+      lead.source === "tracker" && // ✅ alleen via tracking script
+      !!lead.ip_address &&
+      !!lead.page_url &&
+      !!lead.timestamp;
+
+    if (isValidVisitor) {
+      setAllLeads((prev) => [lead, ...prev]);
+    } else {
+      console.warn("Lead genegeerd (geen echte bezoeker):", lead);
+    }
+  }
+)
+
+
         .subscribe();
       return () => {
         supabase.removeChannel(subscription);
@@ -136,7 +166,7 @@ export default function Dashboard() {
       .from("labels")
       .select("*")
       .eq("user_id", user.id);
-    setLabels(data || []);
+    setLabels([...data] || []);
   };
 
   const toggleVisitor = (visitorId) => {
@@ -319,31 +349,48 @@ export default function Dashboard() {
   : null;
 
   useEffect(() => {
-  if (
-    selectedCompanyData &&
-    selectedCompanyData.kvk_street &&
-    selectedCompanyData.kvk_city
-  ) {
-    const query = `${selectedCompanyData.kvk_street}, ${selectedCompanyData.kvk_city}`;
-    fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json`
-    )
-      .then((res) => res.json())
-      .then((data) => {
-        if (data && data.length > 0) {
-          setMapCoords({
-            lat: data[0].lat,
-            lon: data[0].lon,
-          });
-        }
-      })
-      .catch((err) => {
-        console.error("Geocode error:", err);
-      });
-  } else {
-    setMapCoords(null); // reset als je ander bedrijf kiest
+  if (!selectedCompanyData) {
+    setMapCoords(null);
+    return;
   }
+
+  // ✅ Gebruik gecorrigeerde lat/lon als die er is
+  if (selectedCompanyData.domain_lat && selectedCompanyData.domain_lon) {
+    setMapCoords({
+      lat: selectedCompanyData.domain_lat,
+      lon: selectedCompanyData.domain_lon,
+    });
+    return;
+  }
+
+  // 🔄 Fallback: zoeken op adres
+  let straat = selectedCompanyData.domain_address || selectedCompanyData.kvk_street;
+  let stad = selectedCompanyData.domain_city || selectedCompanyData.kvk_city;
+
+  if (!straat || !stad) {
+    setMapCoords(null);
+    return;
+  }
+
+  const query = `${straat}, ${stad}`;
+  fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json`)
+    .then((res) => res.json())
+    .then((data) => {
+      if (data && data.length > 0) {
+        setMapCoords({
+          lat: data[0].lat,
+          lon: data[0].lon,
+        });
+      } else {
+        setMapCoords(null);
+      }
+    })
+    .catch((err) => {
+      console.error("Geocode error:", err);
+      setMapCoords(null);
+    });
 }, [selectedCompanyData]);
+
 
 const filteredActivities = filteredLeads.filter(
   (l) => l.company_name === selectedCompany
@@ -425,7 +472,7 @@ return (
 
         <div
   ref={(el) => (columnRefs.current[0] = el)}
-  className="flex flex-col h-full overflow-y-auto bg-gray-50 border border-gray-200 p-4 shadow-md rounded-xl space-y-4"
+  className="flex flex-col h-full overflow-y-auto bg-gray-50 border border-gray-200 p-4 shadow-md space-y-4"
   style={{ flexBasis: "250px", flexShrink: 0 }}
 >
 
@@ -467,28 +514,29 @@ return (
 
 
 
-          <div className="mt-4">
-  <div className="flex items-center justify-between">
-    <h2 className="text-sm font-semibold text-gray-700">Labels</h2>
+          <div className="mt-6">
+  <div className="flex items-center justify-between mb-2">
+    <h2 className="text-sm font-semibold text-gray-800 tracking-wide">
+      Labels
+    </h2>
     <button
       onClick={() => setEditingLabelId("new")}
-      className="text-blue-600 text-xl leading-none hover:text-blue-800"
-      title="Nieuw label"
+      className="flex items-center text-sm text-blue-600 hover:text-blue-800 font-medium transition-colors"
     >
-      +
+      <span className="text-base mr-1">＋</span> Nieuw
     </button>
   </div>
 
   {editingLabelId === "new" && (
-    <div className="mt-2 space-y-2">
+    <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 shadow-inner mb-4">
       <input
         type="text"
         placeholder="Labelnaam"
         value={newLabel}
         onChange={(e) => setNewLabel(e.target.value)}
-        className="w-full border px-2 py-1 text-sm rounded"
+        className="w-full border border-gray-300 px-3 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
       />
-      <div className="flex gap-2">
+      <div className="flex justify-end gap-2 mt-3">
         <button
           onClick={async () => {
             if (!newLabel.trim()) return;
@@ -504,7 +552,7 @@ return (
               refreshLabels();
             }
           }}
-          className="bg-blue-600 text-white px-3 py-1 rounded text-sm"
+          className="bg-blue-600 text-white px-4 py-1.5 text-sm rounded-lg hover:bg-blue-700 transition"
         >
           Opslaan
         </button>
@@ -513,7 +561,7 @@ return (
             setNewLabel("");
             setEditingLabelId(null);
           }}
-          className="border px-3 py-1 rounded text-sm"
+          className="border border-gray-300 px-4 py-1.5 text-sm rounded-lg hover:bg-gray-100 transition"
         >
           Annuleren
         </button>
@@ -521,29 +569,39 @@ return (
     </div>
   )}
 
-  <div className="mt-2 space-y-1">
+  <div className="flex flex-wrap gap-2 mt-2">
     {labels
       .filter((l) => !l.company_name)
       .map((label) => (
         <div
-          key={label.id}
-          className="flex items-center justify-between px-2 py-1 rounded"
-          style={{ backgroundColor: label.color }}
-        >
-          <span className="text-xs">{label.label}</span>
+  key={label.id}
+  className="flex items-center px-3 py-1.5 rounded-full shadow-sm text-xs font-medium text-black"
+  style={{ backgroundColor: label.color }}
+>
+
+          <span className="mr-2">{label.label}</span>
           <button
             onClick={async () => {
-              await supabase.from("labels").delete().eq("id", label.id);
-              refreshLabels();
+              await supabase
+  .from("labels")
+  .delete()
+  .match({
+    label: label.label,
+    user_id: user.id,
+  });
+
+              await refreshLabels();
             }}
-            className="text-xs text-gray-700 hover:text-red-600"
+            className="text-black/80 hover:text-black ml-1"
+            title="Verwijder label"
           >
-            ✕
+            ×
           </button>
         </div>
       ))}
   </div>
 </div>
+
 
       
           <input
@@ -785,9 +843,16 @@ if (leadRating >= 80) {
       }}
     ></div>
   </div>
-  <div className="text-xs text-gray-500 mt-1">
-    Lead score: {leadRating}/100
+ <div className="text-xs text-gray-500 mt-1">
+  Lead score: {leadRating}/100
+</div>
+
+{company.confidence !== null && company.confidence !== undefined && (
+  <div className="text-[11px] text-gray-500 mt-1">
+    🔎 Confidence: {(company.confidence * 100).toFixed(0)}%
   </div>
+)}
+
 </div>
 <div className="text-[10px] text-gray-400">
   {leadRating < 31 && "Laag"}
@@ -943,16 +1008,6 @@ if (leadRating >= 80) {
       </div>
     </div>
 
-    {selectedCompanyData.linkedin_url && (
-      <a
-        href={selectedCompanyData.linkedin_url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-blue-600 text-sm hover:underline"
-      >
-        LinkedIn-profiel
-      </a>
-    )}
     {selectedCompanyData.kvk_number && (
       <div className="text-xs text-gray-500">
         KVK: {selectedCompanyData.kvk_number}
@@ -979,54 +1034,131 @@ if (leadRating >= 80) {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             {/* Bedrijfsgegevens */}
-            <div className="space-y-1 text-sm text-gray-700">
-  {selectedCompanyData.kvk_street && (
-    <div>
-      <strong>Straat:</strong> {selectedCompanyData.kvk_street}
+           <div className="space-y-4 text-sm text-gray-700 bg-white p-6 rounded-2xl border border-gray-200 shadow-lg">
+  <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+    📇 Bedrijfsprofiel
+  </h3>
+
+  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+    {/* Adres */}
+    {(selectedCompanyData.domain_address || selectedCompanyData.domain_city) && (
+      <div>
+        <p className="text-xs font-semibold text-gray-600">Adres</p>
+        <p className="text-gray-800 leading-snug">
+          {selectedCompanyData.domain_address && <>{selectedCompanyData.domain_address}<br /></>}
+          {selectedCompanyData.domain_postal_code && selectedCompanyData.domain_city && (
+            <>
+              {selectedCompanyData.domain_postal_code} {selectedCompanyData.domain_city}<br />
+            </>
+          )}
+          {selectedCompanyData.domain_country && <>{selectedCompanyData.domain_country}</>}
+        </p>
+      </div>
+    )}
+
+    {/* Website */}
+    {selectedCompanyData.company_domain && (
+      <div>
+        <p className="text-xs font-semibold text-gray-600">Website</p>
+        <a
+          href={`https://${selectedCompanyData.company_domain}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-600 hover:underline break-words"
+        >
+          {selectedCompanyData.company_domain}
+        </a>
+      </div>
+    )}
+
+    {/* Email */}
+    {selectedCompanyData.email && (
+      <div>
+        <p className="text-xs font-semibold text-gray-600">E-mail</p>
+        <a
+          href={`mailto:${selectedCompanyData.email}`}
+          className="text-blue-600 hover:underline break-all"
+        >
+          {selectedCompanyData.email}
+        </a>
+      </div>
+    )}
+
+    {/* Telefoon */}
+    {selectedCompanyData.phone && (
+      <div>
+        <p className="text-xs font-semibold text-gray-600">Telefoon</p>
+        <p className="text-gray-800">{selectedCompanyData.phone}</p>
+      </div>
+    )}
+
+    {/* Social links */}
+    {selectedCompanyData.linkedin_url && (
+      <div>
+        <p className="text-xs font-semibold text-gray-600">LinkedIn</p>
+        <a
+          href={selectedCompanyData.linkedin_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-600 hover:underline"
+        >
+          Bekijk profiel
+        </a>
+      </div>
+    )}
+    {selectedCompanyData.facebook_url && (
+      <div>
+        <p className="text-xs font-semibold text-gray-600">Facebook</p>
+        <a
+          href={selectedCompanyData.facebook_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-600 hover:underline"
+        >
+          Facebook-pagina
+        </a>
+      </div>
+    )}
+    {selectedCompanyData.instagram_url && (
+      <div>
+        <p className="text-xs font-semibold text-gray-600">Instagram</p>
+        <a
+          href={selectedCompanyData.instagram_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-600 hover:underline"
+        >
+          Instagram-profiel
+        </a>
+      </div>
+    )}
+    {selectedCompanyData.twitter_url && (
+      <div>
+        <p className="text-xs font-semibold text-gray-600">Twitter</p>
+        <a
+          href={selectedCompanyData.twitter_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-600 hover:underline"
+        >
+          Twitter-profiel
+        </a>
+      </div>
+    )}
+  </div>
+
+  {/* Meta description */}
+  {selectedCompanyData.meta_description && (
+    <div className="mt-4">
+      <p className="text-xs font-semibold text-gray-600">Beschrijving</p>
+      <p className="text-gray-700 leading-snug whitespace-pre-wrap">
+        {selectedCompanyData.meta_description}
+      </p>
     </div>
   )}
-  {selectedCompanyData.kvk_postal_code && (
-    <div>
-      <strong>Postcode:</strong> {selectedCompanyData.kvk_postal_code}
-    </div>
-  )}
-  {selectedCompanyData.kvk_city && (
-    <div>
-      <strong>Stad:</strong> {selectedCompanyData.kvk_city}
-    </div>
-  )}
-  {selectedCompanyData.company_domain && (
-    <div>
-      <strong>Website:</strong>{" "}
-      <a
-        href={`https://${selectedCompanyData.company_domain}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-blue-600 hover:underline"
-      >
-        {selectedCompanyData.company_domain}
-      </a>
-    </div>
-  )}
-  {selectedCompanyData.linkedin_url && (
-    <div>
-      <strong>LinkedIn:</strong>{" "}
-      <a
-        href={selectedCompanyData.linkedin_url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-blue-600 hover:underline"
-      >
-        Bekijk profiel
-      </a>
-    </div>
-  )}
-  {selectedCompanyData.kvk_number && (
-    <div>
-      <strong>KVK:</strong> {selectedCompanyData.kvk_number}
-    </div>
-  )}
- </div>
+</div>
+
+
 
 
             {/* OpenStreetMap */}
@@ -1076,19 +1208,31 @@ if (leadRating >= 80) {
               </button>
               {isOpen && (
                 <div className="mt-3 space-y-2">
+                  
                   <ul className="divide-y divide-gray-200 text-sm">
-  {sessions.map((s, idx) => (
+  {[...sessions].reverse().map((s, idx) => (
     <li key={s.id} className="py-3">
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-2">
         <div className="truncate">
-          <span className="text-gray-800">{s.page_url}</span>
-          {idx === 0 && (
-            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-blue-50 text-xs text-blue-700">
-              laatste bekeken pagina
-            </span>
+          <span className="text-gray-800 text-sm">
+  🔗 {s.page_url}
+</span>
+
+
+          {/* Toon UTM onder de oorspronkelijk eerste pagina (nu laatste in reversed lijst) */}
+          {idx === sessions.length - 1 && (s.utm_source || s.utm_medium) && (
+            <div className="text-xs text-gray-500 mt-1">
+              🎯 via{" "}
+              <span className="font-medium text-gray-700">
+                {s.utm_source || "onbekend"}
+              </span>
+              {s.utm_medium && (
+                <span className="text-gray-400"> / {s.utm_medium}</span>
+              )}
+            </div>
           )}
         </div>
-        <div className="flex flex-col md:flex-row md:gap-4 text-gray-500 text-xs">
+        <div className="flex flex-col md:flex-row md:gap-4 text-gray-500 text-xs text-right md:text-left">
           <span>{new Date(s.timestamp).toLocaleString()}</span>
           <span>{s.duration_seconds ?? "-"} sec</span>
         </div>
@@ -1096,6 +1240,7 @@ if (leadRating >= 80) {
     </li>
   ))}
 </ul>
+
 
 
                 </div>
