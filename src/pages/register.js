@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useRouter } from 'next/router'
 import PasswordInput from '@/components/PasswordInput'
 import ReCAPTCHA from 'react-google-recaptcha'
+import Link from 'next/link'
 
 export default function Register() {
   const [email, setEmail] = useState('')
@@ -149,9 +150,9 @@ export default function Register() {
 
         <p className="text-sm text-center text-gray-600 mt-4">
           Heb je al een account?{' '}
-          <a href="/login" className="text-blue-600 hover:underline">
+          <Link href="/login" className="text-blue-600 hover:underline">
             Log dan hier in
-          </a>
+          </Link>
         </p>
       </form>
     </div>

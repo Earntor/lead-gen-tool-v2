@@ -3,6 +3,7 @@ import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabaseClient'
 import ReCAPTCHA from 'react-google-recaptcha'
 import PasswordInput from '@/components/PasswordInput'
+import Link from 'next/link'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -146,14 +147,16 @@ export default function Login() {
         <div className="text-sm text-center text-gray-600 mt-4 space-y-2">
           <p>
             Nog geen account?{' '}
-            <a href="/register" className="text-blue-600 hover:underline">
-              Registreer hier
-            </a>
+            <Link href="/register" className="text-blue-600 hover:underline">
+  Registreer hier
+</Link>
+
           </p>
           <p>
-            <a href="/reset" className="text-blue-600 hover:underline">
-              Wachtwoord vergeten?
-            </a>
+            <Link href="/reset" className="text-blue-600 hover:underline">
+  Wachtwoord vergeten?
+</Link>
+
           </p>
         </div>
       </form>
