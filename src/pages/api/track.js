@@ -28,7 +28,7 @@ export default async function handler(req, res) {
 
   try {
   const url = new URL(pageUrl);
-  if (url.hostname.endsWith("leadtool.nl")) {
+  if (url.hostname.endsWith("vercep.app")) {
     console.log("❌ Dashboard bezoek genegeerd in backend:", pageUrl);
     return res.status(200).json({ success: true, message: "Dashboard visit ignored" });
   }

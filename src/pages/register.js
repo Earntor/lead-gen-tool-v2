@@ -56,8 +56,16 @@ export default function Register() {
         <h2 className="text-2xl font-bold text-gray-800">Account aanmaken</h2>
 
         {message && (
-          <p className="text-sm text-center text-red-600">{message}</p>
-        )}
+  <p
+    className={`text-sm text-center ${
+      message.startsWith('Registratie gelukt')
+        ? 'text-green-700'
+        : 'text-red-600'
+    }`}
+  >
+    {message}
+  </p>
+)}
 
         <div>
           <label htmlFor="email" className="block text-sm text-gray-700 mb-1">

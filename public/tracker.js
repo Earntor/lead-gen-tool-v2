@@ -1,8 +1,8 @@
 (function () {
   try {
-    // ⛔️ STOP als we op het dashboard zitten (leadtool.nl of subdomeinen daarvan)
+    // ⛔️ STOP als we op het dashboard zitten (vercel.app of subdomeinen daarvan)
     const currentHost = window.location.hostname;
-    if (currentHost.endsWith("leadtool.nl")) {
+    if (currentHost.endsWith("vercel.app")) {
       console.log("Tracking gestopt: dit is het dashboard.");
       return;
     }
@@ -29,7 +29,7 @@
     window.addEventListener("beforeunload", () => {
       const durationSeconds = Math.round((Date.now() - startTime) / 1000);
 
-      fetch("https://leadtool.nl/api/track", {
+      fetch("https://lead-gen-tool-v2-4i50htvsd-earntors-projects.vercel.app/api/track", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         keepalive: true,

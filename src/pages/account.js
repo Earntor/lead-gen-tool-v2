@@ -16,7 +16,7 @@ export default function Account() {
   const [updating, setUpdating] = useState(false)
   const [copySuccess, setCopySuccess] = useState('')
 
-  const trackingScript = `<script src="https://leadtool.nl/tracker.js" data-project-id="${user?.id}" async></script>`;
+  const trackingScript = `<script src="https://lead-gen-tool-v2-4i50htvsd-earntors-projects.vercel.app/tracker.js" data-project-id="${user?.id}" async></script>`;
 
 
 

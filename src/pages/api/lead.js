@@ -38,7 +38,7 @@ export default async function handler(req, res) {
 
   try {
   const url = new URL(page_url);
-  if (url.hostname.endsWith("leadtool.nl")) {
+  if (url.hostname.endsWith("vercel.app")) {
     console.log("⛔️ dashboard-bezoek gedetecteerd, wordt niet opgeslagen:", page_url);
     return res.status(200).json({ ignored: true, reason: "dashboard visit" });
   }
