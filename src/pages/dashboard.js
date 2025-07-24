@@ -143,7 +143,8 @@ console.log("Gelezen leads:", allData);
   !!lead.ip_address &&
   !!lead.page_url &&
   !!lead.timestamp &&
-  !lead.page_url.includes("lead-gen-tool-v2-4i50htvsd-earntors-projects.vercel.app");
+  !lead.page_url.includes(window.location.host)
+;
 
 
     if (isValidVisitor) {

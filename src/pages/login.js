@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabaseClient'
 import ReCAPTCHA from 'react-google-recaptcha'
@@ -13,39 +13,62 @@ export default function Login() {
   const router = useRouter()
   const recaptchaRef = useRef()
 
+  // ✅ Redirect als gebruiker al is ingelogd
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        router.replace('/dashboard')
+      }
+    })
+  }, [])
+
   const handleLogin = async (e) => {
     e.preventDefault()
     setLoading(true)
     setMessage('')
 
-    // reCAPTCHA token ophalen
-    const recaptchaToken = await recaptchaRef.current.executeAsync()
-    recaptchaRef.current.reset()
+    try {
+      const recaptchaToken = await recaptchaRef.current.executeAsync()
+      recaptchaRef.current.reset()
 
-    // Valideer token bij je eigen API
-    const recaptchaRes = await fetch('/api/verify-recaptcha', {
-      method: 'POST',
-      body: JSON.stringify({ token: recaptchaToken }),
-      headers: { 'Content-Type': 'application/json' },
-    })
-    const recaptchaData = await recaptchaRes.json()
+      const recaptchaRes = await fetch('/api/verify-recaptcha', {
+        method: 'POST',
+        body: JSON.stringify({ token: recaptchaToken }),
+        headers: { 'Content-Type': 'application/json' },
+      })
+      const recaptchaData = await recaptchaRes.json()
 
-    if (!recaptchaData.success) {
-      setMessage('reCAPTCHA verificatie mislukt.')
-      setLoading(false)
-      return
-    }
+      if (!recaptchaData.success) {
+        setMessage('reCAPTCHA verificatie mislukt.')
+        setLoading(false)
+        return
+      }
 
-    // Inloggen
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
 
-    if (error) {
-      setMessage('Fout bij inloggen: ' + error.message)
-    } else {
-      router.push('/dashboard')
+      if (error) {
+        setMessage('Fout bij inloggen: ' + error.message)
+        setLoading(false)
+        return
+      }
+
+      // ✅ Wacht tot de sessie actief is
+      const {
+        data: { user: loggedInUser },
+        error: userError,
+      } = await supabase.auth.getUser()
+
+      if (loggedInUser && !userError) {
+        router.push('/dashboard')
+      } else {
+        setMessage('Inloggen mislukt. Probeer opnieuw.')
+      }
+    } catch (err) {
+      console.error('Login fout:', err)
+      setMessage('Er ging iets mis. Probeer opnieuw.')
     }
 
     setLoading(false)
@@ -76,6 +99,7 @@ export default function Login() {
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            placeholder="Vul hier je e-mail in"
             className="border border-gray-300 rounded w-full px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             required
           />
@@ -89,7 +113,7 @@ export default function Login() {
             id="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Wachtwoord"
+            placeholder="Vul hier je wachtwoord in"
           />
         </div>
 
@@ -148,15 +172,13 @@ export default function Login() {
           <p>
             Nog geen account?{' '}
             <Link href="/register" className="text-blue-600 hover:underline">
-  Registreer hier
-</Link>
-
+              Registreer hier
+            </Link>
           </p>
           <p>
             <Link href="/reset" className="text-blue-600 hover:underline">
-  Wachtwoord vergeten?
-</Link>
-
+              Wachtwoord vergeten?
+            </Link>
           </p>
         </div>
       </form>

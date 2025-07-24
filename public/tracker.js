@@ -29,7 +29,10 @@
     window.addEventListener("beforeunload", () => {
       const durationSeconds = Math.round((Date.now() - startTime) / 1000);
 
-      fetch("https://lead-gen-tool-v2-4i50htvsd-earntors-projects.vercel.app/api/track", {
+      const baseUrl = new URL(scriptTag.src).origin;
+
+fetch(`${baseUrl}/api/track`, {
+
         method: "POST",
         headers: { "Content-Type": "application/json" },
         keepalive: true,

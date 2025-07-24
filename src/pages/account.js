@@ -15,17 +15,11 @@ export default function Account() {
   const [trackingMessage, setTrackingMessage] = useState(null)
   const [updating, setUpdating] = useState(false)
   const [copySuccess, setCopySuccess] = useState('')
-
-  const trackingScript = `<script src="https://lead-gen-tool-v2-4i50htvsd-earntors-projects.vercel.app/tracker.js" data-project-id="${user?.id}" async></script>`;
-
-
+  const [trackingScript, setTrackingScript] = useState('')
 
   useEffect(() => {
     const fetchUser = async () => {
-      const {
-        data: { user },
-        error,
-      } = await supabase.auth.getUser()
+      const { data: { user }, error } = await supabase.auth.getUser()
       if (error || !user) {
         router.replace('/login')
         return
@@ -44,6 +38,11 @@ export default function Account() {
         setPhone(profile.phone || '')
         setPreferences(profile.preferences || {})
       }
+
+      const domain = process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin
+      const script = `<script src="${domain}/tracker.js" data-project-id="${user.id}" async></script>`
+      setTrackingScript(script)
+
       setLoading(false)
     }
     fetchUser()
@@ -128,7 +127,6 @@ export default function Account() {
 
   return (
     <div className="w-full grid grid-cols-1 md:grid-cols-4 gap-6 px-4 py-10">
-      {/* Navigatie */}
       <aside className="space-y-2">
         {[
           { key: 'account', label: 'Account' },
@@ -162,9 +160,7 @@ export default function Account() {
         </button>
       </aside>
 
-      {/* Content */}
       <main className="md:col-span-3 bg-white border rounded-xl p-6 shadow space-y-4">
-        {/* Algemene melding */}
         {activeTab !== 'tracking' && generalMessage && (
           <div
             className={`p-3 rounded ${
@@ -179,7 +175,6 @@ export default function Account() {
           </div>
         )}
 
-        {/* Tracking melding */}
         {activeTab === 'tracking' && trackingMessage && (
           <div
             className={`p-3 rounded ${

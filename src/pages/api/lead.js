@@ -402,7 +402,8 @@ if (scraped) {
 
     if (ipData.company_name) {
       try {
-        await fetch(`http://localhost:3000/api/kvk-lookup`, {
+        await fetch(`${process.env.NEXT_PUBLIC_TRACKING_DOMAIN || 'http://localhost:3000'}/api/kvk-lookup`, {
+
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
