@@ -273,7 +273,16 @@ try {
     const fullAddress = `${domainEnrichment.domain_address}, ${domainEnrichment.domain_city}`;
    const scraped = await scrapeWebsiteData(company_domain);
     const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(fullAddress)}&format=json`);
-    const geoData = await geoRes.json();
+const geoContentType = geoRes.headers.get("content-type");
+
+if (!geoRes.ok || !geoContentType?.includes("application/json")) {
+  const text = await geoRes.text();
+  console.error("❌ OpenStreetMap gaf geen JSON terug:", text.slice(0, 300));
+  return res.status(500).json({ error: 'OpenStreetMap gaf geen JSON terug' });
+}
+
+const geoData = await geoRes.json();
+
 
     if (geoData && geoData.length > 0) {
       const correctedLat = geoData[0].lat;
@@ -335,10 +344,17 @@ if (scraped) {
 
       let ip_street = null;
       if (ipapi.lat && ipapi.lon) {
-        const nominatimRes = await fetch(
-          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${ipapi.lat}&lon=${ipapi.lon}`
-        );
-        const nominatimData = await nominatimRes.json();
+        const nominatimRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${ipapi.lat}&lon=${ipapi.lon}`);
+const nominatimContentType = nominatimRes.headers.get("content-type");
+
+if (!nominatimRes.ok || !nominatimContentType?.includes("application/json")) {
+  const text = await nominatimRes.text();
+  console.error("❌ Nominatim gaf geen JSON terug:", text.slice(0, 300));
+  return res.status(500).json({ error: 'Nominatim gaf geen JSON terug' });
+}
+
+const nominatimData = await nominatimRes.json();
+
         const road = nominatimData.address?.road || '';
         const houseNumber = nominatimData.address?.house_number || '';
         ip_street = `${road} ${houseNumber}`.trim() || null;
