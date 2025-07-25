@@ -30,16 +30,16 @@ export default async function handler(req, res) {
   let body = {};
   try {
     const rawBody = await getRawBody(req, {
-  encoding: true,
-  length: req.headers['content-length'],
-  limit: '1mb',
-});
-body = JSON.parse(rawBody);
+      encoding: true,
+      length: req.headers['content-length'],
+      limit: '1mb',
+    });
+    console.log("📦 Ontvangen body:", rawBody);
+    body = JSON.parse(rawBody);
   } catch (err) {
-  console.error("❌ JSON parse error:", err.message);
-  return res.status(400).json({ error: 'Invalid JSON body' });
-}
-
+    console.error("❌ JSON parse error:", err.message);
+    return res.status(400).json({ error: 'Invalid JSON body' });
+  }
 
   const {
     projectId,
@@ -86,7 +86,7 @@ body = JSON.parse(rawBody);
 
   const { error } = await supabase
     .from('leads')
-    .upsert({
+    .insert({
       user_id: projectId,
       site_id: siteId || null,
       page_url: pageUrl,
@@ -100,16 +100,12 @@ body = JSON.parse(rawBody);
       utm_campaign: utmCampaign || null,
       referrer: referrer || null,
       timestamp: new Date().toISOString(),
-    }, {
-      onConflict: 'session_id',
-      ignoreDuplicates: false,
     });
 
- if (error) {
-  console.error("❌ Supabase error:", error.message);
-  return res.status(500).json({ error: error.message });
-}
-
+  if (error) {
+    console.error("❌ Supabase error:", error.message);
+    return res.status(500).json({ error: error.message });
+  }
 
   await supabase
     .from('profiles')
