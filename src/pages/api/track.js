@@ -1,28 +1,27 @@
-// pages/api/track.js
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
-)
+);
 
 export default async function handler(req, res) {
-  // ✅ CORS headers toestaan voor externe tracking
+  // ✅ CORS preflight
   if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Origin', '*')
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
-    return res.status(200).end()
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    return res.status(200).end();
   }
 
-  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Origin', '*');
 
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" })
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   const {
-    projectId,        // = user_id
+    projectId,        // verplicht
     siteId,           // optioneel
     pageUrl,
     anonId,
@@ -31,42 +30,43 @@ export default async function handler(req, res) {
     utmMedium,
     utmCampaign,
     referrer
-  } = req.body
+  } = req.body;
 
   if (!projectId || !pageUrl) {
-    return res.status(400).json({ error: "projectId and pageUrl are required" })
+    return res.status(400).json({ error: 'projectId and pageUrl are required' });
   }
 
+  // Verifieer geldige URL
   try {
-    const url = new URL(pageUrl)
-    if (url.hostname.endsWith("vercel.app")) {
-      console.log("❌ Dashboard bezoek genegeerd in backend:", pageUrl)
-      return res.status(200).json({ success: true, message: "Dashboard visit ignored" })
+    const url = new URL(pageUrl);
+    if (url.hostname.endsWith('vercel.app')) {
+      console.log('❌ Dashboard bezoek genegeerd in backend:', pageUrl);
+      return res.status(200).json({ success: true, message: 'Dashboard visit ignored' });
     }
   } catch (e) {
-    console.warn("⚠️ Ongeldige pageUrl ontvangen, genegeerd:", pageUrl)
-    return res.status(200).json({ success: true, message: "Invalid pageUrl ignored" })
+    console.warn('⚠️ Ongeldige pageUrl ontvangen:', pageUrl);
+    return res.status(200).json({ success: true, message: 'Invalid pageUrl ignored' });
   }
 
   // IP ophalen
   const ipAddress =
-    req.headers["x-forwarded-for"]?.split(",")[0] ||
+    req.headers['x-forwarded-for']?.split(',')[0] ||
     req.socket?.remoteAddress ||
-    null
+    null;
 
   if (!ipAddress) {
-    console.warn("⚠️ Geen IP-adres gevonden voor tracker hit.")
+    console.warn('⚠️ Geen IP-adres gevonden');
   }
 
-  // 🔹 Bezoek registreren
+  // ⏺️ Bezoek opslaan in leads
   const { error } = await supabase
-    .from("leads")
+    .from('leads')
     .insert({
       user_id: projectId,
       site_id: siteId || null,
       page_url: pageUrl,
       ip_address: ipAddress,
-      source: "tracker",
+      source: 'tracker',
       anon_id: anonId || null,
       duration_seconds: durationSeconds || null,
       utm_source: utmSource || null,
@@ -74,22 +74,24 @@ export default async function handler(req, res) {
       utm_campaign: utmCampaign || null,
       referrer: referrer || null,
       timestamp: new Date().toISOString()
-    })
+    });
 
   if (error) {
-    console.error("❌ Supabase error:", error)
-    return res.status(500).json({ error: error.message })
+    console.error('❌ Fout bij insert in leads:', error.message);
+    return res.status(500).json({ error: error.message });
   }
 
-  // ✅ Laatste ping bijwerken voor validatie
+  // ✅ Laatste tracking ping opslaan (voor validatie)
   const { error: updateError } = await supabase
-    .from("profiles")
+    .from('profiles')
     .update({ last_tracking_ping: new Date().toISOString() })
-    .eq("id", projectId)
+    .eq('id', projectId);
 
   if (updateError) {
-    console.warn("⚠️ Kon last_tracking_ping niet bijwerken:", updateError.message)
+    console.warn('⚠️ Kon last_tracking_ping niet bijwerken:', updateError.message);
+  } else {
+    console.log(`✅ last_tracking_ping geüpdatet voor project ${projectId}`);
   }
 
-  return res.status(200).json({ success: true })
+  return res.status(200).json({ success: true });
 }
