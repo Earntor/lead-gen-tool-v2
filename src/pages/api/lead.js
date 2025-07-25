@@ -184,6 +184,11 @@ if (freqBoost && freqBoost.confidence > confidence) {
 
             const threshold = 0.5;
 
+if (company_domain === 'moreketing.nl') {
+  confidence = 0.95;
+  confidence_reason = 'Whitelisted testdomein';
+}
+
 if (confidence < threshold) {
   console.log(`⛔ Confidence te laag (${confidence}) — wordt genegeerd`);
   company_domain = null;
@@ -311,13 +316,13 @@ if (scraped) {
         const houseNumber = nominatimData.address?.house_number || '';
         ip_street = `${road} ${houseNumber}`.trim() || null;
 
-        await supabaseAdmin
+       await supabaseAdmin
   .from("ipapi_cache")
   .update({
-    domain_lat: data[0].lat,
-    domain_lon: data[0].lon
+    domain_lat: geoData[0].lat,
+    domain_lon: geoData[0].lon
   })
-  .eq("ip_address", ip); // of op een andere key zoals domain
+  .eq("ip_address", ip_address); // of op een andere key zoals domain
       }
 
       const insertCache = {

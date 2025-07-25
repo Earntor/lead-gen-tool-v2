@@ -3,6 +3,7 @@ import { chooseBestLocation } from "./googleMapsUtils.js";
 
 const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
+// Helper om categorie leesbaar te maken
 function formatCategory(key) {
   if (!key) return null;
   return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -15,13 +16,13 @@ export async function enrichFromDomain(domain, ipLat, ipLon) {
     )}&key=${GOOGLE_API_KEY}`;
 
     const textSearchRes = await fetch(textSearchUrl);
-    const text = await textSearchRes.text();
+    const textSearchBody = await textSearchRes.text();
 
     let textSearchData;
     try {
-      textSearchData = JSON.parse(text);
+      textSearchData = JSON.parse(textSearchBody);
     } catch (e) {
-      console.error("❌ Kon Google Maps Text Search niet parsen als JSON:", text.slice(0, 300));
+      console.error("❌ Kan Text Search response niet parsen als JSON:", textSearchBody.slice(0, 300));
       return null;
     }
 
@@ -47,7 +48,7 @@ export async function enrichFromDomain(domain, ipLat, ipLon) {
       try {
         placeDetailsData = JSON.parse(placeDetailsText);
       } catch (e) {
-        console.error("❌ Kon Place Details niet parsen als JSON:", placeDetailsText.slice(0, 300));
+        console.error("❌ Kan Place Details response niet parsen als JSON:", placeDetailsText.slice(0, 300));
         continue;
       }
 
@@ -62,7 +63,7 @@ export async function enrichFromDomain(domain, ipLat, ipLon) {
       const rawCategory = types[0] || null;
       const category = formatCategory(rawCategory);
 
-      // 🇳🇱 🇧🇪 Adres parsing (vereenvoudigd)
+      // 🇳🇱 🇧🇪 Adres parsing
       const addressRegex = /^(.+?),\s*(\d{4}\s?[A-Z]{2})\s(.+),\s*(.+)$/;
       const match = formatted_address.match(addressRegex);
 
