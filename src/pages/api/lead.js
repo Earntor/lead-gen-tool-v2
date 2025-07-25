@@ -394,7 +394,7 @@ if (scraped) {
     utm_source: req.body.utm_source || null,
     utm_medium: req.body.utm_medium || null,
     utm_campaign: req.body.utm_campaign || null,
-    duration_seconds: req.body.duration_seconds || null
+    duration_seconds: req.body.duration_seconds || null,
   category: ipData.category
       }])
       .select();
