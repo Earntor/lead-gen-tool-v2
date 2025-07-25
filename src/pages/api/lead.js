@@ -61,7 +61,25 @@ export default async function handler(req, res) {
     let ipData = cached;
 
     const needsDomainEnrichment =
-  cached && cached.company_domain && !cached.company_name;
+  !cached ||
+  cached.company_name === 'Testbedrijf' ||
+  (cached.company_domain && (
+    !cached.domain_address ||
+    !cached.domain_city ||
+    !cached.domain_country ||
+    !cached.domain_lat ||
+    !cached.domain_lon ||
+    !cached.category ||
+    !cached.meta_description ||
+    !cached.phone ||
+    !cached.email ||
+    !cached.linkedin_url ||
+    !cached.rdns_hostname ||
+    !cached.confidence ||
+    !cached.confidence_reason
+  ));
+
+
 
 if (!cached || needsDomainEnrichment) {
       const ipapiRes = await fetch(`http://ip-api.com/json/${ip_address}`);
@@ -398,6 +416,9 @@ if (scraped) {
     utm_medium: req.body.utm_medium || null,
     utm_campaign: req.body.utm_campaign || null,
     duration_seconds: req.body.duration_seconds || null,
+    domain_lat: ipData.domain_lat || null,
+domain_lon: ipData.domain_lon || null,
+rdns_hostname: ipData.rdns_hostname || null,
   category: ipData.category
       }])
       .select();
