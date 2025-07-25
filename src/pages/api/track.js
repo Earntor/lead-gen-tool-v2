@@ -22,7 +22,7 @@ export default async function handler(req, res) {
 
   const {
     projectId,        // = user_id
-    siteId,           // optioneel, extra controle
+    siteId,           // optioneel
     pageUrl,
     anonId,
     durationSeconds,
@@ -57,10 +57,6 @@ export default async function handler(req, res) {
     console.warn("⚠️ Geen IP-adres gevonden voor tracker hit.")
   }
 
-  // Fallbacks
-  const anonIdSafe = anonId || null
-  const referrerSafe = referrer || null
-
   const { error } = await supabase
     .from("leads")
     .insert({
@@ -69,18 +65,28 @@ export default async function handler(req, res) {
       page_url: pageUrl,
       ip_address: ipAddress,
       source: "tracker",
-      anon_id: anonIdSafe,
+      anon_id: anonId || null,
       duration_seconds: durationSeconds || null,
       utm_source: utmSource || null,
       utm_medium: utmMedium || null,
       utm_campaign: utmCampaign || null,
-      referrer: referrerSafe,
+      referrer: referrer || null,
       timestamp: new Date().toISOString()
     })
 
   if (error) {
     console.error("❌ Supabase error:", error)
     return res.status(500).json({ error: error.message })
+  }
+
+  // ✅ Laatste ping bijwerken voor validatie-check
+  const { error: updateError } = await supabase
+    .from("profiles")
+    .update({ last_tracking_ping: new Date().toISOString() })
+    .eq("id", projectId)
+
+  if (updateError) {
+    console.warn("⚠️ Kon last_tracking_ping niet bijwerken:", updateError.message)
   }
 
   return res.status(200).json({ success: true })
