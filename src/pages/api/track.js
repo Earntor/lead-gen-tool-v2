@@ -1,3 +1,4 @@
+// pages/api/track.js
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -29,7 +30,8 @@ export default async function handler(req, res) {
     utmSource,
     utmMedium,
     utmCampaign,
-    referrer
+    referrer,
+    validationTest    // 👈 wordt true meegegeven bij validatie
   } = req.body;
 
   if (!projectId || !pageUrl) {
@@ -58,6 +60,22 @@ export default async function handler(req, res) {
     console.warn('⚠️ Geen IP-adres gevonden');
   }
 
+  // ✅ Alleen last_tracking_ping bijwerken bij validatie
+  if (validationTest === true) {
+    const { error: pingError } = await supabase
+      .from('profiles')
+      .update({ last_tracking_ping: new Date().toISOString() })
+      .eq('id', projectId);
+
+    if (pingError) {
+      console.warn('⚠️ Kon last_tracking_ping niet bijwerken tijdens validatie:', pingError.message);
+    } else {
+      console.log(`✅ last_tracking_ping geüpdatet voor validatie van project ${projectId}`);
+    }
+
+    return res.status(200).json({ success: true, validation: true });
+  }
+
   // ⏺️ Bezoek opslaan in leads
   const { error } = await supabase
     .from('leads')
@@ -81,7 +99,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: error.message });
   }
 
-  // ✅ Laatste tracking ping opslaan (voor validatie)
+  // ✅ Laatste tracking ping opslaan (voor metingen)
   const { error: updateError } = await supabase
     .from('profiles')
     .update({ last_tracking_ping: new Date().toISOString() })
