@@ -32,25 +32,7 @@
     const baseUrl = new URL(scriptTag.src).origin;
     const startTime = Date.now();
 
-    // ✅ Eerste call (bij paginabezoek)
-    fetch(`${baseUrl}/api/track`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      keepalive: true,
-      body: JSON.stringify({
-        projectId,
-        pageUrl,
-        referrer,
-        anonId,
-        sessionId,
-        utmSource,
-        utmMedium,
-        utmCampaign,
-        durationSeconds: null,
-      }),
-    });
-
-    // ✅ Tweede call (bij verlaten pagina, met duration)
+    // ✅ Eén enkele call bij het verlaten van de pagina (met duration)
     window.addEventListener("visibilitychange", () => {
       if (document.visibilityState !== "hidden") return;
 
@@ -68,15 +50,14 @@
         durationSeconds,
       };
 
-     fetch(`${baseUrl}/api/track`, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify(payload),
-  keepalive: true, // ✅ dit zorgt dat hij werkt bij unload
-});
-
+      fetch(`${baseUrl}/api/track`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      });
     });
   } catch (err) {
     console.warn("Tracking script error:", err);
