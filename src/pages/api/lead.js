@@ -182,7 +182,7 @@ if (freqBoost && freqBoost.confidence > confidence) {
 }
 
 
-            const threshold = 0.6;
+            const threshold = 0.5;
 
 if (confidence < threshold) {
   console.log(`⛔ Confidence te laag (${confidence}) — wordt genegeerd`);
