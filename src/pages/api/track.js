@@ -1,24 +1,24 @@
 // pages/api/track.js
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+)
 
 export default async function handler(req, res) {
   // ✅ CORS preflight
   if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    return res.status(200).end();
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+    return res.status(200).end()
   }
 
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Origin', '*')
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ error: 'Method not allowed' })
   }
 
   const {
@@ -31,49 +31,50 @@ export default async function handler(req, res) {
     utmMedium,
     utmCampaign,
     referrer,
-    validationTest    // 👈 wordt true meegegeven bij validatie
-  } = req.body;
+    validationTest    // 👈 true als validatie vanuit account.js
+  } = req.body
 
   if (!projectId || !pageUrl) {
-    return res.status(400).json({ error: 'projectId and pageUrl are required' });
+    return res.status(400).json({ error: 'projectId and pageUrl are required' })
   }
 
   // Verifieer geldige URL
+  let isValidation = validationTest === true
   try {
-    const url = new URL(pageUrl);
-    if (url.hostname.endsWith('vercel.app')) {
-      console.log('❌ Dashboard bezoek genegeerd in backend:', pageUrl);
-      return res.status(200).json({ success: true, message: 'Dashboard visit ignored' });
+    const url = new URL(pageUrl)
+    if (url.hostname.endsWith('vercel.app') && !isValidation) {
+      console.log('❌ Dashboard bezoek genegeerd in backend:', pageUrl)
+      return res.status(200).json({ success: true, message: 'Dashboard visit ignored' })
     }
   } catch (e) {
-    console.warn('⚠️ Ongeldige pageUrl ontvangen:', pageUrl);
-    return res.status(200).json({ success: true, message: 'Invalid pageUrl ignored' });
+    console.warn('⚠️ Ongeldige pageUrl ontvangen:', pageUrl)
+    return res.status(200).json({ success: true, message: 'Invalid pageUrl ignored' })
   }
 
   // IP ophalen
   const ipAddress =
     req.headers['x-forwarded-for']?.split(',')[0] ||
     req.socket?.remoteAddress ||
-    null;
+    null
 
   if (!ipAddress) {
-    console.warn('⚠️ Geen IP-adres gevonden');
+    console.warn('⚠️ Geen IP-adres gevonden')
   }
 
   // ✅ Alleen last_tracking_ping bijwerken bij validatie
-  if (validationTest === true) {
+  if (isValidation) {
     const { error: pingError } = await supabase
       .from('profiles')
       .update({ last_tracking_ping: new Date().toISOString() })
-      .eq('id', projectId);
+      .eq('id', projectId)
 
     if (pingError) {
-      console.warn('⚠️ Kon last_tracking_ping niet bijwerken tijdens validatie:', pingError.message);
+      console.warn('⚠️ Kon last_tracking_ping niet bijwerken tijdens validatie:', pingError.message)
     } else {
-      console.log(`✅ last_tracking_ping geüpdatet voor validatie van project ${projectId}`);
+      console.log(`✅ last_tracking_ping geüpdatet voor validatie van project ${projectId}`)
     }
 
-    return res.status(200).json({ success: true, validation: true });
+    return res.status(200).json({ success: true, validation: true })
   }
 
   // ⏺️ Bezoek opslaan in leads
@@ -92,24 +93,24 @@ export default async function handler(req, res) {
       utm_campaign: utmCampaign || null,
       referrer: referrer || null,
       timestamp: new Date().toISOString()
-    });
+    })
 
   if (error) {
-    console.error('❌ Fout bij insert in leads:', error.message);
-    return res.status(500).json({ error: error.message });
+    console.error('❌ Fout bij insert in leads:', error.message)
+    return res.status(500).json({ error: error.message })
   }
 
-  // ✅ Laatste tracking ping opslaan (voor metingen)
+  // ✅ Laatste tracking ping opslaan (voor reguliere tracking)
   const { error: updateError } = await supabase
     .from('profiles')
     .update({ last_tracking_ping: new Date().toISOString() })
-    .eq('id', projectId);
+    .eq('id', projectId)
 
   if (updateError) {
-    console.warn('⚠️ Kon last_tracking_ping niet bijwerken:', updateError.message);
+    console.warn('⚠️ Kon last_tracking_ping niet bijwerken:', updateError.message)
   } else {
-    console.log(`✅ last_tracking_ping geüpdatet voor project ${projectId}`);
+    console.log(`✅ last_tracking_ping geüpdatet voor project ${projectId}`)
   }
 
-  return res.status(200).json({ success: true });
+  return res.status(200).json({ success: true })
 }
