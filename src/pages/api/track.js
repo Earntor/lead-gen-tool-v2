@@ -29,11 +29,17 @@ export default async function handler(req, res) {
 
   let body = {};
   try {
-    const rawBody = await getRawBody(req);
-    body = JSON.parse(rawBody.toString('utf-8'));
+    const rawBody = await getRawBody(req, {
+  encoding: true,
+  length: req.headers['content-length'],
+  limit: '1mb',
+});
+body = JSON.parse(rawBody);
   } catch (err) {
-    return res.status(400).json({ error: 'Invalid JSON body' });
-  }
+  console.error("❌ JSON parse error:", err.message);
+  return res.status(400).json({ error: 'Invalid JSON body' });
+}
+
 
   const {
     projectId,
@@ -99,9 +105,11 @@ export default async function handler(req, res) {
       ignoreDuplicates: false,
     });
 
-  if (error) {
-    return res.status(500).json({ error: error.message });
-  }
+ if (error) {
+  console.error("❌ Supabase error:", error.message);
+  return res.status(500).json({ error: error.message });
+}
+
 
   await supabase
     .from('profiles')
