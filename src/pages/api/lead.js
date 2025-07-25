@@ -241,7 +241,13 @@ if (confidence < threshold) {
 
       if (company_domain) {
         console.log('🧠 Enrichment gestart op basis van domein:', company_domain);
-  const domainEnrichment = await enrichFromDomain(company_domain, ipapi.lat, ipapi.lon);
+  let domainEnrichment = null;
+try {
+  domainEnrichment = await enrichFromDomain(company_domain, ipapi.lat, ipapi.lon);
+} catch (e) {
+  console.error("❌ enrichFromDomain() crashte:", e.message);
+}
+
     if (domainEnrichment && domainEnrichment.domain_address && domainEnrichment.domain_city) {
     const fullAddress = `${domainEnrichment.domain_address}, ${domainEnrichment.domain_city}`;
    const scraped = await scrapeWebsiteData(company_domain);
