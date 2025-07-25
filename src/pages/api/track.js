@@ -26,6 +26,7 @@ export default async function handler(req, res) {
     siteId,           // optioneel
     pageUrl,
     anonId,
+    sessionId,
     durationSeconds,
     utmSource,
     utmMedium,
@@ -83,6 +84,7 @@ export default async function handler(req, res) {
     .insert({
       user_id: projectId,
       site_id: siteId || null,
+      session_id: sessionId || null,
       page_url: pageUrl,
       ip_address: ipAddress,
       source: 'tracker',
