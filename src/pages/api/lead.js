@@ -67,17 +67,21 @@ export default async function handler(req, res) {
     !cached.domain_address ||
     !cached.domain_city ||
     !cached.domain_country ||
-    !cached.domain_lat ||
-    !cached.domain_lon ||
-    !cached.category ||
+    !cached.confidence ||
+    !cached.confidence_reason ||
     !cached.meta_description ||
     !cached.phone ||
     !cached.email ||
-    !cached.linkedin_url ||
+    !cached.domain_lat ||
+    !cached.domain_lon ||
+    !cached.category ||
     !cached.rdns_hostname ||
-    !cached.confidence ||
-    !cached.confidence_reason
+    !cached.linkedin_url ||
+    !cached.facebook_url ||
+    !cached.instagram_url ||
+    !cached.twitter_url
   ));
+
 
 
 
