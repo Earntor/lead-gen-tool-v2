@@ -93,6 +93,27 @@ if (ipAddress) {
     console.log("🧠 Confidence gevonden:", confidenceScore, confidenceReason);
   } else {
     console.log("⚠️ Geen confidence gevonden voor IP:", ipAddress);
+    // 🚀 Fallback naar enrichment als IP onbekend
+try {
+  console.log("📡 Start enrichment voor onbekend IP...");
+  await fetch(`${process.env.NEXT_PUBLIC_TRACKING_DOMAIN || 'http://localhost:3000'}/api/lead`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ip_address: ipAddress,
+      user_id: projectId,
+      page_url: pageUrl,
+      anon_id: anonId || null,
+      referrer: referrer || null,
+      utm_source: utmSource || null,
+      utm_medium: utmMedium || null,
+      utm_campaign: utmCampaign || null,
+      duration_seconds: durationSeconds || null,
+    }),
+  });
+} catch (e) {
+  console.error("❌ Fout bij enrichment-call:", e.message);
+}
   }
 }
 
