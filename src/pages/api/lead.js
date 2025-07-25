@@ -144,6 +144,8 @@ const ipapi = await ipapiRes.json();
       let domain_postal_code = null;
       let domain_city = null;
       let domain_country = null;
+      let domain_lat = null;
+      let domain_lon = null;
 
       let phone = null;
       let email = null;
@@ -268,6 +270,13 @@ try {
 } catch (e) {
   console.error("❌ enrichFromDomain() crashte:", e.message);
 }
+
+let scraped = null;
+  try {
+    scraped = await scrapeWebsiteData(company_domain);
+  } catch (e) {
+    console.warn("⚠️ scrapeWebsiteData() error:", e.message);
+  }
 
 if (scraped) {
   phone = scraped.phone || null;
