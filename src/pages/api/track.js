@@ -117,7 +117,7 @@ if (ipAddress) {
       anon_id: anonId || null,
       session_id: sessionId || null,
       duration_seconds: durationSeconds || null,
-      confidence_score: confidenceScore,
+      confidence: confidenceScore,
       confidence_reason: confidenceReason,
       utm_source: utmSource || null,
       utm_medium: utmMedium || null,
