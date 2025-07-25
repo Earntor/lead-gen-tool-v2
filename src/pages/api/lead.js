@@ -269,35 +269,6 @@ try {
   console.error("❌ enrichFromDomain() crashte:", e.message);
 }
 
-    if (domainEnrichment && domainEnrichment.domain_address && domainEnrichment.domain_city) {
-    const fullAddress = `${domainEnrichment.domain_address}, ${domainEnrichment.domain_city}`;
-   const scraped = await scrapeWebsiteData(company_domain);
-    const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(fullAddress)}&format=json`);
-const geoContentType = geoRes.headers.get("content-type");
-
-if (!geoRes.ok || !geoContentType?.includes("application/json")) {
-  const text = await geoRes.text();
-  console.error("❌ OpenStreetMap gaf geen JSON terug:", text.slice(0, 300));
-  return res.status(500).json({ error: 'OpenStreetMap gaf geen JSON terug' });
-}
-
-const geoData = await geoRes.json();
-
-
-    if (geoData && geoData.length > 0) {
-      const correctedLat = geoData[0].lat;
-      const correctedLon = geoData[0].lon;
-
-      await supabaseAdmin
-        .from("ipapi_cache")
-        .update({
-          domain_lat: correctedLat,
-          domain_lon: correctedLon
-        })
-        .eq("ip_address", ip_address);
-    }
-  }
-
 if (scraped) {
   phone = scraped.phone || null;
   email = scraped.email || null;
@@ -309,7 +280,9 @@ if (scraped) {
 }
 
 
-        if (domainEnrichment) {
+      if (domainEnrichment) {
+      domain_lat = domainEnrichment.lat || null;
+      domain_lon = domainEnrichment.lon || null; 
       company_name = domainEnrichment.name || null;
       domain_address = domainEnrichment.domain_address || null;
       domain_postal_code = domainEnrichment.domain_postal_code || null;
@@ -343,30 +316,6 @@ if (scraped) {
 
 
       let ip_street = null;
-      if (ipapi.lat && ipapi.lon) {
-        const nominatimRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${ipapi.lat}&lon=${ipapi.lon}`);
-const nominatimContentType = nominatimRes.headers.get("content-type");
-
-if (!nominatimRes.ok || !nominatimContentType?.includes("application/json")) {
-  const text = await nominatimRes.text();
-  console.error("❌ Nominatim gaf geen JSON terug:", text.slice(0, 300));
-  return res.status(500).json({ error: 'Nominatim gaf geen JSON terug' });
-}
-
-const nominatimData = await nominatimRes.json();
-
-        const road = nominatimData.address?.road || '';
-        const houseNumber = nominatimData.address?.house_number || '';
-        ip_street = `${road} ${houseNumber}`.trim() || null;
-
-       await supabaseAdmin
-  .from("ipapi_cache")
-  .update({
-    domain_lat: geoData[0].lat,
-    domain_lon: geoData[0].lon
-  })
-  .eq("ip_address", ip_address); // of op een andere key zoals domain
-      }
 
       const insertCache = {
         ip_address,
