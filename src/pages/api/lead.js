@@ -86,8 +86,8 @@ export default async function handler(req, res) {
 
 
 if (!cached || needsDomainEnrichment) {
-      const ipapiRes = await fetch(`http://ip-api.com/json/${ip_address}`);
-      const ipapi = await ipapiRes.json();
+  const ipapiRes = await fetch(`http://ip-api.com/json/${ip_address}`);
+  const ipapi = await ipapiRes.json();
 
       if (ipapi.status !== 'success') {
         throw new Error(`IP-API error: ${ipapi.message || 'onbekende fout'}`);
@@ -234,10 +234,12 @@ if (confidence < threshold) {
         return res.status(200).json({ ignored: true, reason: 'known ISP (no valid reverse DNS)' });
       }
 
-      if (company_domain && !company_name) {
+      if (company_domain) {
+        console.log('🧠 Enrichment gestart op basis van domein:', company_domain);
   const domainEnrichment = await enrichFromDomain(company_domain, ipapi.lat, ipapi.lon);
     if (domainEnrichment && domainEnrichment.domain_address && domainEnrichment.domain_city) {
     const fullAddress = `${domainEnrichment.domain_address}, ${domainEnrichment.domain_city}`;
+   const scraped = await scrapeWebsiteData(company_domain);
     const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(fullAddress)}&format=json`);
     const geoData = await geoRes.json();
 
@@ -254,8 +256,6 @@ if (confidence < threshold) {
         .eq("ip_address", ip_address);
     }
   }
-
-  const scraped = await scrapeWebsiteData(company_domain);
 
 if (scraped) {
   phone = scraped.phone || null;
@@ -341,6 +341,9 @@ if (scraped) {
         domain_postal_code,
         domain_city,
         domain_country,
+        domain_lat,
+        domain_lon,
+        rdns_hostname: reverseDnsDomain || null,
         phone,
         email,
         linkedin_url,
