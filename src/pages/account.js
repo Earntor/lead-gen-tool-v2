@@ -40,7 +40,7 @@ export default function Account() {
       }
 
       const domain = process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin
-      const script = `<script src="${domain}/tracker.js" data-project-id="${user.id}" async></script>`
+      const script = `<script src="${domain}tracker.js" data-project-id="${user.id}" async></script>`
       setTrackingScript(script)
 
       setLoading(false)
@@ -296,8 +296,25 @@ export default function Account() {
                 onClick={async () => {
                   setTrackingMessage(null)
                   setTrackingMessage({ type: 'info', text: 'Bezig met valideren...' })
-                  const res = await fetch(`/api/check-tracking?projectId=${user.id}`)
-                  const json = await res.json()
+                  await fetch(`/api/track`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    projectId: user.id,
+    pageUrl: window.location.href,
+    anonId: 'validation-test',
+    durationSeconds: 1,
+    utmSource: 'validation',
+    utmMedium: 'internal',
+    utmCampaign: 'script-validation',
+    referrer: document.referrer || null,
+    validationTest: true
+  })
+})
+
+const res = await fetch(`/api/check-tracking?projectId=${user.id}`)
+const json = await res.json()
+
                   if (json.status === 'ok') {
                     setTrackingMessage({ type: 'success', text: 'Script gevonden en actief!' })
                   } else if (json.status === 'stale') {

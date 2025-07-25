@@ -25,12 +25,16 @@ export async function sendLead({ user_id }) {
 
     const page_url = window.location.href;
     const referrer = document.referrer || null;
+    const startTime = Date.now();
     const anon_id = getOrCreateAnonId();
     const utm_source = getUTMParam("utm_source");
     const utm_medium = getUTMParam("utm_medium");
     const utm_campaign = getUTMParam("utm_campaign");
 
+    const duration_seconds = Math.round((Date.now() - startTime) / 1000);
+
     const payload = {
+
       user_id,
       page_url,
       anon_id,
@@ -39,6 +43,7 @@ export async function sendLead({ user_id }) {
       utm_medium,
       utm_campaign,
       timestamp: new Date().toISOString(),
+      duration_seconds,
     };
 
     const res = await fetch("/api/lead", {
