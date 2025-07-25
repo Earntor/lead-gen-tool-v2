@@ -1,6 +1,5 @@
 (function () {
   try {
-    // ⛔️ STOP als we op het dashboard zitten (vercel.app of subdomeinen daarvan)
     const currentHost = window.location.hostname;
     if (currentHost.endsWith("vercel.app")) {
       console.log("Tracking gestopt: dit is het dashboard.");
@@ -25,9 +24,8 @@
     const utmCampaign = utm.get("utm_campaign") || null;
 
     const baseUrl = new URL(scriptTag.src).origin;
-    const startTime = Date.now();
 
-    // ✅ Verstuur direct bij pageload (voor validatie en monitoring)
+    // ✅ Verstuur één keer bij pageload
     fetch(`${baseUrl}/api/track`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -40,29 +38,8 @@
         utmSource,
         utmMedium,
         utmCampaign,
-        durationSeconds: 0, // Eerste ping
+        durationSeconds: null,
       }),
-    });
-
-    // ✅ Verstuur ook bij verlaten van de pagina
-    window.addEventListener("beforeunload", () => {
-      const durationSeconds = Math.round((Date.now() - startTime) / 1000);
-
-      fetch(`${baseUrl}/api/track`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        keepalive: true,
-        body: JSON.stringify({
-          projectId,
-          pageUrl,
-          referrer,
-          anonId,
-          utmSource,
-          utmMedium,
-          utmCampaign,
-          durationSeconds,
-        }),
-      });
     });
   } catch (err) {
     console.warn("Tracking script error:", err);
