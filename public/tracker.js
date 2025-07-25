@@ -24,15 +24,31 @@
     const utmMedium = utm.get("utm_medium") || null;
     const utmCampaign = utm.get("utm_campaign") || null;
 
+    const baseUrl = new URL(scriptTag.src).origin;
     const startTime = Date.now();
 
+    // ✅ Verstuur direct bij pageload (voor validatie en monitoring)
+    fetch(`${baseUrl}/api/track`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      keepalive: true,
+      body: JSON.stringify({
+        projectId,
+        pageUrl,
+        referrer,
+        anonId,
+        utmSource,
+        utmMedium,
+        utmCampaign,
+        durationSeconds: 0, // Eerste ping
+      }),
+    });
+
+    // ✅ Verstuur ook bij verlaten van de pagina
     window.addEventListener("beforeunload", () => {
       const durationSeconds = Math.round((Date.now() - startTime) / 1000);
 
-      const baseUrl = new URL(scriptTag.src).origin;
-
-fetch(`${baseUrl}/api/track`, {
-
+      fetch(`${baseUrl}/api/track`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         keepalive: true,
