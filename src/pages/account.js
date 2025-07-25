@@ -296,8 +296,24 @@ export default function Account() {
                 onClick={async () => {
                   setTrackingMessage(null)
                   setTrackingMessage({ type: 'info', text: 'Bezig met valideren...' })
-                  const res = await fetch(`/api/check-tracking?projectId=${user.id}`)
-                  const json = await res.json()
+                  await fetch(`/api/track`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    projectId: user.id,
+    pageUrl: window.location.href,
+    anonId: 'validation-test',
+    durationSeconds: 1,
+    utmSource: 'validation',
+    utmMedium: 'internal',
+    utmCampaign: 'script-validation',
+    referrer: document.referrer || null
+  })
+})
+
+const res = await fetch(`/api/check-tracking?projectId=${user.id}`)
+const json = await res.json()
+
                   if (json.status === 'ok') {
                     setTrackingMessage({ type: 'success', text: 'Script gevonden en actief!' })
                   } else if (json.status === 'stale') {
