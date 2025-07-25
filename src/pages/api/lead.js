@@ -389,6 +389,12 @@ if (scraped) {
   instagram_url: ipData.instagram_url || null,
   twitter_url: ipData.twitter_url || null,
   meta_description: ipData.meta_description || null,
+        anon_id: req.body.anon_id || null,
+    referrer: req.body.referrer || null,
+    utm_source: req.body.utm_source || null,
+    utm_medium: req.body.utm_medium || null,
+    utm_campaign: req.body.utm_campaign || null,
+    duration_seconds: req.body.duration_seconds || null
   category: ipData.category
       }])
       .select();
