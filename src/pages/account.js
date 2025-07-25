@@ -40,7 +40,7 @@ export default function Account() {
       }
 
       const domain = process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin
-      const script = `<script src="${domain}/tracker.js" data-project-id="${user.id}" async></script>`
+      const script = `<script src="${domain}tracker.js" data-project-id="${user.id}" async></script>`
       setTrackingScript(script)
 
       setLoading(false)
