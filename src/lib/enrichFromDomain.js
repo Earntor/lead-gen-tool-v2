@@ -12,16 +12,15 @@ export async function enrichFromDomain(domain, ipLat, ipLon) {
   try {
     const textSearchUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(domain)}&key=${GOOGLE_API_KEY}`;
     const textSearchRes = await fetch(textSearchUrl);
-    const text = await textSearchRes.text();
+    const contentType = textSearchRes.headers.get("content-type");
 
-    let textSearchData;
-    try {
-      textSearchData = JSON.parse(text);
-    } catch (e) {
-      console.error("❌ Kan Text Search response niet parsen als JSON:", text.slice(0, 300));
+    if (!textSearchRes.ok || !contentType?.includes("application/json")) {
+      const fallbackText = await textSearchRes.text();
+      console.error("❌ Google TextSearch API gaf geen JSON terug:", fallbackText.slice(0, 300));
       return null;
     }
 
+    const textSearchData = await textSearchRes.json();
     console.log("📦 Google TextSearch data:", JSON.stringify(textSearchData, null, 2));
 
     if (!textSearchData.results || textSearchData.results.length === 0) {
@@ -35,16 +34,15 @@ export async function enrichFromDomain(domain, ipLat, ipLon) {
     for (const r of rawResults) {
       const placeDetailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${r.place_id}&fields=name,formatted_address,formatted_phone_number,website,types&key=${GOOGLE_API_KEY}`;
       const placeDetailsRes = await fetch(placeDetailsUrl);
-      const detailsText = await placeDetailsRes.text();
+      const detailsContentType = placeDetailsRes.headers.get("content-type");
 
-      let placeDetailsData;
-      try {
-        placeDetailsData = JSON.parse(detailsText);
-      } catch (e) {
-        console.error("❌ Kan Place Details response niet parsen als JSON:", detailsText.slice(0, 300));
-        continue; // sla deze locatie over en ga verder
+      if (!placeDetailsRes.ok || !detailsContentType?.includes("application/json")) {
+        const detailsText = await placeDetailsRes.text();
+        console.error("❌ Place Details gaf geen JSON terug:", detailsText.slice(0, 300));
+        continue;
       }
 
+      const placeDetailsData = await placeDetailsRes.json();
       const result = placeDetailsData.result;
       if (!result) continue;
 
