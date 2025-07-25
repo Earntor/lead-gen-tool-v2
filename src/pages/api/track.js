@@ -36,6 +36,8 @@ export default async function handler(req, res) {
     });
     console.log("📦 Ontvangen body:", rawBody);
     body = JSON.parse(rawBody);
+        console.log("✅ Parsed body object:", body);
+    console.log("🧪 durationSeconds ontvangen:", body.durationSeconds);
   } catch (err) {
     console.error("❌ JSON parse error:", err.message);
     return res.status(400).json({ error: 'Invalid JSON body' });
