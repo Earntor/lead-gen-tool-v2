@@ -30,7 +30,7 @@ export default async function handler(req, res) {
   let body = {};
   try {
     const rawBody = await getRawBody(req, {
-      encoding: true,
+      encoding: true, 
       length: req.headers['content-length'],
       limit: '1mb',
     });
