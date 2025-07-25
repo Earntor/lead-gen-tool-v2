@@ -77,6 +77,26 @@ export default async function handler(req, res) {
     req.socket?.remoteAddress ||
     null;
 
+let confidenceScore = null;
+let confidenceReason = null;
+
+if (ipAddress) {
+  const { data: ipCache, error: ipErr } = await supabase
+    .from('ipapi_cache')
+    .select('confidence, confidence_reason')
+    .eq('ip_address', ipAddress)
+    .maybeSingle();
+
+  if (ipCache) {
+    confidenceScore = ipCache.confidence ?? null;
+    confidenceReason = ipCache.confidence_reason ?? null;
+    console.log("🧠 Confidence gevonden:", confidenceScore, confidenceReason);
+  } else {
+    console.log("⚠️ Geen confidence gevonden voor IP:", ipAddress);
+  }
+}
+
+
   if (isValidation) {
     await supabase
       .from('profiles')
@@ -97,6 +117,8 @@ export default async function handler(req, res) {
       anon_id: anonId || null,
       session_id: sessionId || null,
       duration_seconds: durationSeconds || null,
+      confidence_score: confidenceScore,
+      confidence_reason: confidenceReason,
       utm_source: utmSource || null,
       utm_medium: utmMedium || null,
       utm_campaign: utmCampaign || null,
