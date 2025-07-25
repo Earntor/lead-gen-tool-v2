@@ -10,10 +10,18 @@
     const projectId = scriptTag.getAttribute("data-project-id");
     if (!projectId) return;
 
+    // Anon ID
     let anonId = localStorage.getItem("anonId");
     if (!anonId) {
       anonId = crypto.randomUUID();
       localStorage.setItem("anonId", anonId);
+    }
+
+    // ✅ Nieuw: Session ID per bezoek
+    let sessionId = sessionStorage.getItem("sessionId");
+    if (!sessionId) {
+      sessionId = crypto.randomUUID();
+      sessionStorage.setItem("sessionId", sessionId);
     }
 
     const pageUrl = window.location.href;
@@ -28,7 +36,7 @@
     // ⏱️ Starttijd opslaan
     const startTime = Date.now();
 
-    // ✅ Verstuur bij pageload
+    // Verstuur bij pageload
     fetch(`${baseUrl}/api/track`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -38,14 +46,15 @@
         pageUrl,
         referrer,
         anonId,
+        sessionId, // ✅ Meesturen
         utmSource,
         utmMedium,
         utmCampaign,
-        durationSeconds: null, // Wordt pas bekend bij verlaten
+        durationSeconds: null,
       }),
     });
 
-    // ✅ Verstuur bij verlaten van de pagina
+    // Verstuur bij verlaten
     window.addEventListener("beforeunload", () => {
       const durationSeconds = Math.round((Date.now() - startTime) / 1000);
 
@@ -54,6 +63,7 @@
         pageUrl,
         referrer,
         anonId,
+        sessionId, // ✅ Meesturen
         utmSource,
         utmMedium,
         utmCampaign,
