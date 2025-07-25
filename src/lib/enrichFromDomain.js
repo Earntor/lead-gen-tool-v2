@@ -3,10 +3,9 @@ import { chooseBestLocation } from "./googleMapsUtils.js";
 
 const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
-// Helper om categorie leesbaar te maken
 function formatCategory(key) {
   if (!key) return null;
-  return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export async function enrichFromDomain(domain, ipLat, ipLon) {
@@ -14,8 +13,17 @@ export async function enrichFromDomain(domain, ipLat, ipLon) {
     const textSearchUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(
       domain
     )}&key=${GOOGLE_API_KEY}`;
+
     const textSearchRes = await fetch(textSearchUrl);
-    const textSearchData = await textSearchRes.json();
+    const text = await textSearchRes.text();
+
+    let textSearchData;
+    try {
+      textSearchData = JSON.parse(text);
+    } catch (e) {
+      console.error("❌ Kon Google Maps Text Search niet parsen als JSON:", text.slice(0, 300));
+      return null;
+    }
 
     console.log("📦 Google TextSearch data:", JSON.stringify(textSearchData, null, 2));
 
@@ -24,15 +32,24 @@ export async function enrichFromDomain(domain, ipLat, ipLon) {
       return null;
     }
 
-    const rawResults = textSearchData.results.slice(0, 5); // Max 5 vestigingen
+    const rawResults = textSearchData.results.slice(0, 5);
     const enrichedLocations = [];
 
     for (const r of rawResults) {
       const placeDetailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${
         r.place_id
       }&fields=name,formatted_address,formatted_phone_number,website,types&key=${GOOGLE_API_KEY}`;
+
       const placeDetailsRes = await fetch(placeDetailsUrl);
-      const placeDetailsData = await placeDetailsRes.json();
+      const placeDetailsText = await placeDetailsRes.text();
+
+      let placeDetailsData;
+      try {
+        placeDetailsData = JSON.parse(placeDetailsText);
+      } catch (e) {
+        console.error("❌ Kon Place Details niet parsen als JSON:", placeDetailsText.slice(0, 300));
+        continue;
+      }
 
       const result = placeDetailsData.result;
       if (!result) continue;
@@ -41,7 +58,6 @@ export async function enrichFromDomain(domain, ipLat, ipLon) {
       const formatted_address = result.formatted_address || "";
       const phone = result.formatted_phone_number || null;
       const website = result.website || null;
-
       const types = result.types || [];
       const rawCategory = types[0] || null;
       const category = formatCategory(rawCategory);
@@ -95,12 +111,12 @@ export async function enrichFromDomain(domain, ipLat, ipLon) {
       };
     }
 
-    const { match, confidence, reason, selected_random_match } = chooseBestLocation(
-      enrichedLocations,
-      ipLat,
-      ipLon,
-      domain
-    );
+    const {
+      match,
+      confidence,
+      reason,
+      selected_random_match,
+    } = chooseBestLocation(enrichedLocations, ipLat, ipLon, domain);
 
     return {
       ...match,
