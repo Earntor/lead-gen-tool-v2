@@ -25,7 +25,10 @@
 
     const baseUrl = new URL(scriptTag.src).origin;
 
-    // ✅ Verstuur één keer bij pageload
+    // ⏱️ Starttijd opslaan
+    const startTime = Date.now();
+
+    // ✅ Verstuur bij pageload
     fetch(`${baseUrl}/api/track`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -38,8 +41,29 @@
         utmSource,
         utmMedium,
         utmCampaign,
-        durationSeconds: null,
+        durationSeconds: null, // Wordt pas bekend bij verlaten
       }),
+    });
+
+    // ✅ Verstuur bij verlaten van de pagina
+    window.addEventListener("beforeunload", () => {
+      const durationSeconds = Math.round((Date.now() - startTime) / 1000);
+
+      const payload = {
+        projectId,
+        pageUrl,
+        referrer,
+        anonId,
+        utmSource,
+        utmMedium,
+        utmCampaign,
+        durationSeconds,
+      };
+
+      navigator.sendBeacon(
+        `${baseUrl}/api/track`,
+        new Blob([JSON.stringify(payload)], { type: "application/json" })
+      );
     });
   } catch (err) {
     console.warn("Tracking script error:", err);
