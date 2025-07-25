@@ -1,3 +1,4 @@
+// pages/api/track.js
 import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
@@ -57,6 +58,7 @@ export default async function handler(req, res) {
     console.warn("⚠️ Geen IP-adres gevonden voor tracker hit.")
   }
 
+  // 🔹 Bezoek registreren
   const { error } = await supabase
     .from("leads")
     .insert({
@@ -79,7 +81,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: error.message })
   }
 
-  // ✅ Laatste ping bijwerken voor validatie-check
+  // ✅ Laatste ping bijwerken voor validatie
   const { error: updateError } = await supabase
     .from("profiles")
     .update({ last_tracking_ping: new Date().toISOString() })
