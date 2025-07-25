@@ -1,5 +1,4 @@
 import { createClient } from '@supabase/supabase-js'
-import getRawBody from 'raw-body'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
