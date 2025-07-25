@@ -32,7 +32,7 @@
     const baseUrl = new URL(scriptTag.src).origin;
     const startTime = Date.now();
 
-    // ✅ Verstuur bij page load
+    // ✅ Eerste call (bij paginabezoek)
     fetch(`${baseUrl}/api/track`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -50,8 +50,10 @@
       }),
     });
 
-    // ✅ Verstuur bij verlaten van de pagina met duur
-    window.addEventListener("beforeunload", () => {
+    // ✅ Tweede call (bij verlaten pagina, met duration)
+    window.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "hidden") return;
+
       const durationSeconds = Math.round((Date.now() - startTime) / 1000);
 
       const payload = {
