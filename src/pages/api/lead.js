@@ -99,7 +99,16 @@ export default async function handler(req, res) {
 
 if (!cached || needsDomainEnrichment) {
   const ipapiRes = await fetch(`http://ip-api.com/json/${ip_address}`);
-  const ipapi = await ipapiRes.json();
+const contentType = ipapiRes.headers.get("content-type");
+
+if (!ipapiRes.ok || !contentType?.includes("application/json")) {
+  const fallbackText = await ipapiRes.text();
+  console.error("❌ IP-API gaf geen JSON terug:", fallbackText.slice(0, 300));
+  return res.status(500).json({ error: 'IP-API gaf geen JSON terug' });
+}
+
+const ipapi = await ipapiRes.json();
+
 
       if (ipapi.status !== 'success') {
         throw new Error(`IP-API error: ${ipapi.message || 'onbekende fout'}`);
