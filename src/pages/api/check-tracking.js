@@ -42,14 +42,8 @@ export default async function handler(req, res) {
       return res.status(200).json({ status: 'not_found' })
     }
 
-    const lastPing = new Date(data.last_tracking_ping)
-    const diffMinutes = (Date.now() - lastPing.getTime()) / 60000
-
-    if (diffMinutes < 5) {
-      return res.status(200).json({ status: 'ok' })
-    } else {
-      return res.status(200).json({ status: 'stale' })
-    }
+    // ✅ Nieuw: zónder tijdslimiet — als er ooit een ping was, dan is het ok
+    return res.status(200).json({ status: 'ok' })
   } catch (err) {
     console.error('❌ Server error:', err)
     return res.status(500).json({ error: 'Unexpected error' })
