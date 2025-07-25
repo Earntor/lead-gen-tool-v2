@@ -30,13 +30,13 @@ export default async function handler(req, res) {
   let body = {};
   try {
     const rawBody = await getRawBody(req, {
-      encoding: true, 
+      encoding: true,
       length: req.headers['content-length'],
       limit: '1mb',
     });
     console.log("📦 Ontvangen body:", rawBody);
     body = JSON.parse(rawBody);
-        console.log("✅ Parsed body object:", body);
+    console.log("✅ Parsed body object:", body);
     console.log("🧪 durationSeconds ontvangen:", body.durationSeconds);
   } catch (err) {
     console.error("❌ JSON parse error:", err.message);
@@ -72,15 +72,20 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true, message: 'Invalid pageUrl ignored' });
   }
 
+  // ✅ IP-adres ophalen
   const ipAddress =
     req.headers['x-forwarded-for']?.split(',')[0] ||
     req.socket?.remoteAddress ||
     null;
 
-let confidenceScore = null;
-let confidenceReason = null;
+  if (!ipAddress) {
+    console.warn("❌ Geen IP-adres beschikbaar — request genegeerd");
+    return res.status(400).json({ error: 'Missing IP address' });
+  }
 
-if (ipAddress) {
+  let confidenceScore = null;
+  let confidenceReason = null;
+
   const { data: ipCache, error: ipErr } = await supabase
     .from('ipapi_cache')
     .select('confidence, confidence_reason')
@@ -94,29 +99,27 @@ if (ipAddress) {
   } else {
     console.log("⚠️ Geen confidence gevonden voor IP:", ipAddress);
     // 🚀 Fallback naar enrichment als IP onbekend
-try {
-  console.log("📡 Start enrichment voor onbekend IP...");
-  await fetch(`${process.env.NEXT_PUBLIC_TRACKING_DOMAIN || 'http://localhost:3000'}/api/lead`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      ip_address: ipAddress,
-      user_id: projectId,
-      page_url: pageUrl,
-      anon_id: anonId || null,
-      referrer: referrer || null,
-      utm_source: utmSource || null,
-      utm_medium: utmMedium || null,
-      utm_campaign: utmCampaign || null,
-      duration_seconds: durationSeconds || null,
-    }),
-  });
-} catch (e) {
-  console.error("❌ Fout bij enrichment-call:", e.message);
-}
+    try {
+      console.log("📡 Start enrichment voor onbekend IP...");
+      await fetch(`${process.env.NEXT_PUBLIC_TRACKING_DOMAIN || 'http://localhost:3000'}/api/lead`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ip_address: ipAddress,
+          user_id: projectId,
+          page_url: pageUrl,
+          anon_id: anonId || null,
+          referrer: referrer || null,
+          utm_source: utmSource || null,
+          utm_medium: utmMedium || null,
+          utm_campaign: utmCampaign || null,
+          duration_seconds: durationSeconds || null,
+        }),
+      });
+    } catch (e) {
+      console.error("❌ Fout bij enrichment-call:", e.message);
+    }
   }
-}
-
 
   if (isValidation) {
     await supabase

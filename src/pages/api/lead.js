@@ -33,7 +33,19 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { ip_address, user_id, page_url } = req.body;
+  const {
+  ip_address,
+  user_id,
+  page_url,
+  anon_id,
+  referrer,
+  utm_source,
+  utm_medium,
+  utm_campaign,
+  duration_seconds,
+  site_id
+} = req.body;
+
 
 
   try {
@@ -403,43 +415,44 @@ if (scraped) {
     }
 
     const { data, error } = await supabaseAdmin
-      .from('leads')
-      .insert([{
-        user_id,
-        ip_address,
-        page_url,
-        timestamp: new Date().toISOString(),
-        company_name: ipData.company_name,
-        company_domain: ipData.company_domain,
-        location: ipData.location,
-        ip_street: ipData.ip_street,
-        ip_postal_code: ipData.ip_postal_code,
-        ip_city: ipData.ip_city,
-        ip_country: ipData.ip_country,
-        domain_address: ipData.domain_address,
-        domain_postal_code: ipData.domain_postal_code,
-        domain_city: ipData.domain_city,
-        domain_country: ipData.domain_country,
-        confidence_reason: ipData.confidence_reason || null,
-        phone: ipData.phone || null,
-  email: ipData.email || null,
-  linkedin_url: ipData.linkedin_url || null,
-  facebook_url: ipData.facebook_url || null,
-  instagram_url: ipData.instagram_url || null,
-  twitter_url: ipData.twitter_url || null,
-  meta_description: ipData.meta_description || null,
-        anon_id: req.body.anon_id || null,
-    referrer: req.body.referrer || null,
-    utm_source: req.body.utm_source || null,
-    utm_medium: req.body.utm_medium || null,
-    utm_campaign: req.body.utm_campaign || null,
-    duration_seconds: req.body.duration_seconds || null,
+  .from('leads')
+  .insert([{
+    user_id,
+    ip_address,
+    page_url,
+    timestamp: new Date().toISOString(),
+    company_name: ipData.company_name,
+    company_domain: ipData.company_domain,
+    location: ipData.location,
+    ip_street: ipData.ip_street,
+    ip_postal_code: ipData.ip_postal_code,
+    ip_city: ipData.ip_city,
+    ip_country: ipData.ip_country,
+    domain_address: ipData.domain_address,
+    domain_postal_code: ipData.domain_postal_code,
+    domain_city: ipData.domain_city,
+    domain_country: ipData.domain_country,
+    confidence_reason: ipData.confidence_reason || null,
+    phone: ipData.phone || null,
+    email: ipData.email || null,
+    linkedin_url: ipData.linkedin_url || null,
+    facebook_url: ipData.facebook_url || null,
+    instagram_url: ipData.instagram_url || null,
+    twitter_url: ipData.twitter_url || null,
+    meta_description: ipData.meta_description || null,
+    anon_id: anon_id || null,
+    referrer: referrer || null,
+    utm_source: utm_source || null,
+    utm_medium: utm_medium || null,
+    utm_campaign: utm_campaign || null,
+    duration_seconds: duration_seconds || null,
     domain_lat: ipData.domain_lat || null,
-domain_lon: ipData.domain_lon || null,
-rdns_hostname: ipData.rdns_hostname || null,
-  category: ipData.category
-      }])
-      .select();
+    domain_lon: ipData.domain_lon || null,
+    rdns_hostname: ipData.rdns_hostname || null,
+    category: ipData.category || null,
+    site_id: site_id || null
+  }])
+  .select();
 
     if (error) {
       return res.status(500).json({ error: error.message || 'Database insert failed' });
