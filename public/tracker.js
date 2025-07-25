@@ -68,10 +68,15 @@
         durationSeconds,
       };
 
-      navigator.sendBeacon(
-        `${baseUrl}/api/track`,
-        new Blob([JSON.stringify(payload)], { type: "application/json" })
-      );
+     fetch(`${baseUrl}/api/track`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify(payload),
+  keepalive: true, // ✅ dit zorgt dat hij werkt bij unload
+});
+
     });
   } catch (err) {
     console.warn("Tracking script error:", err);
