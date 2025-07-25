@@ -1,3 +1,4 @@
+// pages/api/track.js
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -92,6 +93,9 @@ export default async function handler(req, res) {
   } else {
     console.log(`✅ last_tracking_ping geüpdatet voor project ${projectId}`);
   }
+
+  // ⏳ Geef Supabase even de tijd om het zichtbaar te maken
+  await new Promise((resolve) => setTimeout(resolve, 300));
 
   return res.status(200).json({ success: true });
 }
