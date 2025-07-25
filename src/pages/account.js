@@ -307,7 +307,8 @@ export default function Account() {
     utmSource: 'validation',
     utmMedium: 'internal',
     utmCampaign: 'script-validation',
-    referrer: document.referrer || null
+    referrer: document.referrer || null,
+    validationTest: true
   })
 })
 
