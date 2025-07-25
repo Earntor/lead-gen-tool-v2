@@ -1,9 +1,10 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from '@supabase/supabase-js';
+import getRawBody from 'raw-body';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
-)
+);
 
 export const config = {
   api: {
@@ -14,16 +15,16 @@ export const config = {
 export default async function handler(req, res) {
   // ✅ CORS preflight
   if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Origin', '*')
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
-    return res.status(200).end()
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    return res.status(200).end();
   }
 
-  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Origin', '*');
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   let body = {};
@@ -45,7 +46,7 @@ export default async function handler(req, res) {
     utmMedium,
     utmCampaign,
     referrer,
-    validationTest
+    validationTest,
   } = body;
 
   if (!projectId || !pageUrl) {
@@ -79,7 +80,7 @@ export default async function handler(req, res) {
 
   const { error } = await supabase
     .from('leads')
-    .insert({
+    .upsert({
       user_id: projectId,
       site_id: siteId || null,
       page_url: pageUrl,
@@ -93,6 +94,9 @@ export default async function handler(req, res) {
       utm_campaign: utmCampaign || null,
       referrer: referrer || null,
       timestamp: new Date().toISOString(),
+    }, {
+      onConflict: 'session_id',
+      ignoreDuplicates: false,
     });
 
   if (error) {
