@@ -60,7 +60,10 @@ export default async function handler(req, res) {
 
     let ipData = cached;
 
-    if (!cached || !cached.company_name) {
+    const needsDomainEnrichment =
+  cached && cached.company_domain && !cached.company_name;
+
+if (!cached || needsDomainEnrichment) {
       const ipapiRes = await fetch(`http://ip-api.com/json/${ip_address}`);
       const ipapi = await ipapiRes.json();
 
