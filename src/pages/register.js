@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useRouter } from 'next/router'
-import PasswordInput from '@/components/PasswordInput'
+import PasswordInput from '../../components/PasswordInput'
 import ReCAPTCHA from 'react-google-recaptcha'
 import Link from 'next/link'
 
