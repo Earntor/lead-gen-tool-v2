@@ -1,8 +1,9 @@
 import { useState, useRef } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useRouter } from 'next/router'
-import PasswordInput from '@/components/PasswordInput'
-import ReCAPTCHA from 'react-google-recaptcha'
+import PasswordInput from '../components/PasswordInput'
+import dynamic from 'next/dynamic' // moet helemaal bovenaan!
+const ReCAPTCHA = dynamic(() => import('react-google-recaptcha'), { ssr: false })
 import Link from 'next/link'
 
 export default function Register() {
