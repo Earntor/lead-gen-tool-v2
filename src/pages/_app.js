@@ -1,5 +1,5 @@
 // _app.js
-import "../styles/globals.css";
+import "@/styles/globals.css";
 import Layout from "../components/layout";
 import { createBrowserClient } from '@supabase/ssr';
 import { SessionContextProvider } from '@supabase/auth-helpers-react'; // deze mag nog blijven werken
