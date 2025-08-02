@@ -1,9 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabaseClient'
-import ReCAPTCHA from 'react-google-recaptcha'
+import dynamic from 'next/dynamic' // ✅ Moet vóór gebruik komen
+const ReCAPTCHA = dynamic(() => import('react-google-recaptcha'), { ssr: false })
 import PasswordInput from '../components/PasswordInput'
 import Link from 'next/link'
+
+
 
 export default function Login() {
   const [email, setEmail] = useState('')
