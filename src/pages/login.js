@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabaseClient'
 import ReCAPTCHA from 'react-google-recaptcha'
-import PasswordInput from '@/components/PasswordInput'
+import PasswordInput from '../components/PasswordInput'
 import Link from 'next/link'
 
 export default function Login() {
