@@ -297,29 +297,27 @@ export default function Account() {
             <h2 className="text-xl font-semibold mb-4">Tracking script</h2>
             
 {lastTrackingPing ? (
-  <div className="mb-2 text-sm">
-    Laatste tracking ping:{" "}
-    <span
-      className={
-        new Date() - new Date(lastTrackingPing) < 1000 * 60 * 5
-          ? "text-green-600"
-          : new Date() - new Date(lastTrackingPing) > 1000 * 60 * 60 * 24
-          ? "text-red-600 font-semibold"
-          : "text-orange-600"
-      }
-    >
-      {new Date(lastTrackingPing).toLocaleString("nl-NL")}
-    </span>
-
-    {new Date() - new Date(lastTrackingPing) > 1000 * 60 * 60 * 24 && (
-      <p className="text-red-600 mt-1">
-        ⚠️ Je hebt al meer dan 24 uur geen trackingactiviteit ontvangen.
-      </p>
+  <div className="mb-2 text-sm flex items-start flex-col gap-1">
+    {new Date() - new Date(lastTrackingPing) > 1000 * 60 * 60 * 24 ? (
+      <>
+        <div className="flex items-center gap-2 text-red-600 font-medium">
+          ⚠️ Laatste tracking ping:{" "}
+          <span>{new Date(lastTrackingPing).toLocaleString("nl-NL")}</span>
+        </div>
+        <p className="text-red-600">
+          Je hebt al meer dan 24 uur geen trackingactiviteit ontvangen.
+        </p>
+      </>
+    ) : (
+      <div className="flex items-center gap-2 text-green-800 font-medium">
+        ✅ Laatste tracking ping:{" "}
+        <span>{new Date(lastTrackingPing).toLocaleString("nl-NL")}</span>
+      </div>
     )}
   </div>
 ) : (
-  <div className="mb-2 text-sm text-red-600">
-    Nog geen tracking ping ontvangen.
+  <div className="mb-2 text-sm text-red-600 flex items-center gap-2">
+    ❌ Nog geen tracking ping ontvangen.
   </div>
 )}
 
