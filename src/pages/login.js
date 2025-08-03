@@ -20,15 +20,6 @@ export default function Login() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) router.replace('/dashboard')
     })
-
-    const check = setInterval(() => {
-      if (typeof window !== 'undefined' && window.grecaptcha?.render) {
-        console.log('✅ reCAPTCHA is geladen')
-        setRecaptchaLoaded(true)
-        clearInterval(check)
-      }
-    }, 500)
-    return () => clearInterval(check)
   }, [])
 
   const handleLogin = async (e) => {
@@ -45,7 +36,7 @@ export default function Login() {
     let token
     try {
       if (typeof recaptchaRef.current.executeAsync !== 'function') {
-        setMessage('❌ reCAPTCHA fout: executeAsync() bestaat niet. Controleer je setup.')
+        setMessage('❌ executeAsync() is niet beschikbaar. Controleer je reCAPTCHA versie.')
         setLoading(false)
         return
       }
@@ -53,19 +44,17 @@ export default function Login() {
       token = await recaptchaRef.current.executeAsync()
       recaptchaRef.current.reset()
     } catch (err) {
-      console.error('❌ reCAPTCHA error:', err)
-      setMessage('reCAPTCHA fout. Probeer opnieuw.')
+      console.error('reCAPTCHA fout:', err)
+      setMessage('Er ging iets mis met reCAPTCHA.')
       setLoading(false)
       return
     }
 
-    // Verifieer token bij backend
     const res = await fetch('/api/verify-recaptcha', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token }),
     })
-
     const data = await res.json()
     if (!data.success) {
       setMessage('reCAPTCHA verificatie mislukt.')
@@ -132,14 +121,21 @@ export default function Login() {
           {loading ? 'Bezig...' : 'Inloggen'}
         </button>
 
-        {recaptchaLoaded && (
-          <ReCAPTCHA
-            ref={recaptchaRef}
-            sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
-            size="invisible"
-            badge="bottomright"
-          />
-        )}
+        {/* ✅ Correct geladen invisible reCAPTCHA */}
+        <ReCAPTCHA
+          ref={recaptchaRef}
+          sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
+          size="invisible"
+          badge="bottomright"
+          onLoad={() => {
+            console.log("✅ reCAPTCHA is klaar")
+            setRecaptchaLoaded(true)
+          }}
+          onErrored={() => {
+            setMessage('❌ reCAPTCHA kon niet worden geladen.')
+            setRecaptchaLoaded(false)
+          }}
+        />
 
         <div className="flex items-center gap-2 my-4">
           <hr className="flex-grow border-gray-300" />
