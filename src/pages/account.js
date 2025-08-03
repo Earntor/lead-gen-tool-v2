@@ -17,6 +17,35 @@ export default function Account() {
   const [copySuccess, setCopySuccess] = useState('')
   const [trackingScript, setTrackingScript] = useState('')
   const [lastTrackingPing, setLastTrackingPing] = useState(null);
+  
+  
+  const getTrackingStatusBadge = () => {
+  if (!lastTrackingPing) {
+    return (
+      <span className="bg-red-100 text-red-800 px-2 py-0.5 rounded text-xs font-medium">
+        Geen ping
+      </span>
+    );
+  }
+
+  const diff = new Date() - new Date(lastTrackingPing);
+
+  if (diff > 1000 * 60 * 60 * 24) {
+    return (
+      <span className="bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded text-xs font-medium">
+        Inactief
+      </span>
+    );
+  }
+
+  return (
+    <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded text-xs font-medium">
+      Actief
+    </span>
+  );
+};
+
+
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -29,10 +58,11 @@ export default function Account() {
       setEmail(user.email)
 
       const { data: profile } = await supabase
-        .from('profiles')
-        .select('full_name, phone, preferences')
-        .eq('id', user.id)
-        .single()
+  .from('profiles')
+  .select('full_name, phone, preferences, last_tracking_ping')
+  .eq('id', user.id)
+  .single()
+
 
       if (profile) {
         setFullName(profile.full_name || '')
@@ -53,14 +83,31 @@ export default function Account() {
   useEffect(() => {
     const hash = window.location.hash.replace('#', '')
     if (hash) {
-      setActiveTab(hash)
-    }
+  setActiveTab(hash)
+  onHashChange() // ⬅️ Laad meteen de juiste tab-actie
+}
+
     const onHashChange = () => {
-      const newHash = window.location.hash.replace('#', '')
-      setActiveTab(newHash || 'account')
-      setGeneralMessage(null)
-      setTrackingMessage(null)
-    }
+  const newHash = window.location.hash.replace('#', '')
+  setActiveTab(newHash || 'account')
+  setGeneralMessage(null)
+  setTrackingMessage(null)
+
+  // ✅ Als tracking-tab wordt geopend: herlaad tracking ping
+  if ((newHash || 'account') === 'tracking' && user?.id) {
+    supabase
+      .from('profiles')
+      .select('last_tracking_ping')
+      .eq('id', user.id)
+      .single()
+      .then(({ data }) => {
+        if (data?.last_tracking_ping) {
+          setLastTrackingPing(data.last_tracking_ping)
+        }
+      })
+  }
+}
+
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
@@ -150,12 +197,22 @@ export default function Account() {
     <div className="w-full grid grid-cols-1 md:grid-cols-4 gap-6 px-4 py-10">
       <aside className="space-y-2">
         {[
-          { key: 'account', label: 'Account' },
-          { key: 'instellingen', label: 'Instellingen' },
-          { key: 'facturen', label: 'Facturen' },
-          { key: 'betaling', label: 'Betaalmethode' },
-          { key: 'tracking', label: 'Tracking script' },
-        ].map((tab) => (
+  { key: 'account', label: 'Account' },
+  { key: 'instellingen', label: 'Instellingen' },
+  { key: 'facturen', label: 'Facturen' },
+  { key: 'betaling', label: 'Betaalmethode' },
+  {
+    key: 'tracking',
+    label: (
+      <span className="flex items-center justify-between w-full">
+        <span>Tracking script</span>
+        {getTrackingStatusBadge()}
+      </span>
+    ),
+  },
+]
+
+.map((tab) => (
           <button
             key={tab.key}
             onClick={() => {
