@@ -23,57 +23,56 @@ export default function Login() {
   }, [])
 
   const handleLogin = async (e) => {
-    e.preventDefault()
-    setMessage('')
-    setLoading(true)
+  e.preventDefault()
+  setMessage('')
+  setLoading(true)
 
-    if (!recaptchaRef.current) {
-      setMessage('❌ reCAPTCHA is nog niet geladen.')
-      setLoading(false)
+  if (!recaptchaRef.current) {
+    setMessage('❌ reCAPTCHA is nog niet geladen.')
+    setLoading(false)
+    return
+  }
+
+  // ✅ Alleen execute
+  recaptchaRef.current.execute()
+}
+
+const onRecaptchaChange = async (token) => {
+  if (!token) {
+    setMessage('❌ reCAPTCHA gaf geen token terug.')
+    setLoading(false)
+    return
+  }
+
+  try {
+    const res = await fetch('/api/verify-recaptcha', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+
+    const data = await res.json()
+    if (!data.success) {
+      setMessage('reCAPTCHA verificatie mislukt.')
       return
     }
 
-    // Trigger reCAPTCHA (de rest gaat via onChange)
-    recaptchaRef.current.reset()
-    recaptchaRef.current.execute()
-  }
-
-  const onRecaptchaChange = async (token) => {
-    if (!token) {
-      setMessage('❌ reCAPTCHA gaf geen token terug.')
-      setLoading(false)
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) {
+      setMessage('Fout bij inloggen: ' + error.message)
       return
     }
 
-    try {
-      const res = await fetch('/api/verify-recaptcha', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token }),
-      })
-
-      const data = await res.json()
-      if (!data.success) {
-        setMessage('reCAPTCHA verificatie mislukt.')
-        setLoading(false)
-        return
-      }
-
-      const { error } = await supabase.auth.signInWithPassword({ email, password })
-      if (error) {
-        setMessage('Fout bij inloggen: ' + error.message)
-        setLoading(false)
-        return
-      }
-
-      router.push('/dashboard')
-    } catch (err) {
-      console.error('❌ Verificatie fout:', err)
-      setMessage('Er ging iets mis. Probeer opnieuw.')
-    } finally {
-      setLoading(false)
-    }
+    router.push('/dashboard')
+  } catch (err) {
+    console.error('❌ Verificatie fout:', err)
+    setMessage('Er ging iets mis. Probeer opnieuw.')
+  } finally {
+    recaptchaRef.current?.reset?.()
+    setLoading(false)
   }
+}
+
 
   const handleGoogleLogin = async () => {
     await supabase.auth.signInWithOAuth({ provider: 'google' })
