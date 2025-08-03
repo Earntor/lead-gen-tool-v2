@@ -1,18 +1,17 @@
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabaseClient'
-import dynamic from 'next/dynamic' // ✅ Moet vóór gebruik komen
+import dynamic from 'next/dynamic'
 const ReCAPTCHA = dynamic(() => import('react-google-recaptcha'), { ssr: false })
 import PasswordInput from '../components/PasswordInput'
 import Link from 'next/link'
-
-
 
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
+  const [recaptchaReady, setRecaptchaReady] = useState(false)
   const router = useRouter()
   const recaptchaRef = useRef(null)
 
@@ -31,16 +30,16 @@ export default function Login() {
     setMessage('')
 
     try {
-      if (!recaptchaRef.current || typeof recaptchaRef.current.executeAsync !== 'function') {
-  console.error('❌ reCAPTCHA object is niet goed geladen');
-  setMessage('Technische fout met reCAPTCHA. Probeer opnieuw.');
-  setLoading(false);
-  return;
-}
+      // ✅ Wacht tot reCAPTCHA geladen is
+      if (!recaptchaReady) {
+        setMessage('reCAPTCHA is nog niet geladen. Even geduld...')
+        setLoading(false)
+        return
+      }
 
-const recaptchaToken = await recaptchaRef.current.executeAsync();
-recaptchaRef.current.reset();
-
+      // ✅ Token ophalen
+      const recaptchaToken = await recaptchaRef.current.executeAsync()
+      recaptchaRef.current.reset()
 
       const recaptchaRes = await fetch('/api/verify-recaptcha', {
         method: 'POST',
@@ -55,6 +54,7 @@ recaptchaRef.current.reset();
         return
       }
 
+      // ✅ Inloggen
       const { error } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -66,7 +66,6 @@ recaptchaRef.current.reset();
         return
       }
 
-      // ✅ Wacht tot de sessie actief is
       const {
         data: { user: loggedInUser },
         error: userError,
@@ -136,13 +135,13 @@ recaptchaRef.current.reset();
           {loading ? 'Bezig...' : 'Inloggen'}
         </button>
 
-        {/* Invisible reCAPTCHA */}
+        {/* ✅ Invisible reCAPTCHA */}
         <ReCAPTCHA
-  ref={recaptchaRef}
-  sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
-  size="normal"
-/>
-
+          ref={recaptchaRef}
+          sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
+          size="invisible"
+          onReady={() => setRecaptchaReady(true)}
+        />
 
         <div className="flex items-center gap-2 my-4">
           <hr className="flex-grow border-gray-300" />
