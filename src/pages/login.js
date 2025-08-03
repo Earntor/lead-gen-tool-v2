@@ -12,7 +12,7 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
-  const [recaptchaToken, setRecaptchaToken] = useState(null)
+  const [shouldSubmit, setShouldSubmit] = useState(false)
   const recaptchaRef = useRef(null)
   const router = useRouter()
 
@@ -23,56 +23,53 @@ export default function Login() {
   }, [])
 
   const handleLogin = async (e) => {
-  e.preventDefault()
-  setMessage('')
-  setLoading(true)
+    e.preventDefault()
+    setMessage('')
+    setLoading(true)
 
-  if (!recaptchaRef.current) {
-    setMessage('❌ reCAPTCHA is nog niet geladen.')
-    setLoading(false)
-    return
-  }
-
-  // ✅ Alleen execute
-  recaptchaRef.current.execute()
-}
-
-const onRecaptchaChange = async (token) => {
-  if (!token) {
-    setMessage('❌ reCAPTCHA gaf geen token terug.')
-    setLoading(false)
-    return
-  }
-
-  try {
-    const res = await fetch('/api/verify-recaptcha', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
-    })
-
-    const data = await res.json()
-    if (!data.success) {
-      setMessage('reCAPTCHA verificatie mislukt.')
+    if (!recaptchaRef.current) {
+      setMessage('❌ reCAPTCHA is nog niet geladen.')
+      setLoading(false)
       return
     }
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) {
-      setMessage('Fout bij inloggen: ' + error.message)
-      return
-    }
-
-    router.push('/dashboard')
-  } catch (err) {
-    console.error('❌ Verificatie fout:', err)
-    setMessage('Er ging iets mis. Probeer opnieuw.')
-  } finally {
-    recaptchaRef.current?.reset?.()
-    setLoading(false)
+    // Start invisible reCAPTCHA
+    setShouldSubmit(true)
+    recaptchaRef.current.execute()
   }
-}
 
+  const onRecaptchaChange = async (token) => {
+    if (!token || !shouldSubmit) return
+
+    try {
+      const res = await fetch('/api/verify-recaptcha', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      })
+
+      const data = await res.json()
+      if (!data.success) {
+        setMessage('❌ reCAPTCHA verificatie mislukt.')
+        return
+      }
+
+      const { error } = await supabase.auth.signInWithPassword({ email, password })
+      if (error) {
+        setMessage('❌ Fout bij inloggen: ' + error.message)
+        return
+      }
+
+      router.push('/dashboard')
+    } catch (err) {
+      console.error('❌ Fout bij login:', err)
+      setMessage('Er ging iets mis tijdens het inloggen.')
+    } finally {
+      recaptchaRef.current?.reset?.()
+      setShouldSubmit(false)
+      setLoading(false)
+    }
+  }
 
   const handleGoogleLogin = async () => {
     await supabase.auth.signInWithOAuth({ provider: 'google' })
@@ -89,19 +86,24 @@ const onRecaptchaChange = async (token) => {
         {message && <p className="text-sm text-center text-red-600">{message}</p>}
 
         <div>
-          <label htmlFor="email" className="block text-sm text-gray-700 mb-1">E-mailadres</label>
+          <label htmlFor="email" className="block text-sm text-gray-700 mb-1">
+            E-mailadres
+          </label>
           <input
             id="email"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            placeholder="Vul hier je e-mail in"
             className="border border-gray-300 rounded w-full px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             required
           />
         </div>
 
         <div>
-          <label htmlFor="password" className="block text-sm text-gray-700 mb-1">Wachtwoord</label>
+          <label htmlFor="password" className="block text-sm text-gray-700 mb-1">
+            Wachtwoord
+          </label>
           <PasswordInput
             id="password"
             value={password}
@@ -127,6 +129,7 @@ const onRecaptchaChange = async (token) => {
           onChange={onRecaptchaChange}
           onErrored={() => {
             setMessage('❌ reCAPTCHA fout. Ververs de pagina.')
+            setLoading(false)
           }}
         />
 
@@ -142,8 +145,22 @@ const onRecaptchaChange = async (token) => {
           className="w-full border border-gray-300 bg-white text-gray-700 font-medium py-2 rounded flex items-center justify-center gap-2 hover:bg-gray-50 transition"
         >
           <svg className="w-5 h-5" viewBox="0 0 533.5 544.3">
-            <path d="M533.5 278.4c0-17.4-1.5-34-4.4-50H272v94.8h146.9..." fill="#4285f4" />
-            {/* overige path ingekort */}
+            <path
+              d="M533.5 278.4c0-17.4-1.5-34-4.4-50H272v94.8h146.9c-6.4 34.6-25.7 63.9-54.8 83.6v69.4h88.4c51.7-47.7 81-118.1 81-197.8z"
+              fill="#4285f4"
+            />
+            <path
+              d="M272 544.3c73.5 0 135.2-24.4 180.3-66.3l-88.4-69.4c-24.5 16.4-56 26-91.9 26-70.7 0-130.6-47.7-152-111.6H30.3v70.5C75 482.2 167.3 544.3 272 544.3z"
+              fill="#34a853"
+            />
+            <path
+              d="M120 323c-10.2-30.6-10.2-63.5 0-94.1V158.4H30.3c-42.9 85.6-42.9 186.1 0 271.7L120 323z"
+              fill="#fbbc04"
+            />
+            <path
+              d="M272 107.3c38.9-.6 76.1 13.9 104.3 39.7l78.1-78.1C405.8 24.9 340.8 0 272 0 167.3 0 75 62.1 30.3 158.4l89.7 70.5c21.3-63.9 81.3-111.6 152-111.6z"
+              fill="#ea4335"
+            />
           </svg>
           <span>Log in met Google</span>
         </button>
