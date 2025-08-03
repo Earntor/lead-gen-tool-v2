@@ -8,9 +8,7 @@ import PasswordInput from '../components/PasswordInput'
 import Link from 'next/link'
 
 // ReCAPTCHA dynamisch importeren
-const ReCAPTCHA = dynamic(() => import('react-google-recaptcha'), {
-  ssr: false,
-})
+import ReCAPTCHA from 'react-google-recaptcha'
 
 export default function Login() {
   const [email, setEmail] = useState('')
