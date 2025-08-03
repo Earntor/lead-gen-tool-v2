@@ -3,14 +3,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabaseClient'
-import dynamic from 'next/dynamic'
 import PasswordInput from '../components/PasswordInput'
+import ReCAPTCHA from '../components/RecaptchaClient'
 import Link from 'next/link'
-
-// ReCAPTCHA dynamisch importeren
-const ReCAPTCHA = dynamic(() => import('react-google-recaptcha'), {
-  ssr: false,
-})
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -25,13 +20,6 @@ export default function Login() {
       if (session) router.replace('/dashboard')
     })
   }, [])
-
-  useEffect(() => {
-    if (recaptchaRef.current) {
-      console.log('✅ reCAPTCHA geladen:', recaptchaRef.current)
-      console.log('✅ executeAsync type =', typeof recaptchaRef.current.executeAsync)
-    }
-  }, [recaptchaRef.current])
 
   const handleLogin = async (e) => {
     e.preventDefault()
@@ -81,7 +69,7 @@ export default function Login() {
       console.error('❌ Fout bij login:', err)
       setMessage('Er ging iets mis tijdens het inloggen.')
     } finally {
-      recaptchaRef.current?.reset?.()
+      await recaptchaRef.current?.reset?.()
       setLoading(false)
     }
   }
@@ -135,10 +123,10 @@ export default function Login() {
           {loading ? 'Bezig...' : 'Inloggen'}
         </button>
 
+        {/* ✅ Invisible reCAPTCHA via wrapper */}
         <ReCAPTCHA
           ref={recaptchaRef}
           sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
-          size="invisible"
           badge="bottomright"
           onChange={onRecaptchaChange}
           onErrored={() => {
