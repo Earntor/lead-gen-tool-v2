@@ -2,22 +2,33 @@ import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabaseClient'
 import dynamic from 'next/dynamic'
-const ReCAPTCHA = dynamic(() => import('react-google-recaptcha'), { ssr: false })
 import PasswordInput from '../components/PasswordInput'
 import Link from 'next/link'
+
+const ReCAPTCHA = dynamic(() => import('react-google-recaptcha'), { ssr: false })
 
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
-  const router = useRouter()
+  const [recaptchaLoaded, setRecaptchaLoaded] = useState(false)
   const recaptchaRef = useRef(null)
+  const router = useRouter()
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) router.replace('/dashboard')
     })
+
+    const check = setInterval(() => {
+      if (typeof window !== 'undefined' && window.grecaptcha?.render) {
+        console.log('✅ reCAPTCHA is geladen')
+        setRecaptchaLoaded(true)
+        clearInterval(check)
+      }
+    }, 500)
+    return () => clearInterval(check)
   }, [])
 
   const handleLogin = async (e) => {
@@ -25,46 +36,51 @@ export default function Login() {
     setLoading(true)
     setMessage('')
 
-    try {
-      // ✅ Check of reCAPTCHA geladen is
-      if (!recaptchaRef.current || typeof recaptchaRef.current.executeAsync !== 'function') {
-        setMessage('❌ reCAPTCHA is nog niet geladen of niet correct geïnitialiseerd.')
-        setLoading(false)
-        return
-      }
-
-      // ✅ Haal reCAPTCHA token op
-      const recaptchaToken = await recaptchaRef.current.executeAsync()
-      recaptchaRef.current.reset()
-
-      const verifyRes = await fetch('/api/verify-recaptcha', {
-        method: 'POST',
-        body: JSON.stringify({ token: recaptchaToken }),
-        headers: { 'Content-Type': 'application/json' },
-      })
-
-      const verifyData = await verifyRes.json()
-      if (!verifyData.success) {
-        setMessage('❌ reCAPTCHA verificatie mislukt.')
-        setLoading(false)
-        return
-      }
-
-      // ✅ Supabase login
-      const { error } = await supabase.auth.signInWithPassword({ email, password })
-      if (error) {
-        setMessage('Fout bij inloggen: ' + error.message)
-        setLoading(false)
-        return
-      }
-
-      router.push('/dashboard')
-    } catch (err) {
-      console.error('Login fout:', err)
-      setMessage('Er ging iets mis. Probeer opnieuw.')
+    if (!recaptchaLoaded || !recaptchaRef.current) {
+      setMessage('reCAPTCHA is nog niet geladen. Probeer opnieuw...')
+      setLoading(false)
+      return
     }
 
-    setLoading(false)
+    let token
+    try {
+      if (typeof recaptchaRef.current.executeAsync !== 'function') {
+        setMessage('❌ reCAPTCHA fout: executeAsync() bestaat niet. Controleer je setup.')
+        setLoading(false)
+        return
+      }
+
+      token = await recaptchaRef.current.executeAsync()
+      recaptchaRef.current.reset()
+    } catch (err) {
+      console.error('❌ reCAPTCHA error:', err)
+      setMessage('reCAPTCHA fout. Probeer opnieuw.')
+      setLoading(false)
+      return
+    }
+
+    // Verifieer token bij backend
+    const res = await fetch('/api/verify-recaptcha', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+
+    const data = await res.json()
+    if (!data.success) {
+      setMessage('reCAPTCHA verificatie mislukt.')
+      setLoading(false)
+      return
+    }
+
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) {
+      setMessage('Fout bij inloggen: ' + error.message)
+      setLoading(false)
+      return
+    }
+
+    router.push('/dashboard')
   }
 
   const handleGoogleLogin = async () => {
@@ -79,9 +95,7 @@ export default function Login() {
       >
         <h2 className="text-2xl font-bold text-gray-800">Inloggen</h2>
 
-        {message && (
-          <p className="text-sm text-center text-red-600">{message}</p>
-        )}
+        {message && <p className="text-sm text-center text-red-600">{message}</p>}
 
         <div>
           <label htmlFor="email" className="block text-sm text-gray-700 mb-1">
@@ -118,14 +132,14 @@ export default function Login() {
           {loading ? 'Bezig...' : 'Inloggen'}
         </button>
 
-        {/* ✅ Invisible reCAPTCHA */}
-        <ReCAPTCHA
-          ref={recaptchaRef}
-          sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
-          size="invisible"
-          badge="bottomright"
-          onErrored={() => setMessage('reCAPTCHA fout. Probeer opnieuw.')}
-        />
+        {recaptchaLoaded && (
+          <ReCAPTCHA
+            ref={recaptchaRef}
+            sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
+            size="invisible"
+            badge="bottomright"
+          />
+        )}
 
         <div className="flex items-center gap-2 my-4">
           <hr className="flex-grow border-gray-300" />
@@ -143,22 +157,10 @@ export default function Login() {
             viewBox="0 0 533.5 544.3"
             xmlns="http://www.w3.org/2000/svg"
           >
-            <path
-              d="M533.5 278.4c0-17.4-1.5-34-4.4-50H272v94.8h146.9c-6.4 34.6-25.7 63.9-54.8 83.6v69.4h88.4c51.7-47.7 81-118.1 81-197.8z"
-              fill="#4285f4"
-            />
-            <path
-              d="M272 544.3c73.5 0 135.2-24.4 180.3-66.3l-88.4-69.4c-24.5 16.4-56 26-91.9 26-70.7 0-130.6-47.7-152-111.6H30.3v70.5C75 482.2 167.3 544.3 272 544.3z"
-              fill="#34a853"
-            />
-            <path
-              d="M120 323c-10.2-30.6-10.2-63.5 0-94.1V158.4H30.3c-42.9 85.6-42.9 186.1 0 271.7L120 323z"
-              fill="#fbbc04"
-            />
-            <path
-              d="M272 107.3c38.9-.6 76.1 13.9 104.3 39.7l78.1-78.1C405.8 24.9 340.8 0 272 0 167.3 0 75 62.1 30.3 158.4l89.7 70.5c21.3-63.9 81.3-111.6 152-111.6z"
-              fill="#ea4335"
-            />
+            <path d="M533.5 278.4c0-17.4-1.5-34-4.4-50H272v94.8h146.9c-6.4 34.6-25.7 63.9-54.8 83.6v69.4h88.4c51.7-47.7 81-118.1 81-197.8z" fill="#4285f4" />
+            <path d="M272 544.3c73.5 0 135.2-24.4 180.3-66.3l-88.4-69.4c-24.5 16.4-56 26-91.9 26-70.7 0-130.6-47.7-152-111.6H30.3v70.5C75 482.2 167.3 544.3 272 544.3z" fill="#34a853" />
+            <path d="M120 323c-10.2-30.6-10.2-63.5 0-94.1V158.4H30.3c-42.9 85.6-42.9 186.1 0 271.7L120 323z" fill="#fbbc04" />
+            <path d="M272 107.3c38.9-.6 76.1 13.9 104.3 39.7l78.1-78.1C405.8 24.9 340.8 0 272 0 167.3 0 75 62.1 30.3 158.4l89.7 70.5c21.3-63.9 81.3-111.6 152-111.6z" fill="#ea4335" />
           </svg>
           <span>Log in met Google</span>
         </button>
