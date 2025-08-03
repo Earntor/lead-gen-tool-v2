@@ -14,7 +14,7 @@ export default function Login() {
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const router = useRouter()
-  const recaptchaRef = useRef()
+  const recaptchaRef = useRef(null)
 
   // ✅ Redirect als gebruiker al is ingelogd
   useEffect(() => {
@@ -31,8 +31,16 @@ export default function Login() {
     setMessage('')
 
     try {
-      const recaptchaToken = await recaptchaRef.current.executeAsync()
-      recaptchaRef.current.reset()
+      if (!recaptchaRef.current || typeof recaptchaRef.current.executeAsync !== 'function') {
+  console.error('❌ reCAPTCHA object is niet goed geladen');
+  setMessage('Technische fout met reCAPTCHA. Probeer opnieuw.');
+  setLoading(false);
+  return;
+}
+
+const recaptchaToken = await recaptchaRef.current.executeAsync();
+recaptchaRef.current.reset();
+
 
       const recaptchaRes = await fetch('/api/verify-recaptcha', {
         method: 'POST',

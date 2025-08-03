@@ -12,8 +12,17 @@ export const config = {
   },
 };
 
+function isValidDomain(domain) {
+  const invalids = ['localhost', '127.0.0.1', '::1', '', null];
+  return (
+    typeof domain === 'string' &&
+    domain.length > 3 &&
+    !invalids.includes(domain.toLowerCase()) &&
+    !domain.endsWith('vercel.app')
+  );
+}
+
 export default async function handler(req, res) {
-  // ✅ CORS preflight
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -34,10 +43,7 @@ export default async function handler(req, res) {
       length: req.headers['content-length'],
       limit: '1mb',
     });
-    console.log("📦 Ontvangen body:", rawBody);
     body = JSON.parse(rawBody);
-    console.log("✅ Parsed body object:", body);
-    console.log("🧪 durationSeconds ontvangen:", body.durationSeconds);
   } catch (err) {
     console.error("❌ JSON parse error:", err.message);
     return res.status(400).json({ error: 'Invalid JSON body' });
@@ -57,22 +63,26 @@ export default async function handler(req, res) {
     validationTest,
   } = body;
 
-  if (!projectId || !pageUrl) {
-    return res.status(400).json({ error: 'projectId and pageUrl are required' });
+  const isValidation = validationTest === true;
+
+  if (!projectId || !pageUrl || !siteId) {
+    return res.status(400).json({ error: 'projectId, siteId and pageUrl are required' });
   }
 
-  const isValidation = validationTest === true;
+  if (!isValidDomain(siteId)) {
+    console.warn(`❌ Ongeldig siteId ontvangen: ${siteId}`);
+    return res.status(200).json({ success: false, message: 'Invalid siteId - ignored' });
+  }
 
   try {
     const url = new URL(pageUrl);
     if (url.hostname.endsWith('vercel.app') && !isValidation) {
       return res.status(200).json({ success: true, message: 'Dashboard visit ignored' });
     }
-  } catch (e) {
+  } catch {
     return res.status(200).json({ success: true, message: 'Invalid pageUrl ignored' });
   }
 
-  // ✅ IP-adres ophalen
   const ipAddress =
     req.headers['x-forwarded-for']?.split(',')[0] ||
     req.socket?.remoteAddress ||
@@ -83,10 +93,35 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing IP address' });
   }
 
+  console.log("📡 Bezoek ontvangen van", siteId, "met IP", ipAddress);
+
+  // ✅ Stap 1: check of site bestaat
+  const { data: existingSite, error: siteErr } = await supabase
+    .from('sites')
+    .select('id')
+    .eq('site_id', siteId)
+    .maybeSingle();
+
+  if (!existingSite && !siteErr) {
+    console.log("🆕 Nieuwe site toegevoegd:", siteId);
+
+    const cleanedDomain = siteId.replace(/^www\./, ''); // voorbeeld: www.site.nl → site.nl
+
+    await supabase.from('sites').insert({
+      site_id: siteId,
+      user_id: projectId,
+      domain_name: cleanedDomain,
+    });
+  } else if (existingSite) {
+    console.log("✅ Bestaande site gevonden:", siteId);
+  } else if (siteErr) {
+    console.error("❌ Fout bij ophalen van sites:", siteErr.message);
+  }
+
   let confidenceScore = null;
   let confidenceReason = null;
 
-  const { data: ipCache, error: ipErr } = await supabase
+  const { data: ipCache } = await supabase
     .from('ipapi_cache')
     .select('confidence, confidence_reason')
     .eq('ip_address', ipAddress)
@@ -95,10 +130,7 @@ export default async function handler(req, res) {
   if (ipCache) {
     confidenceScore = ipCache.confidence ?? null;
     confidenceReason = ipCache.confidence_reason ?? null;
-    console.log("🧠 Confidence gevonden:", confidenceScore, confidenceReason);
   } else {
-    console.log("⚠️ Geen confidence gevonden voor IP:", ipAddress);
-    // 🚀 Fallback naar enrichment als IP onbekend
     try {
       console.log("📡 Start enrichment voor onbekend IP...");
       await fetch(`${process.env.NEXT_PUBLIC_TRACKING_DOMAIN || 'http://localhost:3000'}/api/lead`, {
@@ -130,28 +162,26 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true, validation: true });
   }
 
-  const { error } = await supabase
-    .from('leads')
-    .insert({
-      user_id: projectId,
-      site_id: siteId || null,
-      page_url: pageUrl,
-      ip_address: ipAddress,
-      source: 'tracker',
-      anon_id: anonId || null,
-      session_id: sessionId || null,
-      duration_seconds: durationSeconds || null,
-      confidence: confidenceScore,
-      confidence_reason: confidenceReason,
-      utm_source: utmSource || null,
-      utm_medium: utmMedium || null,
-      utm_campaign: utmCampaign || null,
-      referrer: referrer || null,
-      timestamp: new Date().toISOString(),
-    });
+  const { error } = await supabase.from('leads').insert({
+    user_id: projectId,
+    site_id: siteId,
+    page_url: pageUrl,
+    ip_address: ipAddress,
+    source: 'tracker',
+    anon_id: anonId || null,
+    session_id: sessionId || null,
+    duration_seconds: durationSeconds || null,
+    confidence: confidenceScore,
+    confidence_reason: confidenceReason,
+    utm_source: utmSource || null,
+    utm_medium: utmMedium || null,
+    utm_campaign: utmCampaign || null,
+    referrer: referrer || null,
+    timestamp: new Date().toISOString(),
+  });
 
   if (error) {
-    console.error("❌ Supabase error:", error.message);
+    console.error("❌ Supabase error bij leads-insert:", error.message);
     return res.status(500).json({ error: error.message });
   }
 

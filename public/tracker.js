@@ -10,6 +10,8 @@
     const projectId = scriptTag.getAttribute("data-project-id");
     if (!projectId) return;
 
+    const siteId = window.location.hostname; // ✅ Automatisch ingevuld
+
     let anonId = localStorage.getItem("anonId");
     if (!anonId) {
       anonId = crypto.randomUUID();
@@ -32,7 +34,6 @@
     const baseUrl = new URL(scriptTag.src).origin;
     const startTime = Date.now();
 
-    // ✅ Eén enkele call bij het verlaten van de pagina (met duration)
     window.addEventListener("visibilitychange", () => {
       if (document.visibilityState !== "hidden") return;
 
@@ -40,6 +41,7 @@
 
       const payload = {
         projectId,
+        siteId, // ✅ Verstuur mee
         pageUrl,
         referrer,
         anonId,
