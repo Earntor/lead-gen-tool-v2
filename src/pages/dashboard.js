@@ -375,15 +375,18 @@ console.log("Gelezen leads:", allData);
   }
 
   // 🔄 Fallback: zoeken op adres
-  let straat = selectedCompanyData.domain_address || selectedCompanyData.kvk_street;
-  let stad = selectedCompanyData.domain_city || selectedCompanyData.kvk_city;
+const straat = selectedCompanyData.domain_address || "";
+const postcode = selectedCompanyData.domain_postal_code || "";
+const stad = selectedCompanyData.domain_city || "";
+const land = selectedCompanyData.domain_country || "Nederland";
 
-  if (!straat || !stad) {
-    setMapCoords(null);
-    return;
-  }
+const query = [straat, postcode, stad, land].filter(Boolean).join(", ");
 
-  const query = `${straat}, ${stad}`;
+if (!query) {
+  setMapCoords(null);
+  return;
+}
+
   fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json`)
     .then((res) => res.json())
     .then((data) => {
@@ -860,7 +863,7 @@ if (leadRating >= 80) {
 
 {company.confidence !== null && company.confidence !== undefined && (
   <div className="text-[11px] text-gray-500 mt-1">
-    🔎 Confidence: {(company.confidence * 100).toFixed(0)}%
+    Confidence: {(company.confidence * 100).toFixed(0)}%
   </div>
 )}
 
