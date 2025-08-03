@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic'
 import PasswordInput from '../components/PasswordInput'
 import Link from 'next/link'
 
-// ⛔ SSR uitschakelen voor reCAPTCHA
+// SSR uitschakelen voor reCAPTCHA
 const ReCAPTCHA = dynamic(() => import('react-google-recaptcha'), { ssr: false })
 
 export default function Login() {
@@ -34,6 +34,13 @@ export default function Login() {
     }
 
     try {
+      console.log('🚧 recaptchaRef.current =', recaptchaRef.current)
+      console.log('✅ typeof executeAsync =', typeof recaptchaRef.current?.executeAsync)
+
+      if (typeof recaptchaRef.current.executeAsync !== 'function') {
+        throw new Error('executeAsync is niet beschikbaar — reCAPTCHA is niet goed geladen.')
+      }
+
       const token = await recaptchaRef.current.executeAsync()
       await onRecaptchaChange(token)
     } catch (err) {
@@ -70,7 +77,7 @@ export default function Login() {
       console.error('❌ Fout bij login:', err)
       setMessage('Er ging iets mis tijdens het inloggen.')
     } finally {
-      await recaptchaRef.current.reset()
+      await recaptchaRef.current?.reset?.()
       setLoading(false)
     }
   }
@@ -124,7 +131,7 @@ export default function Login() {
           {loading ? 'Bezig...' : 'Inloggen'}
         </button>
 
-        {/* ✅ Invisible reCAPTCHA v2 correct ingesteld */}
+        {/* ✅ Invisible reCAPTCHA */}
         <ReCAPTCHA
           ref={recaptchaRef}
           sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
