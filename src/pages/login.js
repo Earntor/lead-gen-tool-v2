@@ -7,10 +7,9 @@ import dynamic from 'next/dynamic'
 import PasswordInput from '../components/PasswordInput'
 import Link from 'next/link'
 
-// ✅ render alleen in browser
+// ReCAPTCHA dynamisch importeren
 const ReCAPTCHA = dynamic(() => import('react-google-recaptcha'), {
   ssr: false,
-  loading: () => null,
 })
 
 export default function Login() {
@@ -27,25 +26,25 @@ export default function Login() {
     })
   }, [])
 
+  useEffect(() => {
+    if (recaptchaRef.current) {
+      console.log('✅ reCAPTCHA geladen:', recaptchaRef.current)
+      console.log('✅ executeAsync type =', typeof recaptchaRef.current.executeAsync)
+    }
+  }, [recaptchaRef.current])
+
   const handleLogin = async (e) => {
     e.preventDefault()
     setMessage('')
     setLoading(true)
 
-    if (!recaptchaRef.current) {
-      setMessage('❌ reCAPTCHA is nog niet geladen.')
+    if (!recaptchaRef.current || typeof recaptchaRef.current.executeAsync !== 'function') {
+      setMessage('❌ reCAPTCHA is niet klaar of executeAsync ontbreekt.')
       setLoading(false)
       return
     }
 
     try {
-      console.log('🚧 recaptchaRef.current =', recaptchaRef.current)
-      console.log('✅ typeof executeAsync =', typeof recaptchaRef.current?.executeAsync)
-
-      if (typeof recaptchaRef.current?.executeAsync !== 'function') {
-        throw new Error('executeAsync is niet beschikbaar — reCAPTCHA is niet goed geladen.')
-      }
-
       const token = await recaptchaRef.current.executeAsync()
       await onRecaptchaChange(token)
     } catch (err) {
@@ -82,7 +81,7 @@ export default function Login() {
       console.error('❌ Fout bij login:', err)
       setMessage('Er ging iets mis tijdens het inloggen.')
     } finally {
-      await recaptchaRef.current?.reset?.()
+      recaptchaRef.current?.reset?.()
       setLoading(false)
     }
   }
@@ -136,7 +135,6 @@ export default function Login() {
           {loading ? 'Bezig...' : 'Inloggen'}
         </button>
 
-        {/* ✅ Invisible reCAPTCHA */}
         <ReCAPTCHA
           ref={recaptchaRef}
           sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
