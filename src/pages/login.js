@@ -1,3 +1,5 @@
+'use client'
+
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabaseClient'
@@ -5,7 +7,7 @@ import dynamic from 'next/dynamic'
 import PasswordInput from '../components/PasswordInput'
 import Link from 'next/link'
 
-// SSR uitschakelen voor reCAPTCHA
+// ✅ render alleen in browser
 const ReCAPTCHA = dynamic(() => import('react-google-recaptcha'), {
   ssr: false,
   loading: () => null,
@@ -40,7 +42,7 @@ export default function Login() {
       console.log('🚧 recaptchaRef.current =', recaptchaRef.current)
       console.log('✅ typeof executeAsync =', typeof recaptchaRef.current?.executeAsync)
 
-      if (typeof recaptchaRef.current.executeAsync !== 'function') {
+      if (typeof recaptchaRef.current?.executeAsync !== 'function') {
         throw new Error('executeAsync is niet beschikbaar — reCAPTCHA is niet goed geladen.')
       }
 
