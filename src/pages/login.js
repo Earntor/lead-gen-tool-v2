@@ -16,7 +16,6 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
-  const [recaptchaReady, setRecaptchaReady] = useState(false)
   const recaptchaRef = useRef(null)
   const router = useRouter()
 
@@ -31,18 +30,16 @@ export default function Login() {
     setMessage('')
     setLoading(true)
 
-if (!recaptchaRef.current?.executeAsync) {
-      setMessage('❌ reCAPTCHA is nog niet klaar. Probeer opnieuw.')
-      setLoading(false)
-      return
-    }
-
     try {
+      if (!recaptchaRef.current) throw new Error('reCAPTCHA ref niet beschikbaar')
+
       const token = await recaptchaRef.current.executeAsync()
+      if (!token) throw new Error('Leeg reCAPTCHA-token')
+
       await onRecaptchaChange(token)
     } catch (err) {
       console.error('❌ reCAPTCHA fout:', err)
-      setMessage('❌ Er ging iets mis met reCAPTCHA.')
+      setMessage('❌ Er ging iets mis met reCAPTCHA. Probeer opnieuw.')
       setLoading(false)
     }
   }
@@ -128,18 +125,14 @@ if (!recaptchaRef.current?.executeAsync) {
           {loading ? 'Bezig...' : 'Inloggen'}
         </button>
 
+        {/* ✅ Invisible reCAPTCHA */}
         <ReCAPTCHA
           ref={recaptchaRef}
           sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
           badge="bottomright"
-          onChange={onRecaptchaChange}
           onErrored={() => {
             setMessage('❌ reCAPTCHA fout. Ververs de pagina.')
             setLoading(false)
-          }}
-          onReady={() => {
-            console.log('✅ reCAPTCHA geladen')
-            setRecaptchaReady(true)
           }}
         />
 
