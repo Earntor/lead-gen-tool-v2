@@ -4,8 +4,14 @@ import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabaseClient'
 import PasswordInput from '../components/PasswordInput'
-import ReCAPTCHA from '../components/RecaptchaClient'
-import Link from 'next/link'
+import Link from 'next/link' // 🔼 Verplaatsen vóór dynamic()
+
+import dynamic from 'next/dynamic'
+
+const ReCAPTCHA = dynamic(() => import('../components/RecaptchaClient'), {
+  ssr: false,
+})
+
 
 export default function Login() {
   const [email, setEmail] = useState('')
