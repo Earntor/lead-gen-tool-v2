@@ -12,18 +12,37 @@ export default function Login() {
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const [recaptchaReady, setRecaptchaReady] = useState(false)
+  const [recaptchaTries, setRecaptchaTries] = useState(0)
   const [mounted, setMounted] = useState(false)
   const router = useRouter()
   const recaptchaRef = useRef(null)
 
+  // ✅ Check of sessie al bestaat
   useEffect(() => {
-    setMounted(true) // 🔁 voorkomt SSR race conditions
+    setMounted(true)
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
         router.replace('/dashboard')
       }
     })
   }, [])
+
+  // ✅ Handmatige fallback check of reCAPTCHA is geladen
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const ready = typeof window !== 'undefined' && window.grecaptcha?.render
+      if (ready) {
+        console.log('✅ reCAPTCHA handmatig gedetecteerd als geladen')
+        setRecaptchaReady(true)
+        clearInterval(interval)
+      } else {
+        setRecaptchaTries((prev) => prev + 1)
+        if (recaptchaTries > 10) clearInterval(interval)
+      }
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [recaptchaTries])
 
   const handleLogin = async (e) => {
     e.preventDefault()
@@ -140,7 +159,7 @@ export default function Login() {
             sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
             size="invisible"
             onReady={() => {
-              console.log('✅ reCAPTCHA ready')
+              console.log('✅ reCAPTCHA via onReady geladen')
               setRecaptchaReady(true)
             }}
           />
