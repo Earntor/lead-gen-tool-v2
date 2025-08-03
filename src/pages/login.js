@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import PasswordInput from '../components/PasswordInput'
 import Link from 'next/link'
 
+// ⛔ SSR uitschakelen voor reCAPTCHA
 const ReCAPTCHA = dynamic(() => import('react-google-recaptcha'), { ssr: false })
 
 export default function Login() {
@@ -12,7 +13,6 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
-  const [shouldSubmit, setShouldSubmit] = useState(false)
   const recaptchaRef = useRef(null)
   const router = useRouter()
 
@@ -33,13 +33,18 @@ export default function Login() {
       return
     }
 
-    // Start invisible reCAPTCHA
-    setShouldSubmit(true)
-    recaptchaRef.current.execute()
+    try {
+      const token = await recaptchaRef.current.executeAsync()
+      await onRecaptchaChange(token)
+    } catch (err) {
+      console.error('❌ reCAPTCHA fout:', err)
+      setMessage('❌ Er ging iets mis met reCAPTCHA.')
+      setLoading(false)
+    }
   }
 
   const onRecaptchaChange = async (token) => {
-    if (!token || !shouldSubmit) return
+    if (!token) return
 
     try {
       const res = await fetch('/api/verify-recaptcha', {
@@ -65,8 +70,7 @@ export default function Login() {
       console.error('❌ Fout bij login:', err)
       setMessage('Er ging iets mis tijdens het inloggen.')
     } finally {
-      recaptchaRef.current?.reset?.()
-      setShouldSubmit(false)
+      await recaptchaRef.current.reset()
       setLoading(false)
     }
   }
@@ -120,7 +124,7 @@ export default function Login() {
           {loading ? 'Bezig...' : 'Inloggen'}
         </button>
 
-        {/* ✅ Invisible reCAPTCHA */}
+        {/* ✅ Invisible reCAPTCHA v2 correct ingesteld */}
         <ReCAPTCHA
           ref={recaptchaRef}
           sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
