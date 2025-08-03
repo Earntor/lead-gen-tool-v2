@@ -5,6 +5,7 @@ import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabaseClient'
 import PasswordInput from '../components/PasswordInput'
 import Link from 'next/link'
+import Script from 'next/script'
 import { executeRecaptcha } from '../lib/useRecaptchaV3'
 
 export default function Login() {
@@ -60,6 +61,11 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+      <Script
+        src={`https://www.google.com/recaptcha/api.js?render=${process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}`}
+        strategy="afterInteractive"
+      />
+
       <form
         onSubmit={handleLogin}
         className="bg-white border border-gray-200 p-8 rounded-xl shadow-lg w-full max-w-md space-y-4"
