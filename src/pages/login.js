@@ -138,10 +138,11 @@ recaptchaRef.current.reset();
 
         {/* Invisible reCAPTCHA */}
         <ReCAPTCHA
-          ref={recaptchaRef}
-          sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
-          size="invisible"
-        />
+  ref={recaptchaRef}
+  sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
+  size="normal"
+/>
+
 
         <div className="flex items-center gap-2 my-4">
           <hr className="flex-grow border-gray-300" />
