@@ -80,37 +80,37 @@ export default function Account() {
     fetchUser()
   }, [router])
 
-  useEffect(() => {
-    const hash = window.location.hash.replace('#', '')
-    if (hash) {
-  setActiveTab(hash)
-  onHashChange() // ⬅️ Laad meteen de juiste tab-actie
-}
+useEffect(() => {
+  const onHashChange = () => {
+    const newHash = window.location.hash.replace('#', '')
+    setActiveTab(newHash || 'account')
+    setGeneralMessage(null)
+    setTrackingMessage(null)
 
-    const onHashChange = () => {
-  const newHash = window.location.hash.replace('#', '')
-  setActiveTab(newHash || 'account')
-  setGeneralMessage(null)
-  setTrackingMessage(null)
-
-  // ✅ Als tracking-tab wordt geopend: herlaad tracking ping
-  if ((newHash || 'account') === 'tracking' && user?.id) {
-    supabase
-      .from('profiles')
-      .select('last_tracking_ping')
-      .eq('id', user.id)
-      .single()
-      .then(({ data }) => {
-        if (data?.last_tracking_ping) {
-          setLastTrackingPing(data.last_tracking_ping)
-        }
-      })
+    if ((newHash || 'account') === 'tracking' && user?.id) {
+      supabase
+        .from('profiles')
+        .select('last_tracking_ping')
+        .eq('id', user.id)
+        .single()
+        .then(({ data }) => {
+          if (data?.last_tracking_ping) {
+            setLastTrackingPing(data.last_tracking_ping)
+          }
+        })
+    }
   }
-}
 
-    window.addEventListener('hashchange', onHashChange)
-    return () => window.removeEventListener('hashchange', onHashChange)
-  }, [])
+  const hash = window.location.hash.replace('#', '')
+  if (hash) {
+    setActiveTab(hash)
+    onHashChange() // ✅ Nu bestaat hij al
+  }
+
+  window.addEventListener('hashchange', onHashChange)
+  return () => window.removeEventListener('hashchange', onHashChange)
+}, [user])
+
 
     useEffect(() => {
     const interval = setInterval(async () => {
