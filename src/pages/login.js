@@ -4,20 +4,19 @@ import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabaseClient'
 import PasswordInput from '../components/PasswordInput'
-import Link from 'next/link' // 🔼 Verplaatsen vóór dynamic()
-
+import Link from 'next/link'
 import dynamic from 'next/dynamic'
 
 const ReCAPTCHA = dynamic(() => import('../components/RecaptchaClient'), {
   ssr: false,
 })
 
-
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
+  const [recaptchaReady, setRecaptchaReady] = useState(false)
   const recaptchaRef = useRef(null)
   const router = useRouter()
 
@@ -32,8 +31,8 @@ export default function Login() {
     setMessage('')
     setLoading(true)
 
-    if (!recaptchaRef.current || typeof recaptchaRef.current.executeAsync !== 'function') {
-      setMessage('❌ reCAPTCHA is niet klaar of executeAsync ontbreekt.')
+    if (!recaptchaReady || !recaptchaRef.current || typeof recaptchaRef.current.executeAsync !== 'function') {
+      setMessage('❌ reCAPTCHA is nog niet klaar. Probeer opnieuw.')
       setLoading(false)
       return
     }
@@ -129,7 +128,6 @@ export default function Login() {
           {loading ? 'Bezig...' : 'Inloggen'}
         </button>
 
-        {/* ✅ Invisible reCAPTCHA via wrapper */}
         <ReCAPTCHA
           ref={recaptchaRef}
           sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
@@ -138,6 +136,10 @@ export default function Login() {
           onErrored={() => {
             setMessage('❌ reCAPTCHA fout. Ververs de pagina.')
             setLoading(false)
+          }}
+          onReady={() => {
+            console.log('✅ reCAPTCHA geladen')
+            setRecaptchaReady(true)
           }}
         />
 
@@ -153,22 +155,10 @@ export default function Login() {
           className="w-full border border-gray-300 bg-white text-gray-700 font-medium py-2 rounded flex items-center justify-center gap-2 hover:bg-gray-50 transition"
         >
           <svg className="w-5 h-5" viewBox="0 0 533.5 544.3">
-            <path
-              d="M533.5 278.4c0-17.4-1.5-34-4.4-50H272v94.8h146.9c-6.4 34.6-25.7 63.9-54.8 83.6v69.4h88.4c51.7-47.7 81-118.1 81-197.8z"
-              fill="#4285f4"
-            />
-            <path
-              d="M272 544.3c73.5 0 135.2-24.4 180.3-66.3l-88.4-69.4c-24.5 16.4-56 26-91.9 26-70.7 0-130.6-47.7-152-111.6H30.3v70.5C75 482.2 167.3 544.3 272 544.3z"
-              fill="#34a853"
-            />
-            <path
-              d="M120 323c-10.2-30.6-10.2-63.5 0-94.1V158.4H30.3c-42.9 85.6-42.9 186.1 0 271.7L120 323z"
-              fill="#fbbc04"
-            />
-            <path
-              d="M272 107.3c38.9-.6 76.1 13.9 104.3 39.7l78.1-78.1C405.8 24.9 340.8 0 272 0 167.3 0 75 62.1 30.3 158.4l89.7 70.5c21.3-63.9 81.3-111.6 152-111.6z"
-              fill="#ea4335"
-            />
+            <path d="M533.5 278.4c0-17.4-1.5-34-4.4-50H272v94.8h146.9c-6.4 34.6-25.7 63.9-54.8 83.6v69.4h88.4c51.7-47.7 81-118.1 81-197.8z" fill="#4285f4" />
+            <path d="M272 544.3c73.5 0 135.2-24.4 180.3-66.3l-88.4-69.4c-24.5 16.4-56 26-91.9 26-70.7 0-130.6-47.7-152-111.6H30.3v70.5C75 482.2 167.3 544.3 272 544.3z" fill="#34a853" />
+            <path d="M120 323c-10.2-30.6-10.2-63.5 0-94.1V158.4H30.3c-42.9 85.6-42.9 186.1 0 271.7L120 323z" fill="#fbbc04" />
+            <path d="M272 107.3c38.9-.6 76.1 13.9 104.3 39.7l78.1-78.1C405.8 24.9 340.8 0 272 0 167.3 0 75 62.1 30.3 158.4l89.7 70.5c21.3-63.9 81.3-111.6 152-111.6z" fill="#ea4335" />
           </svg>
           <span>Log in met Google</span>
         </button>
