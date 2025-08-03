@@ -12,11 +12,12 @@ export default function Login() {
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const [recaptchaReady, setRecaptchaReady] = useState(false)
+  const [mounted, setMounted] = useState(false)
   const router = useRouter()
   const recaptchaRef = useRef(null)
 
-  // ✅ Redirect als gebruiker al is ingelogd
   useEffect(() => {
+    setMounted(true) // 🔁 voorkomt SSR race conditions
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
         router.replace('/dashboard')
@@ -30,14 +31,12 @@ export default function Login() {
     setMessage('')
 
     try {
-      // ✅ Wacht tot reCAPTCHA geladen is
-      if (!recaptchaReady) {
+      if (!recaptchaReady || !recaptchaRef.current) {
         setMessage('reCAPTCHA is nog niet geladen. Even geduld...')
         setLoading(false)
         return
       }
 
-      // ✅ Token ophalen
       const recaptchaToken = await recaptchaRef.current.executeAsync()
       recaptchaRef.current.reset()
 
@@ -54,7 +53,6 @@ export default function Login() {
         return
       }
 
-      // ✅ Inloggen
       const { error } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -136,12 +134,17 @@ export default function Login() {
         </button>
 
         {/* ✅ Invisible reCAPTCHA */}
-        <ReCAPTCHA
-          ref={recaptchaRef}
-          sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
-          size="invisible"
-          onReady={() => setRecaptchaReady(true)}
-        />
+        {mounted && (
+          <ReCAPTCHA
+            ref={recaptchaRef}
+            sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
+            size="invisible"
+            onReady={() => {
+              console.log('✅ reCAPTCHA ready')
+              setRecaptchaReady(true)
+            }}
+          />
+        )}
 
         <div className="flex items-center gap-2 my-4">
           <hr className="flex-grow border-gray-300" />
