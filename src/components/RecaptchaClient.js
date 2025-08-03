@@ -1,20 +1,20 @@
 import { useRef, forwardRef, useImperativeHandle } from 'react'
 import ReCAPTCHA from 'react-google-recaptcha'
 
-const RecaptchaClient = forwardRef(({ sitekey, badge = 'bottomright', onErrored, onChange }, ref) => {
+const RecaptchaClient = forwardRef(({ sitekey, onErrored }, ref) => {
   const internalRef = useRef(null)
 
   useImperativeHandle(ref, () => ({
-    execute() {
-      if (internalRef.current?.execute) {
-        internalRef.current.execute()
-      } else {
-        throw new Error('reCAPTCHA execute is undefined')
+    executeAsync: async () => {
+      if (!internalRef.current) throw new Error('Geen reCAPTCHA referentie')
+      if (typeof internalRef.current.executeAsync !== 'function') {
+        throw new Error('executeAsync is niet beschikbaar')
       }
+      return await internalRef.current.executeAsync()
     },
-    reset() {
+    reset: () => {
       internalRef.current?.reset?.()
-    }
+    },
   }))
 
   return (
@@ -22,9 +22,8 @@ const RecaptchaClient = forwardRef(({ sitekey, badge = 'bottomright', onErrored,
       ref={internalRef}
       sitekey={sitekey}
       size="invisible"
-      badge={badge}
+      badge="bottomright"
       onErrored={onErrored}
-      onChange={onChange}
     />
   )
 })

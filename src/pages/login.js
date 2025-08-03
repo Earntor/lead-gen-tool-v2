@@ -7,9 +7,8 @@ import PasswordInput from '../components/PasswordInput'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 
-const ReCAPTCHA = dynamic(() => import('../components/RecaptchaClient'), {
-  ssr: false,
-})
+import RecaptchaClient from '../components/RecaptchaClient'
+
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -126,17 +125,14 @@ export default function Login() {
         </button>
 
         {/* ✅ Invisible reCAPTCHA */}
-        <ReCAPTCHA
-          ref={recaptchaRef}
-          sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
-          size="invisible"
-          badge="bottomright"
-          onChange={onRecaptchaChange}
-          onErrored={() => {
-            setMessage('❌ reCAPTCHA fout. Ververs de pagina.')
-            setLoading(false)
-          }}
-        />
+        <RecaptchaClient
+  ref={recaptchaRef}
+  sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
+  onErrored={() => {
+    setMessage('❌ reCAPTCHA fout. Ververs de pagina.')
+    setLoading(false)
+  }}
+/>
 
         <div className="flex items-center gap-2 my-4">
           <hr className="flex-grow border-gray-300" />
