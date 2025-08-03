@@ -56,6 +56,12 @@ export default function Login() {
         return
       }
 
+      if (typeof recaptchaRef.current.executeAsync !== 'function') {
+  setMessage('❌ executeAsync() is niet beschikbaar. Waarschijnlijk verkeerde versie reCAPTCHA.')
+  setLoading(false)
+  return
+}
+
       const recaptchaToken = await recaptchaRef.current.executeAsync()
       recaptchaRef.current.reset()
 
@@ -155,14 +161,15 @@ export default function Login() {
         {/* ✅ Invisible reCAPTCHA */}
         {mounted && (
           <ReCAPTCHA
-            ref={recaptchaRef}
-            sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
-            size="invisible"
-            onReady={() => {
-              console.log('✅ reCAPTCHA via onReady geladen')
-              setRecaptchaReady(true)
-            }}
-          />
+  ref={recaptchaRef}
+  sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
+  size="invisible"
+  badge="bottomright" // optioneel, kan ook 'inline'
+  onErrored={() => setMessage('reCAPTCHA kon niet geladen worden.')}
+  onExpired={() => setMessage('reCAPTCHA is verlopen, probeer opnieuw.')}
+  onChange={(token) => console.log("✅ Token ontvangen:", token)} // optioneel
+/>
+
         )}
 
         <div className="flex items-center gap-2 my-4">
