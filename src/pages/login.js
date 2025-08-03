@@ -12,10 +12,10 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
+  const [recaptchaReady, setRecaptchaReady] = useState(false)
   const recaptchaRef = useRef(null)
   const router = useRouter()
 
-  // ✅ Redirect als er al een sessie is
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) router.replace('/dashboard')
@@ -24,8 +24,8 @@ export default function Login() {
 
   const handleLogin = async (e) => {
     e.preventDefault()
-    setLoading(true)
     setMessage('')
+    setLoading(true)
 
     if (!recaptchaRef.current) {
       setMessage('reCAPTCHA is nog niet klaar. Probeer opnieuw...')
@@ -33,39 +33,52 @@ export default function Login() {
       return
     }
 
-    let token
     try {
-      token = await recaptchaRef.current.executeAsync()
-      recaptchaRef.current.reset()
+      recaptchaRef.current.execute()
     } catch (err) {
-      console.error('❌ reCAPTCHA fout:', err)
-      setMessage('reCAPTCHA werkt niet. Probeer opnieuw.')
+      console.error('❌ reCAPTCHA execute() fout:', err)
+      setMessage('reCAPTCHA kan niet worden gestart.')
+      setLoading(false)
+    }
+  }
+
+  // Deze wordt aangeroepen zodra reCAPTCHA een token teruggeeft
+  const onReCAPTCHAChange = async (token) => {
+    if (!token) {
+      setMessage('❌ reCAPTCHA token ontbreekt.')
       setLoading(false)
       return
     }
 
-    // ✅ Verifieer bij backend
-    const res = await fetch('/api/verify-recaptcha', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
-    })
-    const data = await res.json()
-    if (!data.success) {
-      setMessage('reCAPTCHA verificatie mislukt.')
-      setLoading(false)
-      return
-    }
+    try {
+      const res = await fetch('/api/verify-recaptcha', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      })
 
-    // ✅ Supabase login
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) {
-      setMessage('Fout bij inloggen: ' + error.message)
-      setLoading(false)
-      return
-    }
+      const data = await res.json()
+      if (!data.success) {
+        setMessage('reCAPTCHA verificatie mislukt.')
+        setLoading(false)
+        return
+      }
 
-    router.push('/dashboard')
+      const { error } = await supabase.auth.signInWithPassword({ email, password })
+      if (error) {
+        setMessage('Fout bij inloggen: ' + error.message)
+        setLoading(false)
+        return
+      }
+
+      router.push('/dashboard')
+    } catch (err) {
+      console.error('❌ Login fout:', err)
+      setMessage('Er ging iets mis. Probeer opnieuw.')
+    } finally {
+      recaptchaRef.current?.reset()
+      setLoading(false)
+    }
   }
 
   const handleGoogleLogin = async () => {
@@ -123,9 +136,14 @@ export default function Login() {
           sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
           size="invisible"
           badge="bottomright"
+          onChange={onReCAPTCHAChange}
           onErrored={() => {
-            console.error('❌ reCAPTCHA kon niet geladen worden.')
             setMessage('reCAPTCHA fout. Ververs de pagina.')
+            setRecaptchaReady(false)
+          }}
+          onExpired={() => {
+            setMessage('reCAPTCHA is verlopen. Probeer opnieuw.')
+            setRecaptchaReady(false)
           }}
         />
 
