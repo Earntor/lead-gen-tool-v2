@@ -16,6 +16,7 @@ export default function Account() {
   const [updating, setUpdating] = useState(false)
   const [copySuccess, setCopySuccess] = useState('')
   const [trackingScript, setTrackingScript] = useState('')
+  const [lastTrackingPing, setLastTrackingPing] = useState(null);
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -36,7 +37,8 @@ export default function Account() {
       if (profile) {
         setFullName(profile.full_name || '')
         setPhone(profile.phone || '')
-        setPreferences(profile.preferences || {})
+         setPreferences(profile.preferences || {});
+  setLastTrackingPing(profile.last_tracking_ping || null);
       }
 
       const domain = process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin
@@ -62,6 +64,25 @@ export default function Account() {
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
+
+    useEffect(() => {
+    const interval = setInterval(async () => {
+      if (!user?.id) return;
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('last_tracking_ping')
+        .eq('id', user.id)
+        .single();
+
+      if (data?.last_tracking_ping) {
+        setLastTrackingPing(data.last_tracking_ping);
+      }
+    }, 1000 * 60 * 5); // Elke 5 minuten
+
+    return () => clearInterval(interval); // Opruimen als component sluit
+  }, [user]);
+
 
   const handleUpdate = async () => {
     setUpdating(true)
@@ -274,6 +295,36 @@ export default function Account() {
         {activeTab === 'tracking' && (
           <div>
             <h2 className="text-xl font-semibold mb-4">Tracking script</h2>
+            
+{lastTrackingPing ? (
+  <div className="mb-2 text-sm">
+    Laatste tracking ping:{" "}
+    <span
+      className={
+        new Date() - new Date(lastTrackingPing) < 1000 * 60 * 5
+          ? "text-green-600"
+          : new Date() - new Date(lastTrackingPing) > 1000 * 60 * 60 * 24
+          ? "text-red-600 font-semibold"
+          : "text-orange-600"
+      }
+    >
+      {new Date(lastTrackingPing).toLocaleString("nl-NL")}
+    </span>
+
+    {new Date() - new Date(lastTrackingPing) > 1000 * 60 * 60 * 24 && (
+      <p className="text-red-600 mt-1">
+        ⚠️ Je hebt al meer dan 24 uur geen trackingactiviteit ontvangen.
+      </p>
+    )}
+  </div>
+) : (
+  <div className="mb-2 text-sm text-red-600">
+    Nog geen tracking ping ontvangen.
+  </div>
+)}
+
+
+
             <p className="text-gray-600 mb-4">
               Plaats dit script in de &lt;head&gt; van je website om bezoekers te meten.
             </p>
@@ -316,18 +367,30 @@ const res = await fetch(`/api/check-tracking?projectId=${user.id}`)
 const json = await res.json()
 
                   if (json.status === 'ok') {
-                    setTrackingMessage({ type: 'success', text: 'Script gevonden en actief!' })
-                  } else if (json.status === 'stale') {
-                    setTrackingMessage({
-                      type: 'error',
-                      text: 'Script gedetecteerd, maar geen recente activiteit. Probeer opnieuw te laden.'
-                    })
-                  } else {
-                    setTrackingMessage({
-                      type: 'error',
-                      text: 'Script niet gevonden. Controleer of je het script hebt geplaatst.'
-                    })
-                  }
+  setTrackingMessage({ type: 'success', text: 'Script gevonden en actief!' });
+} else if (json.status === 'stale') {
+  setTrackingMessage({
+    type: 'error',
+    text: 'Script gedetecteerd, maar geen recente activiteit. Probeer opnieuw te laden.'
+  });
+} else {
+  setTrackingMessage({
+    type: 'error',
+    text: 'Script niet gevonden. Controleer of je het script hebt geplaatst.'
+  });
+}
+
+// ✅ Nieuw: update de status direct in de UI
+const refreshed = await supabase
+  .from('profiles')
+  .select('last_tracking_ping')
+  .eq('id', user.id)
+  .single();
+
+if (refreshed?.data?.last_tracking_ping) {
+  setLastTrackingPing(refreshed.data.last_tracking_ping);
+}
+
                 }}
                 className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
               >
