@@ -1,22 +1,17 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabaseClient'
 import PasswordInput from '../components/PasswordInput'
 import Link from 'next/link'
-import dynamic from 'next/dynamic'
-
-const ReCAPTCHA = dynamic(() => import('../components/RecaptchaClient'), {
-  ssr: false,
-})
+import { executeRecaptcha } from '../lib/useRecaptchaV3'
 
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
-  const recaptchaRef = useRef(null)
   const router = useRouter()
 
   useEffect(() => {
@@ -31,49 +26,32 @@ export default function Login() {
     setLoading(true)
 
     try {
-      if (!recaptchaRef.current) {
-        throw new Error('reCAPTCHA is niet klaar')
-      }
+      const token = await executeRecaptcha(process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY)
+      if (!token) throw new Error('Leeg reCAPTCHA-token')
 
-      // Start reCAPTCHA: dit triggert uiteindelijk automatisch `onChange`
-      recaptchaRef.current.execute()
-    } catch (err) {
-      console.error('❌ Fout bij starten van reCAPTCHA:', err)
-      setMessage('❌ reCAPTCHA is niet geladen. Probeer opnieuw.')
-      setLoading(false)
-    }
-  }
-
-  const onRecaptchaChange = async (token) => {
-    if (!token) {
-      setMessage('❌ Geen reCAPTCHA-token ontvangen')
-      setLoading(false)
-      return
-    }
-
-    try {
-      const res = await fetch('/api/verify-recaptcha', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token }),
-      })
-
-      const data = await res.json()
-      if (!data.success) {
-        throw new Error('reCAPTCHA verificatie mislukt')
-      }
+      const verified = await verifyRecaptcha(token)
+      if (!verified) throw new Error('reCAPTCHA-verificatie mislukt')
 
       const { error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) throw new Error(error.message)
 
       router.push('/dashboard')
     } catch (err) {
-      console.error('❌ Login fout:', err)
+      console.error('❌ Login fout:', err.message)
       setMessage('❌ ' + err.message)
     } finally {
-      recaptchaRef.current?.reset()
       setLoading(false)
     }
+  }
+
+  const verifyRecaptcha = async (token) => {
+    const res = await fetch('/api/verify-recaptcha', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+    const data = await res.json()
+    return data.success
   }
 
   const handleGoogleLogin = async () => {
@@ -124,19 +102,6 @@ export default function Login() {
         >
           {loading ? 'Bezig...' : 'Inloggen'}
         </button>
-
-        {/* ✅ Invisible reCAPTCHA */}
-        <ReCAPTCHA
-          ref={recaptchaRef}
-          sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
-          size="invisible"
-          badge="bottomright"
-          onChange={onRecaptchaChange}
-          onErrored={() => {
-            setMessage('❌ reCAPTCHA fout. Ververs de pagina.')
-            setLoading(false)
-          }}
-        />
 
         <div className="flex items-center gap-2 my-4">
           <hr className="flex-grow border-gray-300" />
