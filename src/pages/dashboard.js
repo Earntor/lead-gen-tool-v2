@@ -365,28 +365,27 @@ console.log("Gelezen leads:", allData);
     return;
   }
 
-  // ✅ Gebruik gecorrigeerde lat/lon als die er is
-  if (selectedCompanyData.domain_lat && selectedCompanyData.domain_lon) {
-    setMapCoords({
-      lat: selectedCompanyData.domain_lat,
-      lon: selectedCompanyData.domain_lon,
-    });
+  // 🧭 Stap 1: eerst adres gebruiken
+  const straat = selectedCompanyData.domain_address || "";
+  const postcode = selectedCompanyData.domain_postal_code || "";
+  const stad = selectedCompanyData.domain_city || "";
+
+  const query = [straat, postcode, stad].filter(Boolean).join(", ");
+
+  if (!query) {
+    // Geen adres? Dan eventueel fallback op lat/lon
+    if (selectedCompanyData.domain_lat && selectedCompanyData.domain_lon) {
+      setMapCoords({
+        lat: selectedCompanyData.domain_lat,
+        lon: selectedCompanyData.domain_lon,
+      });
+    } else {
+      setMapCoords(null);
+    }
     return;
   }
 
-  // 🔄 Fallback: zoeken op adres
-const straat = selectedCompanyData.domain_address || "";
-const postcode = selectedCompanyData.domain_postal_code || "";
-const stad = selectedCompanyData.domain_city || "";
-const land = selectedCompanyData.domain_country || "Nederland";
-
-const query = [straat, postcode, stad, land].filter(Boolean).join(", ");
-
-if (!query) {
-  setMapCoords(null);
-  return;
-}
-
+  // 🔍 Geocode op basis van adres
   fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json`)
     .then((res) => res.json())
     .then((data) => {
@@ -395,13 +394,27 @@ if (!query) {
           lat: data[0].lat,
           lon: data[0].lon,
         });
+      } else if (selectedCompanyData.domain_lat && selectedCompanyData.domain_lon) {
+        // Geen geocode-resultaat → fallback op lat/lon
+        setMapCoords({
+          lat: selectedCompanyData.domain_lat,
+          lon: selectedCompanyData.domain_lon,
+        });
       } else {
         setMapCoords(null);
       }
     })
     .catch((err) => {
       console.error("Geocode error:", err);
-      setMapCoords(null);
+      // Bij fout: fallback op lat/lon als beschikbaar
+      if (selectedCompanyData.domain_lat && selectedCompanyData.domain_lon) {
+        setMapCoords({
+          lat: selectedCompanyData.domain_lat,
+          lon: selectedCompanyData.domain_lon,
+        });
+      } else {
+        setMapCoords(null);
+      }
     });
 }, [selectedCompanyData]);
 
