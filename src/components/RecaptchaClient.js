@@ -7,8 +7,8 @@ const RecaptchaClient = forwardRef((props, ref) => {
   const internalRef = useRef()
 
   useImperativeHandle(ref, () => ({
-    executeAsync: () => internalRef.current?.executeAsync(),
-    reset: () => internalRef.current?.reset(),
+    executeAsync: () => internalRef.current?.executeAsync?.(), // 🔧 let op: extra ?. toegevoegd
+    reset: () => internalRef.current?.reset?.(),
   }))
 
   return (

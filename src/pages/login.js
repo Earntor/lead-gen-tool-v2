@@ -31,7 +31,7 @@ export default function Login() {
     setMessage('')
     setLoading(true)
 
-    if (!recaptchaReady || !recaptchaRef.current || typeof recaptchaRef.current.executeAsync !== 'function') {
+if (!recaptchaRef.current?.executeAsync) {
       setMessage('❌ reCAPTCHA is nog niet klaar. Probeer opnieuw.')
       setLoading(false)
       return
