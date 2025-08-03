@@ -6,7 +6,7 @@ import PasswordInput from '../components/PasswordInput'
 import Link from 'next/link'
 
 // SSR uitschakelen voor reCAPTCHA
-const ReCAPTCHA = dynamic(() => import('react-google-recaptcha'), { ssr: false })
+import ReCAPTCHA from 'react-google-recaptcha'
 
 export default function Login() {
   const [email, setEmail] = useState('')
