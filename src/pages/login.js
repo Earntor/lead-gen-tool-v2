@@ -31,49 +31,37 @@ export default function Login() {
     setLoading(true)
 
     try {
-      if (!recaptchaRef.current) throw new Error('reCAPTCHA ref niet beschikbaar')
+      if (!recaptchaRef.current || typeof recaptchaRef.current.executeAsync !== 'function') {
+        throw new Error('reCAPTCHA niet klaar of executeAsync ontbreekt')
+      }
 
       const token = await recaptchaRef.current.executeAsync()
       if (!token) throw new Error('Leeg reCAPTCHA-token')
 
-      await onRecaptchaChange(token)
+      const verified = await verifyRecaptcha(token)
+      if (!verified) throw new Error('Verificatie mislukt')
+
+      const { error } = await supabase.auth.signInWithPassword({ email, password })
+      if (error) throw new Error(error.message)
+
+      router.push('/dashboard')
     } catch (err) {
-      console.error('❌ reCAPTCHA fout:', err)
-      setMessage('❌ Er ging iets mis met reCAPTCHA. Probeer opnieuw.')
+      console.error('❌ Login fout:', err.message)
+      setMessage('❌ ' + err.message)
+    } finally {
+      recaptchaRef.current?.reset?.()
       setLoading(false)
     }
   }
 
-  const onRecaptchaChange = async (token) => {
-    if (!token) return
-
-    try {
-      const res = await fetch('/api/verify-recaptcha', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token }),
-      })
-
-      const data = await res.json()
-      if (!data.success) {
-        setMessage('❌ reCAPTCHA verificatie mislukt.')
-        return
-      }
-
-      const { error } = await supabase.auth.signInWithPassword({ email, password })
-      if (error) {
-        setMessage('❌ Fout bij inloggen: ' + error.message)
-        return
-      }
-
-      router.push('/dashboard')
-    } catch (err) {
-      console.error('❌ Fout bij login:', err)
-      setMessage('Er ging iets mis tijdens het inloggen.')
-    } finally {
-      await recaptchaRef.current?.reset?.()
-      setLoading(false)
-    }
+  const verifyRecaptcha = async (token) => {
+    const res = await fetch('/api/verify-recaptcha', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+    const data = await res.json()
+    return data.success
   }
 
   const handleGoogleLogin = async () => {
@@ -125,11 +113,11 @@ export default function Login() {
           {loading ? 'Bezig...' : 'Inloggen'}
         </button>
 
-        {/* ✅ Invisible reCAPTCHA */}
         <ReCAPTCHA
           ref={recaptchaRef}
           sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
           badge="bottomright"
+          onChange={() => {}}
           onErrored={() => {
             setMessage('❌ reCAPTCHA fout. Ververs de pagina.')
             setLoading(false)
