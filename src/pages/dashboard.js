@@ -5,8 +5,7 @@ import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { formatDutchDateTime } from '../lib/formatTimestamp';
 import { isToday, isYesterday, isWithinInterval, subDays } from 'date-fns';
-const { utcToZonedTime } = require('date-fns-tz');
-
+import { utcToZonedTime } from 'date-fns-tz';
 
 
 export default function Dashboard() {
@@ -261,17 +260,19 @@ const isInDateRange = (dateStr) => {
       return date >= janFirst && date < nextYear;
 
     case "aangepast":
-      if (customRange[0] && customRange[1]) {
-        const toPlusOne = new Date(customRange[1]);
-        toPlusOne.setDate(toPlusOne.getDate() + 1);
-        return date >= customRange[0] && date < toPlusOne;
-      }
-      return true;
-
-    default:
-      return true;
+  if (customRange[0] && customRange[1]) {
+    const rangeStart = utcToZonedTime(new Date(customRange[0]), 'Europe/Amsterdam');
+    const rangeEnd = utcToZonedTime(new Date(customRange[1]), 'Europe/Amsterdam');
+    rangeEnd.setDate(rangeEnd.getDate() + 1);
+    return date >= rangeStart && date < rangeEnd;
   }
+  return true;
+
+default:
+  return true;
+}
 };
+
 
 
 

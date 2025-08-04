@@ -42,7 +42,7 @@ export default function Layout({ children }) {
           <Link href="/">
             <div className="flex items-center gap-2 cursor-pointer">
               <img
-                src="/logo-placeholder.svg"
+                src="/Meta_Platforms_Inc._logo.svg"
                 alt="Logo"
                 className="h-8 w-8"
               />
