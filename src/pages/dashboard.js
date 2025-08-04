@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { formatDutchDateTime } from '../lib/formatTimestamp';
+import { isToday, isYesterday, isWithinInterval, subDays } from 'date-fns';
+import { utcToZonedTime } from 'date-fns-tz';
 
 
 export default function Dashboard() {
@@ -212,52 +214,64 @@ console.log("Gelezen leads:", allData);
   }));
 };
 
+const isInDateRange = (dateStr) => {
+  if (!dateStr) return false;
 
-  const isInDateRange = (dateStr) => {
-    const date = new Date(dateStr);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    switch (filterType) {
-      case "vandaag":
-        const tomorrow = new Date(today);
-        tomorrow.setDate(today.getDate() + 1);
-        return date >= today && date < tomorrow;
-      case "gisteren":
-        const yesterday = new Date(today);
-        yesterday.setDate(today.getDate() - 1);
-        return date >= yesterday && date < today;
-      case "deze-week":
-        const weekStart = new Date(today);
-        weekStart.setDate(today.getDate() - today.getDay());
-        const weekEnd = new Date(weekStart);
-        weekEnd.setDate(weekStart.getDate() + 7);
-        return date >= weekStart && date < weekEnd;
-      case "vorige-week":
-        const prevWeekStart = new Date(today);
-        prevWeekStart.setDate(today.getDate() - today.getDay() - 7);
-        const prevWeekEnd = new Date(prevWeekStart);
-        prevWeekEnd.setDate(prevWeekStart.getDate() + 7);
-        return date >= prevWeekStart && date < prevWeekEnd;
-      case "vorige-maand":
-        const firstThisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-        const firstPrevMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-        return date >= firstPrevMonth && date < firstThisMonth;
-      case "dit-jaar":
-        const janFirst = new Date(today.getFullYear(), 0, 1);
-        const nextYear = new Date(today.getFullYear() + 1, 0, 1);
-        return date >= janFirst && date < nextYear;
-      case "aangepast":
-  if (customRange[0] && customRange[1]) {
-    const toPlusOne = new Date(customRange[1]);
-    toPlusOne.setDate(toPlusOne.getDate() + 1);
-    return date >= customRange[0] && date < toPlusOne;
+  // ✅ Zet timestamp uit Supabase om naar Amsterdam-tijd
+  const date = utcToZonedTime(new Date(dateStr), 'Europe/Amsterdam');
+
+  // ✅ Bepaal de huidige dag in Amsterdamse tijd
+  const today = utcToZonedTime(new Date(), 'Europe/Amsterdam');
+  today.setHours(0, 0, 0, 0);
+
+  switch (filterType) {
+    case "vandaag":
+      const tomorrow = new Date(today);
+      tomorrow.setDate(today.getDate() + 1);
+      return date >= today && date < tomorrow;
+
+    case "gisteren":
+      const yesterday = new Date(today);
+      yesterday.setDate(today.getDate() - 1);
+      return date >= yesterday && date < today;
+
+    case "deze-week":
+      const weekStart = new Date(today);
+      weekStart.setDate(today.getDate() - today.getDay());
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekStart.getDate() + 7);
+      return date >= weekStart && date < weekEnd;
+
+    case "vorige-week":
+      const prevWeekStart = new Date(today);
+      prevWeekStart.setDate(today.getDate() - today.getDay() - 7);
+      const prevWeekEnd = new Date(prevWeekStart);
+      prevWeekEnd.setDate(prevWeekStart.getDate() + 7);
+      return date >= prevWeekStart && date < prevWeekEnd;
+
+    case "vorige-maand":
+      const firstThisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+      const firstPrevMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      return date >= firstPrevMonth && date < firstThisMonth;
+
+    case "dit-jaar":
+      const janFirst = new Date(today.getFullYear(), 0, 1);
+      const nextYear = new Date(today.getFullYear() + 1, 0, 1);
+      return date >= janFirst && date < nextYear;
+
+    case "aangepast":
+      if (customRange[0] && customRange[1]) {
+        const toPlusOne = new Date(customRange[1]);
+        toPlusOne.setDate(toPlusOne.getDate() + 1);
+        return date >= customRange[0] && date < toPlusOne;
+      }
+      return true;
+
+    default:
+      return true;
   }
-  return true;
+};
 
-      default:
-        return true;
-    }
-  };
 
   const filteredLeads = allLeads.filter((l) => {
   if (!isInDateRange(l.timestamp)) return false;
