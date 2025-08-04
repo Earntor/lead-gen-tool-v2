@@ -277,7 +277,7 @@ default:
 
 
 
-  const filteredLeads = allLeads.filter((l) => {
+ const filteredLeads = allLeads.filter((l) => {
   if (!isInDateRange(l.timestamp)) return false;
   if (minDuration && (!l.duration_seconds || l.duration_seconds < parseInt(minDuration))) return false;
   if (labelFilter) {

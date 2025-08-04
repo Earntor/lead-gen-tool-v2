@@ -22,6 +22,17 @@ function isValidDomain(domain) {
   );
 }
 
+function isInternalPage(pageUrl) {
+  try {
+    const url = new URL(pageUrl, "https://fallback.nl"); // werkt ook bij relatieve URLs
+    const internalPaths = ['/dashboard', '/account', '/login', '/']; // voeg toe wat nodig is
+    return internalPaths.some((path) => url.pathname === path || url.pathname.startsWith(path + '/'));
+  } catch (e) {
+    console.warn("⚠️ Ongeldige page_url ontvangen:", pageUrl);
+    return true; // als hij niet geparsed kan worden, liever overslaan
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -74,13 +85,9 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: false, message: 'Invalid siteId - ignored' });
   }
 
-  try {
-    const url = new URL(pageUrl);
-    if (url.hostname.endsWith('vercel.app') && !isValidation) {
-      return res.status(200).json({ success: true, message: 'Dashboard visit ignored' });
-    }
-  } catch {
-    return res.status(200).json({ success: true, message: 'Invalid pageUrl ignored' });
+  if (isInternalPage(pageUrl) && !isValidation) {
+    console.log("⛔️ Interne pagina bezocht, tracking overgeslagen:", pageUrl);
+    return res.status(200).json({ success: true, skipped: true });
   }
 
   const ipAddress =
@@ -95,7 +102,6 @@ export default async function handler(req, res) {
 
   console.log("📡 Bezoek ontvangen van", siteId, "met IP", ipAddress);
 
-  // ✅ Stap 1: check of site bestaat
   const { data: existingSite, error: siteErr } = await supabase
     .from('sites')
     .select('id')
@@ -104,9 +110,7 @@ export default async function handler(req, res) {
 
   if (!existingSite && !siteErr) {
     console.log("🆕 Nieuwe site toegevoegd:", siteId);
-
-    const cleanedDomain = siteId.replace(/^www\./, ''); // voorbeeld: www.site.nl → site.nl
-
+    const cleanedDomain = siteId.replace(/^www\./, '');
     await supabase.from('sites').insert({
       site_id: siteId,
       user_id: projectId,
