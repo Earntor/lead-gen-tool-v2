@@ -280,6 +280,7 @@ default:
  const filteredLeads = allLeads.filter((l) => {
   if (!isInDateRange(l.timestamp)) return false;
   if (minDuration && (!l.duration_seconds || l.duration_seconds < parseInt(minDuration))) return false;
+
   if (labelFilter) {
     const hasLabel = labels.find(
       (lab) => lab.company_name === l.company_name && lab.label === labelFilter
@@ -300,18 +301,21 @@ default:
       if (type === "first") {
         return uniqueVisitors.size === 1;
       }
+
       if (type === "returning") {
         return uniqueVisitors.size > 1;
       }
+
       if (type === "highEngagement") {
         const totalDuration = visits.reduce(
           (sum, v) => sum + (v.duration_seconds || 0),
           0
         );
-        const latestVisit = visits[0]?.timestamp
-          ? new Date(visits[0].timestamp)
-          : null;
+
+        const latestVisitTimestamp = visits.find((v) => v.timestamp)?.timestamp;
+        const latestVisit = latestVisitTimestamp ? new Date(latestVisitTimestamp) : null;
         const now = new Date();
+
         const recencyDays = latestVisit
           ? (now - latestVisit) / (1000 * 60 * 60 * 24)
           : 999;
@@ -333,6 +337,7 @@ default:
 
         return leadRating >= 60;
       }
+
       return false;
     });
 
@@ -341,7 +346,6 @@ default:
 
   return true;
 });
-
 
 
   const allCompanies = [
