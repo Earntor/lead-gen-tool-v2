@@ -278,7 +278,7 @@ default:
 
 
  const filteredLeads = allLeads.filter((l) => {
-  if (!isInDateRange(l.timestamp)) return false;
+if (!l.timestamp || !isInDateRange(l.timestamp)) return false;
   if (minDuration && (!l.duration_seconds || l.duration_seconds < parseInt(minDuration))) return false;
 
   if (labelFilter) {
@@ -312,10 +312,11 @@ default:
           0
         );
 
-        const latestVisitTimestamp = visits.find((v) => v.timestamp)?.timestamp;
-        const latestVisit = latestVisitTimestamp ? new Date(latestVisitTimestamp) : null;
-        const now = new Date();
+        const latestVisit = visits.length > 0 && visits[0].timestamp
+          ? new Date(visits[0].timestamp)
+          : null;
 
+        const now = new Date();
         const recencyDays = latestVisit
           ? (now - latestVisit) / (1000 * 60 * 60 * 24)
           : 999;
@@ -346,6 +347,7 @@ default:
 
   return true;
 });
+
 
 
   const allCompanies = [
