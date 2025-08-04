@@ -465,11 +465,12 @@ const sortedVisitors = Object.entries(groupedByVisitor).sort((a, b) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todaysLeads = allLeads.filter((lead) => {
-const date = new Date(
-  new Date(timestamp).toLocaleString('en-US', { timeZone: 'Europe/Amsterdam' })
-);
-    return date >= today;
-  });
+  const date = new Date(
+    new Date(lead.timestamp).toLocaleString('en-US', { timeZone: 'Europe/Amsterdam' })
+  );
+  return date >= today;
+});
+
   const todaysUniqueVisitors = new Set(
     todaysLeads.map((lead) => lead.anon_id)
   );
