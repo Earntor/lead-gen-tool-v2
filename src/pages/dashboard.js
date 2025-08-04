@@ -5,8 +5,8 @@ import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { formatDutchDateTime } from '../lib/formatTimestamp';
 import { isToday, isYesterday, isWithinInterval, subDays } from 'date-fns';
-import tz from 'date-fns-tz';
-const { utcToZonedTime } = tz;
+const { utcToZonedTime } = require('date-fns-tz');
+
 
 
 export default function Dashboard() {
@@ -218,7 +218,10 @@ console.log("Gelezen leads:", allData);
 const isInDateRange = (dateStr) => {
   if (!dateStr) return false;
 
+  // Zet timestamp om naar Amsterdam-tijd
   const date = utcToZonedTime(new Date(dateStr), 'Europe/Amsterdam');
+
+  // Bepaal start van vandaag in Amsterdam
   const today = utcToZonedTime(new Date(), 'Europe/Amsterdam');
   today.setHours(0, 0, 0, 0);
 
@@ -269,6 +272,7 @@ const isInDateRange = (dateStr) => {
       return true;
   }
 };
+
 
 
 
