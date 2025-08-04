@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabaseClient";
 import { useEffect, useRef, useState } from "react";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
+import { formatDutchDateTime } from '../lib/formatTimestamp';
 
 
 export default function Dashboard() {
@@ -440,7 +441,9 @@ const sortedVisitors = Object.entries(groupedByVisitor).sort((a, b) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todaysLeads = allLeads.filter((lead) => {
-    const date = new Date(lead.timestamp);
+const date = new Date(
+  new Date(timestamp).toLocaleString('en-US', { timeZone: 'Europe/Amsterdam' })
+);
     return date >= today;
   });
   const todaysUniqueVisitors = new Set(
@@ -1260,7 +1263,7 @@ if (leadRating >= 80) {
           )}
         </div>
         <div className="flex flex-col md:flex-row md:gap-4 text-gray-500 text-xs text-right md:text-left">
-          <span>{new Date(s.timestamp).toLocaleString()}</span>
+{formatDutchDateTime(s.timestamp)}
           <span>{s.duration_seconds ?? "-"} sec</span>
         </div>
       </div>

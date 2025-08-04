@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
 import { supabase } from '../lib/supabaseClient'
+import { formatDutchDateTime } from '../lib/formatTimestamp';
+
 
 export default function Account() {
   const router = useRouter()
@@ -359,7 +361,7 @@ useEffect(() => {
       <>
         <div className="flex items-center gap-2 text-red-600 font-medium">
           ⚠️ Laatste tracking ping:{" "}
-          <span>{new Date(lastTrackingPing).toLocaleString("nl-NL")}</span>
+          <span>{formatDutchDateTime(lastTrackingPing)}</span>
         </div>
         <p className="text-red-600">
           Je hebt al meer dan 24 uur geen trackingactiviteit ontvangen.
@@ -368,7 +370,7 @@ useEffect(() => {
     ) : (
       <div className="flex items-center gap-2 text-green-800 font-medium">
         ✅ Laatste tracking ping:{" "}
-        <span>{new Date(lastTrackingPing).toLocaleString("nl-NL")}</span>
+      <span>{formatDutchDateTime(lastTrackingPing)}</span>
       </div>
     )}
   </div>
