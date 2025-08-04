@@ -10,7 +10,7 @@ export async function getFaviconHash(ip) {
   try {
     const url = `http://${ip}/favicon.ico`;
     const res = await fetch(url, {
-      timeout: 3000,
+      timeout: 3000, // je kunt dit eventueel verlagen naar 1500
       headers: { 'User-Agent': 'LeadGenBot/1.0' },
     });
 
@@ -26,7 +26,11 @@ export async function getFaviconHash(ip) {
 
     return hash;
   } catch (e) {
-    console.warn('⚠️ Favicon ophalen of hash berekenen faalde:', e.message);
+    if (e.code === 'ETIMEDOUT') {
+      console.warn(`⚠️ Timeout bij favicon ophalen van ${ip}`);
+    } else {
+      console.warn(`⚠️ Favicon ophalen of hash berekenen faalde voor ${ip}:`, e.message);
+    }
     return null;
   }
 }

@@ -5,13 +5,14 @@ export async function getTlsCertificateFromIp(ip) {
     const socket = tls.connect({
       host: ip,
       port: 443,
-      servername: ip, // voorkomt SNI mismatch
       rejectUnauthorized: false,
       timeout: 3000
     }, () => {
       const cert = socket.getPeerCertificate(true);
       socket.end();
+
       if (!cert || !cert.subject) return resolve(null);
+
       resolve({
         commonName: cert.subject.CN || null,
         subjectAltName: cert.subjectaltname || null
