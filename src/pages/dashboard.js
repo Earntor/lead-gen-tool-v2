@@ -288,12 +288,13 @@ if (!l.timestamp || !isInDateRange(l.timestamp)) return false;
 if (categoryFilter && l.category !== categoryFilter) return false;
 
 
-  if (labelFilter) {
-    const hasLabel = labels.find(
-      (lab) => lab.company_name === l.company_name && lab.label === labelFilter
-    );
-    if (!hasLabel) return false;
-  }
+if (labelFilter) {
+  const hasLabel = labels.find(
+    (lab) => lab.company_domain === l.company_domain && lab.label === labelFilter
+  );
+  if (!hasLabel) return false;
+}
+
 
   if (visitorTypeFilter.length > 0) {
     const visits = allLeads.filter(
