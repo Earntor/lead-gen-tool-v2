@@ -30,7 +30,7 @@ export default async function handler(req, res) {
     const { company_domain } = req.query;
     const { data, error } = await supabase
       .from("lead_notes")
-      .select("note")
+    .select("note, updated_at")
       .eq("user_id", user.id)
       .eq("company_domain", company_domain)
       .maybeSingle();

@@ -41,6 +41,10 @@ export default function Dashboard() {
   const [visitorTypeFilter, setVisitorTypeFilter] = useState([]);
   const [categoryFilter, setCategoryFilter] = useState("");
   const [uniqueCategories, setUniqueCategories] = useState([]);
+const [noteText, setNoteText] = useState("");
+const [noteSavedAt, setNoteSavedAt] = useState(null);
+const [noteSaving, setNoteSaving] = useState(false);
+const [noteSavedMessage, setNoteSavedMessage] = useState("");
 
 
 
@@ -407,6 +411,27 @@ const groupedCompanies = filteredLeads.reduce((acc, lead) => {
   const selectedCompanyData = selectedCompany
   ? allCompanies.find((c) => c.company_name === selectedCompany)
   : null;
+useEffect(() => {
+  if (!selectedCompanyData || !selectedCompanyData.company_domain) return;
+
+  setNoteText(""); // leegmaken
+  setNoteSavedAt(null);
+  setNoteSavedMessage("");
+
+  // Laad de notitie en laatste update
+  fetch(`/api/lead-note?company_domain=${selectedCompanyData.company_domain}`)
+    .then((res) => res.json())
+    .then((data) => {
+      if (data.note !== undefined) setNoteText(data.note);
+      if (data.updated_at) setNoteSavedAt(new Date(data.updated_at));
+    })
+    .catch(() => {
+      console.warn("❌ Fout bij ophalen notitie");
+    });
+}, [selectedCompanyData]);
+
+
+
 
   useEffect(() => {
   if (!selectedCompanyData) {
@@ -1256,42 +1281,47 @@ if (leadRating >= 80) {
     </div>
   )}
 
-  {/* Notitieveld */}
+{/* Notitieveld */}
 {selectedCompanyData.company_domain && (
   <div className="mt-4">
     <p className="text-xs font-semibold text-gray-600 mb-1">Notitie</p>
 
     <textarea
       rows={3}
-      value={selectedCompanyData.note || ""}
-      onChange={(e) =>
-        setAllLeads((prev) =>
-          prev.map((lead) =>
-            lead.company_domain === selectedCompanyData.company_domain
-              ? { ...lead, note: e.target.value }
-              : lead
-          )
-        )
-      }
+      value={noteText}
+      onChange={(e) => setNoteText(e.target.value)}
       placeholder="Voeg hier een notitie toe over dit bedrijf..."
       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
-    ></textarea>
+    />
 
-    <div className="mt-2 flex gap-2">
+    <div className="mt-2 flex flex-wrap items-center gap-3">
       <button
         onClick={async () => {
-          await fetch("/api/lead-note", {
+          setNoteSaving(true);
+          setNoteSavedMessage("");
+
+          const res = await fetch("/api/lead-note", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               company_domain: selectedCompanyData.company_domain,
-              note: selectedCompanyData.note,
+              note: noteText,
             }),
           });
+
+          if (res.ok) {
+            const now = new Date();
+            setNoteSavedAt(now);
+            setNoteSavedMessage("Notitie opgeslagen");
+            setTimeout(() => setNoteSavedMessage(""), 3000);
+          }
+
+          setNoteSaving(false);
         }}
         className="bg-blue-600 text-white px-4 py-1.5 text-sm rounded-lg hover:bg-blue-700 transition"
+        disabled={noteSaving}
       >
-        Opslaan
+        {noteSaving ? "Opslaan..." : "Opslaan"}
       </button>
 
       <button
@@ -1303,22 +1333,35 @@ if (leadRating >= 80) {
               company_domain: selectedCompanyData.company_domain,
             }),
           });
-          setAllLeads((prev) =>
-            prev.map((lead) =>
-              lead.company_domain === selectedCompanyData.company_domain
-                ? { ...lead, note: "" }
-                : lead
-            )
-          );
+          setNoteText("");
+          setNoteSavedAt(null);
+          setNoteSavedMessage("Notitie verwijderd");
+          setTimeout(() => setNoteSavedMessage(""), 3000);
         }}
         className="border border-gray-300 px-4 py-1.5 text-sm rounded-lg hover:bg-gray-100 transition"
       >
         Verwijderen
       </button>
+
+      {noteSavedMessage && (
+        <span className="text-sm text-green-600">{noteSavedMessage}</span>
+      )}
     </div>
+
+    {noteSavedAt && (
+      <div className="text-xs text-gray-500 mt-2 italic">
+        Laatst bijgewerkt op:{" "}
+        {noteSavedAt.toLocaleString("nl-NL", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })}
+      </div>
+    )}
   </div>
 )}
-
 </div>
 
 
