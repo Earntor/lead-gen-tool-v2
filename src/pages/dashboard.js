@@ -290,10 +290,11 @@ if (categoryFilter && l.category !== categoryFilter) return false;
 
 if (labelFilter) {
   const hasLabel = labels.find(
-    (lab) => lab.company_domain === l.company_domain && lab.label === labelFilter
+    (lab) => lab.company_name === l.company_name && lab.label === labelFilter
   );
   if (!hasLabel) return false;
 }
+
 
 
   if (visitorTypeFilter.length > 0) {
@@ -358,20 +359,18 @@ if (labelFilter) {
 
 
 
-  const allCompanies = [
-  ...new Map(allLeads
-    .filter((lead) => lead.company_domain)
-    .map((lead) => [lead.company_domain, lead])
-  ).values(),
+const allCompanies = [
+  ...new Map(allLeads.map((lead) => [lead.company_name, lead])).values(),
 ];
 
 
-  const groupedCompanies = filteredLeads.reduce((acc, lead) => {
-  if (!lead.company_domain) return acc;
-  acc[lead.company_domain] = acc[lead.company_domain] || [];
-  acc[lead.company_domain].push(lead);
+
+const groupedCompanies = filteredLeads.reduce((acc, lead) => {
+  acc[lead.company_name] = acc[lead.company_name] || [];
+  acc[lead.company_name].push(lead);
   return acc;
 }, {});
+
 
 
   const fullVisitMap = allLeads.reduce((acc, lead) => {
