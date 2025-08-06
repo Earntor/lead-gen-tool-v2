@@ -39,6 +39,9 @@ export default function Dashboard() {
   const [mapCoords, setMapCoords] = useState(null);
   const [globalSearch, setGlobalSearch] = useState("");
   const [visitorTypeFilter, setVisitorTypeFilter] = useState([]);
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [uniqueCategories, setUniqueCategories] = useState([]);
+
 
 
 
@@ -122,6 +125,8 @@ export default function Dashboard() {
 setAllLeads(allData || []);
 console.log("Gelezen leads:", allData);
 
+const categoriesSet = new Set(allData.map((l) => l.category).filter(Boolean));
+setUniqueCategories(Array.from(categoriesSet).sort());
 
 
       const { data: labelData } = await supabase
@@ -280,6 +285,8 @@ default:
  const filteredLeads = allLeads.filter((l) => {
 if (!l.timestamp || !isInDateRange(l.timestamp)) return false;
   if (minDuration && (!l.duration_seconds || l.duration_seconds < parseInt(minDuration))) return false;
+if (categoryFilter && l.category !== categoryFilter) return false;
+
 
   if (labelFilter) {
     const hasLabel = labels.find(
@@ -351,14 +358,20 @@ if (!l.timestamp || !isInDateRange(l.timestamp)) return false;
 
 
   const allCompanies = [
-    ...new Map(allLeads.map((lead) => [lead.company_name, lead])).values(),
-  ];
+  ...new Map(allLeads
+    .filter((lead) => lead.company_domain)
+    .map((lead) => [lead.company_domain, lead])
+  ).values(),
+];
+
 
   const groupedCompanies = filteredLeads.reduce((acc, lead) => {
-    acc[lead.company_name] = acc[lead.company_name] || [];
-    acc[lead.company_name].push(lead);
-    return acc;
-  }, {});
+  if (!lead.company_domain) return acc;
+  acc[lead.company_domain] = acc[lead.company_domain] || [];
+  acc[lead.company_domain].push(lead);
+  return acc;
+}, {});
+
 
   const fullVisitMap = allLeads.reduce((acc, lead) => {
   if (!lead.company_name) return acc;
@@ -507,6 +520,7 @@ const resetFilters = () => {
   setSelectedCompany(null);
   setGlobalSearch("");
   setVisitorTypeFilter([]);
+  setCategoryFilter("");
 };
 
   if (loading) {
@@ -673,6 +687,19 @@ return (
             onChange={(e) => setMinDuration(e.target.value)}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
           />
+          <select
+  value={categoryFilter}
+  onChange={(e) => setCategoryFilter(e.target.value)}
+  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
+>
+  <option value="">Alle categorieën</option>
+  {uniqueCategories.map((cat) => (
+    <option key={cat} value={cat}>
+      {cat}
+    </option>
+  ))}
+</select>
+
           <select
   value={sortOrder}
   onChange={(e) => setSortOrder(e.target.value)}
@@ -877,8 +904,14 @@ if (leadRating >= 80) {
 
                   🌐 {company.company_domain}
                 </p>
-                
               )}
+{company.category && (
+  <p className="text-xs text-gray-500 truncate">
+    🏷️ {company.category}
+  </p>
+)}
+
+
             </div>
             <div className="text-right">
               <p className="text-xs text-gray-500">

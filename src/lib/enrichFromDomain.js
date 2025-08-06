@@ -50,9 +50,13 @@ export async function enrichFromDomain(domain, ipLat, ipLon) {
       const formatted_address = result.formatted_address || "";
       const phone = result.formatted_phone_number || null;
       const website = result.website || null;
-      const types = result.types || [];
-      const rawCategory = types[0] || null;
-      const category = formatCategory(rawCategory);
+     const types = result.types || [];
+const rawCategory =
+  types.find((t) =>
+    !["establishment", "point_of_interest", "premise", "store"].includes(t)
+  ) || types[0] || null;
+const category = formatCategory(rawCategory);
+
 
       const addressRegex = /^(.+?),\s*(\d{4}\s?[A-Z]{2})\s(.+),\s*(.+)$/;
       const match = formatted_address.match(addressRegex);
