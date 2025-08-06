@@ -122,6 +122,17 @@ export default function Dashboard() {
   .eq("user_id", user.id)
   .not("company_name", "is", null);
 
+for (const company of allData) {
+  if (!company.company_domain) continue;
+
+  try {
+    const res = await fetch(`/api/lead-note?company_domain=${company.company_domain}`);
+    const json = await res.json();
+    company.note = json.note;
+  } catch (e) {
+    console.warn("❌ Notitie ophalen mislukt voor", company.company_domain);
+  }
+}
 setAllLeads(allData || []);
 console.log("Gelezen leads:", allData);
 
@@ -1244,6 +1255,70 @@ if (leadRating >= 80) {
       </p>
     </div>
   )}
+
+  {/* Notitieveld */}
+{selectedCompanyData.company_domain && (
+  <div className="mt-4">
+    <p className="text-xs font-semibold text-gray-600 mb-1">Notitie</p>
+
+    <textarea
+      rows={3}
+      value={selectedCompanyData.note || ""}
+      onChange={(e) =>
+        setAllLeads((prev) =>
+          prev.map((lead) =>
+            lead.company_domain === selectedCompanyData.company_domain
+              ? { ...lead, note: e.target.value }
+              : lead
+          )
+        )
+      }
+      placeholder="Voeg hier een notitie toe over dit bedrijf..."
+      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
+    ></textarea>
+
+    <div className="mt-2 flex gap-2">
+      <button
+        onClick={async () => {
+          await fetch("/api/lead-note", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              company_domain: selectedCompanyData.company_domain,
+              note: selectedCompanyData.note,
+            }),
+          });
+        }}
+        className="bg-blue-600 text-white px-4 py-1.5 text-sm rounded-lg hover:bg-blue-700 transition"
+      >
+        Opslaan
+      </button>
+
+      <button
+        onClick={async () => {
+          await fetch("/api/lead-note", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              company_domain: selectedCompanyData.company_domain,
+            }),
+          });
+          setAllLeads((prev) =>
+            prev.map((lead) =>
+              lead.company_domain === selectedCompanyData.company_domain
+                ? { ...lead, note: "" }
+                : lead
+            )
+          );
+        }}
+        className="border border-gray-300 px-4 py-1.5 text-sm rounded-lg hover:bg-gray-100 transition"
+      >
+        Verwijderen
+      </button>
+    </div>
+  </div>
+)}
+
 </div>
 
 
@@ -1272,6 +1347,13 @@ if (leadRating >= 80) {
       <h2 className="text-lg font-semibold text-gray-800 mb-2">
         Activiteiten – {selectedCompany}
       </h2>
+
+{selectedCompanyData.note && (
+  <div className="mb-4 text-sm text-gray-700 border-l-4 border-blue-400 pl-4 italic">
+    💬 Notitie: {selectedCompanyData.note}
+  </div>
+)}
+
 
       {sortedVisitors.length === 0 ? (
         <p className="text-sm text-gray-500">Geen activiteiten gevonden.</p>
