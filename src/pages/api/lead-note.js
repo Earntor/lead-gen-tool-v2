@@ -2,6 +2,7 @@
 import { supabase } from '../../lib/supabaseClient';
 
 export default async function handler(req, res) {
+  // 1. Controleer of de gebruiker ingelogd is
   const {
     data: { user },
     error: userError,
@@ -11,22 +12,25 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Niet ingelogd' });
   }
 
+  // 2. Acties per HTTP-methode
   if (req.method === 'POST') {
     const { company_domain, note } = req.body;
+    const timestamp = new Date().toISOString();
 
+    // upsert: nieuwe notitie of bijwerken
     const { data, error } = await supabase
       .from('lead_notes')
       .upsert(
         {
-          user_id:      user.id,
+          user_id: user.id,
           company_domain,
           note,
-          updated_at:   new Date().toISOString(),    // nú wél bijwerken
+          updated_at: timestamp      // hier voegen we het zelf toe
         },
         { onConflict: ['user_id', 'company_domain'] }
       )
-      .select('updated_at')
-      .single();                                  // verwacht altijd één resultaat
+      .select('updated_at')        // vraag alleen updated_at op
+      .maybeSingle();
 
     if (error) {
       return res.status(500).json({ error: error.message });
@@ -40,6 +44,7 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
     const { company_domain } = req.query;
 
+    // haal notitie + updated_at op
     const { data, error } = await supabase
       .from('lead_notes')
       .select('note, updated_at')
@@ -73,6 +78,7 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true });
   }
 
+  // Anders 405
   res.setHeader('Allow', ['GET', 'POST', 'DELETE']);
   res.status(405).end(`Method ${req.method} Not Allowed`);
 }
