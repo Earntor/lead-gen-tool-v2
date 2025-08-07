@@ -132,13 +132,12 @@ for (const company of allData) {
     const res = await fetch(`/api/lead-note?company_domain=${company.company_domain}`);
     const json = await res.json();
     company.note = json.note;
-    // ─── sla timestamp op ───────────────────────────
-       if (json.updated_at) {
-         setNoteUpdatedAt(prev => ({
-           ...prev,
-           [company.company_domain]: json.updated_at
-         }));
-       }
+// altijd updaten (kan null zijn)
+   company.updated_at = json.updated_at;
+   setNoteUpdatedAt(prev => ({
+     ...prev,
+     [company.company_domain]: json.updated_at
+   }));
        // ─────────────────────────────────────────────────
   } catch (e) {
     console.warn("❌ Notitie ophalen mislukt voor", company.company_domain);
@@ -1275,10 +1274,10 @@ if (leadRating >= 80) {
            }}
            className="mt-4 px-3 py-1 border border-gray-300 rounded-lg hover:bg-gray-100 transition"
          >
-           Notitie
+           Notitie toevoegen
          </button>
         {/* ─────────────────────────────────────────────── */}
-        +        {/* ─── Texteer-veld als openNoteFor gelijk is ───────────────── */}
+       {/* ─── Texteer-veld als openNoteFor gelijk is ───────────────── */}
         {openNoteFor === selectedCompanyData.company_domain && (
           <div className="mt-2 bg-gray-50 border border-gray-200 rounded-lg p-4">
             <textarea
@@ -1299,16 +1298,20 @@ if (leadRating >= 80) {
                       note: noteDraft
                     })
                   });
-                  const { updated_at } = await res.json();
+// 1) Lees eerst de volledige JSON-response in
+const json       = await res.json();
+// 2) Pak nu expliciet de timestamp eruit
+const updated_at = json.updated_at;
+
                   // werk state bij
                   setNoteUpdatedAt(prev => ({
-                    ...prev,
-                    [openNoteFor]: updated_at
-                  }));
+   ...prev,
+  [openNoteFor]: updated_at
+ }));
                   setAllLeads(prev =>
                     prev.map(l =>
                       l.company_domain === openNoteFor
-                        ? { ...l, note: noteDraft }
+                        ? { ...l, note: noteDraft, updated_at }
                         : l
                     )
                   );
@@ -1385,13 +1388,6 @@ if (leadRating >= 80) {
       <h2 className="text-lg font-semibold text-gray-800 mb-2">
         Activiteiten – {selectedCompany}
       </h2>
-
-{selectedCompanyData.note && (
-  <div className="mb-4 text-sm text-gray-700 border-l-4 border-blue-400 pl-4 italic">
-    💬 Notitie: {selectedCompanyData.note}
-  </div>
-)}
-
 
       {sortedVisitors.length === 0 ? (
         <p className="text-sm text-gray-500">Geen activiteiten gevonden.</p>

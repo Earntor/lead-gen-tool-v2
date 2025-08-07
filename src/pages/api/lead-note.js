@@ -2,7 +2,6 @@
 import { supabase } from '../../lib/supabaseClient';
 
 export default async function handler(req, res) {
-  // 1. Controleer of de gebruiker ingelogd is
   const {
     data: { user },
     error: userError,
@@ -12,23 +11,22 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Niet ingelogd' });
   }
 
-  // 2. Kies de juiste actie op basis van de HTTP-methode
   if (req.method === 'POST') {
     const { company_domain, note } = req.body;
 
-    // upsert: nieuw maken of bijwerken op basis van user_id + company_domain
     const { data, error } = await supabase
       .from('lead_notes')
       .upsert(
         {
-          user_id: user.id,
+          user_id:      user.id,
           company_domain,
           note,
+          updated_at:   new Date().toISOString(),    // nú wél bijwerken
         },
         { onConflict: ['user_id', 'company_domain'] }
       )
-      .select('updated_at')      // alleen updated_at terugvragen
-      .maybeSingle();
+      .select('updated_at')
+      .single();                                  // verwacht altijd één resultaat
 
     if (error) {
       return res.status(500).json({ error: error.message });
@@ -42,7 +40,6 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
     const { company_domain } = req.query;
 
-    // haal notitie + updated_at op
     const { data, error } = await supabase
       .from('lead_notes')
       .select('note, updated_at')
@@ -55,7 +52,7 @@ export default async function handler(req, res) {
     }
 
     return res.status(200).json({
-      note: data?.note || '',
+      note:       data?.note       || '',
       updated_at: data?.updated_at || null,
     });
   }
@@ -76,7 +73,6 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true });
   }
 
-  // Als geen van bovenstaande, geef 405 terug
   res.setHeader('Allow', ['GET', 'POST', 'DELETE']);
   res.status(405).end(`Method ${req.method} Not Allowed`);
 }
