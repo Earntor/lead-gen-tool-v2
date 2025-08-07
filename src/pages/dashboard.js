@@ -41,10 +41,9 @@ export default function Dashboard() {
   const [visitorTypeFilter, setVisitorTypeFilter] = useState([]);
   const [categoryFilter, setCategoryFilter] = useState("");
   const [uniqueCategories, setUniqueCategories] = useState([]);
-const [noteText, setNoteText] = useState("");
-const [noteSavedAt, setNoteSavedAt] = useState(null);
-const [noteSaving, setNoteSaving] = useState(false);
-const [noteSavedMessage, setNoteSavedMessage] = useState("");
+const [openNoteFor, setOpenNoteFor] = useState(null);         // welke lead open staat
+const [noteDraft, setNoteDraft] = useState('');               // tekst in textarea
+const [noteUpdatedAt, setNoteUpdatedAt] = useState({});       // laatste bewerkt per domein
 
 
 
@@ -133,6 +132,14 @@ for (const company of allData) {
     const res = await fetch(`/api/lead-note?company_domain=${company.company_domain}`);
     const json = await res.json();
     company.note = json.note;
+    // ─── sla timestamp op ───────────────────────────
+       if (json.updated_at) {
+         setNoteUpdatedAt(prev => ({
+           ...prev,
+           [company.company_domain]: json.updated_at
+         }));
+       }
+       // ─────────────────────────────────────────────────
   } catch (e) {
     console.warn("❌ Notitie ophalen mislukt voor", company.company_domain);
   }
@@ -411,27 +418,6 @@ const groupedCompanies = filteredLeads.reduce((acc, lead) => {
   const selectedCompanyData = selectedCompany
   ? allCompanies.find((c) => c.company_name === selectedCompany)
   : null;
-useEffect(() => {
-  if (!selectedCompanyData || !selectedCompanyData.company_domain) return;
-
-  setNoteText(""); // leegmaken
-  setNoteSavedAt(null);
-  setNoteSavedMessage("");
-
-  // Laad de notitie en laatste update
-  fetch(`/api/lead-note?company_domain=${selectedCompanyData.company_domain}`)
-    .then((res) => res.json())
-    .then((data) => {
-      if (data.note !== undefined) setNoteText(data.note);
-      if (data.updated_at) setNoteSavedAt(new Date(data.updated_at));
-    })
-    .catch(() => {
-      console.warn("❌ Fout bij ophalen notitie");
-    });
-}, [selectedCompanyData]);
-
-
-
 
   useEffect(() => {
   if (!selectedCompanyData) {
@@ -1281,87 +1267,82 @@ if (leadRating >= 80) {
     </div>
   )}
 
-{/* Notitieveld */}
-{selectedCompanyData.company_domain && (
-  <div className="mt-4">
-    <p className="text-xs font-semibold text-gray-600 mb-1">Notitie</p>
+ {/* ─── Notitie open/klap knop ─────────────────── */}
+         <button
+           onClick={() => {
+             setOpenNoteFor(selectedCompanyData.company_domain);
+             setNoteDraft(selectedCompanyData.note || '');
+           }}
+           className="mt-4 px-3 py-1 border border-gray-300 rounded-lg hover:bg-gray-100 transition"
+         >
+           Notitie
+         </button>
+        {/* ─────────────────────────────────────────────── */}
+        +        {/* ─── Texteer-veld als openNoteFor gelijk is ───────────────── */}
+        {openNoteFor === selectedCompanyData.company_domain && (
+          <div className="mt-2 bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <textarea
+              rows={4}
+              value={noteDraft}
+              onChange={e => setNoteDraft(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+              placeholder="Typ hier je notitie…"
+            />
+            <div className="mt-2 flex gap-2">
+              <button
+                onClick={async () => {
+                  const res = await fetch('/api/lead-note', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({
+                      company_domain: openNoteFor,
+                      note: noteDraft
+                    })
+                  });
+                  const { updated_at } = await res.json();
+                  // werk state bij
+                  setNoteUpdatedAt(prev => ({
+                    ...prev,
+                    [openNoteFor]: updated_at
+                  }));
+                  setAllLeads(prev =>
+                    prev.map(l =>
+                      l.company_domain === openNoteFor
+                        ? { ...l, note: noteDraft }
+                        : l
+                    )
+                  );
+                  setOpenNoteFor(null);
+                }}
+                className="bg-blue-600 text-white px-4 py-1.5 rounded-lg hover:bg-blue-700 transition"
+              >
+                Opslaan
+              </button>
+              <button
+                onClick={async () => {
+                  await fetch('/api/lead-note', {
+                    method: 'DELETE',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ company_domain: openNoteFor })
+                  });
+                 setAllLeads(prev =>
+                    prev.map(l =>
+                      l.company_domain === openNoteFor
+                        ? { ...l, note: '' }
+                        : l
+                    )
+                  );
+                  setOpenNoteFor(null);
+                }}
+                className="border border-gray-300 px-4 py-1.5 rounded-lg hover:bg-gray-100 transition"
+              >
+                Verwijderen
+              </button>
+            </div>
+          </div>
+        )}
+        {/* ────────────────────────────────────────────────────── */}
 
-    <textarea
-      rows={3}
-      value={noteText}
-      onChange={(e) => setNoteText(e.target.value)}
-      placeholder="Voeg hier een notitie toe over dit bedrijf..."
-      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
-    />
-
-    <div className="mt-2 flex flex-wrap items-center gap-3">
-      <button
-        onClick={async () => {
-          setNoteSaving(true);
-          setNoteSavedMessage("");
-
-          const res = await fetch("/api/lead-note", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              company_domain: selectedCompanyData.company_domain,
-              note: noteText,
-            }),
-          });
-
-          if (res.ok) {
-            const now = new Date();
-            setNoteSavedAt(now);
-            setNoteSavedMessage("Notitie opgeslagen");
-            setTimeout(() => setNoteSavedMessage(""), 3000);
-          }
-
-          setNoteSaving(false);
-        }}
-        className="bg-blue-600 text-white px-4 py-1.5 text-sm rounded-lg hover:bg-blue-700 transition"
-        disabled={noteSaving}
-      >
-        {noteSaving ? "Opslaan..." : "Opslaan"}
-      </button>
-
-      <button
-        onClick={async () => {
-          await fetch("/api/lead-note", {
-            method: "DELETE",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              company_domain: selectedCompanyData.company_domain,
-            }),
-          });
-          setNoteText("");
-          setNoteSavedAt(null);
-          setNoteSavedMessage("Notitie verwijderd");
-          setTimeout(() => setNoteSavedMessage(""), 3000);
-        }}
-        className="border border-gray-300 px-4 py-1.5 text-sm rounded-lg hover:bg-gray-100 transition"
-      >
-        Verwijderen
-      </button>
-
-      {noteSavedMessage && (
-        <span className="text-sm text-green-600">{noteSavedMessage}</span>
-      )}
-    </div>
-
-    {noteSavedAt && (
-      <div className="text-xs text-gray-500 mt-2 italic">
-        Laatst bijgewerkt op:{" "}
-        {noteSavedAt.toLocaleString("nl-NL", {
-          day: "2-digit",
-          month: "2-digit",
-          year: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        })}
-      </div>
-    )}
-  </div>
-)}
 </div>
 
 
@@ -1386,6 +1367,20 @@ if (leadRating >= 80) {
           </div>
         </>
       )}
+
+ {/* ─── Weergave opgeslagen notitie ─────────────── */}
+       {selectedCompanyData.note && (
+         <div className="mb-4 p-4 bg-white border border-gray-200 rounded-lg text-gray-700">
+           <strong>
+             Notitie (laatst bewerkt:
+             {' '}{formatDutchDateTime(noteUpdatedAt[selectedCompanyData.company_domain])})
+           </strong>
+           <p className="mt-1 italic whitespace-pre-wrap">
+             {selectedCompanyData.note}
+           </p>
+         </div>
+       )}
+       {/* ──────────────────────────────────────────────── */}
 
       <h2 className="text-lg font-semibold text-gray-800 mb-2">
         Activiteiten – {selectedCompany}

@@ -193,7 +193,7 @@ try {
     const blacklistedDomains = [
       'kpn.net', 'ziggo.nl', 'glasoperator.nl', 't-mobilethuis.nl', 'chello.nl',
       'dynamic.upc.nl', 'vodafone.nl', 'versatel', 'msn.com', 'akamaitechnologies.com',
-      'sr-srv.net', 'telenet.be', 'myaisfibre.com', 'xs4all.nl', 'home.nl', 'dfn.nl', 'weserve.nl', 'client.t-mobilethuis.nl', 'your-server.de', 'ip.telfort.nl'
+      'sr-srv.net', 'telenet.be', 'myaisfibre.com', 'filterplatform.nl','xs4all.nl', 'home.nl', 'dfn.nl', 'weserve.nl', 'client.t-mobilethuis.nl', 'your-server.de', 'ip.telfort.nl'
     ];
 
     const hasBlacklisted = blacklistKeywords.some(k => lowerHost.includes(k));
