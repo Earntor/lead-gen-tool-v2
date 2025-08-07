@@ -12,39 +12,33 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Niet ingelogd' });
   }
 
-  // 2. Acties per HTTP-methode
+  // 2. Actie per HTTP-methode
   if (req.method === 'POST') {
     const { company_domain, note } = req.body;
-    const timestamp = new Date().toISOString();
 
-    // upsert: nieuwe notitie of bijwerken
+    // upsert: maak nieuw of update op user_id+company_domain
+    // én laat de trigger updated_at automatisch updaten
     const { data, error } = await supabase
       .from('lead_notes')
       .upsert(
-        {
-          user_id: user.id,
-          company_domain,
-          note,
-          updated_at: timestamp      // hier voegen we het zelf toe
-        },
+        { user_id: user.id, company_domain, note },
         { onConflict: ['user_id', 'company_domain'] }
       )
-      .select('updated_at')        // vraag alleen updated_at op
+      .select('updated_at')
       .maybeSingle();
 
     if (error) {
       return res.status(500).json({ error: error.message });
     }
-
-    return res
-      .status(200)
-      .json({ success: true, updated_at: data.updated_at });
+    return res.status(200).json({
+      success: true,
+      updated_at: data.updated_at,
+    });
   }
 
   if (req.method === 'GET') {
     const { company_domain } = req.query;
 
-    // haal notitie + updated_at op
     const { data, error } = await supabase
       .from('lead_notes')
       .select('note, updated_at')
@@ -55,7 +49,6 @@ export default async function handler(req, res) {
     if (error) {
       return res.status(500).json({ error: error.message });
     }
-
     return res.status(200).json({
       note:       data?.note       || '',
       updated_at: data?.updated_at || null,
@@ -64,7 +57,6 @@ export default async function handler(req, res) {
 
   if (req.method === 'DELETE') {
     const { company_domain } = req.body;
-
     const { error } = await supabase
       .from('lead_notes')
       .delete()
@@ -74,11 +66,10 @@ export default async function handler(req, res) {
     if (error) {
       return res.status(500).json({ error: error.message });
     }
-
     return res.status(200).json({ success: true });
   }
 
-  // Anders 405
+  // Anders: methode niet toegestaan
   res.setHeader('Allow', ['GET', 'POST', 'DELETE']);
   res.status(405).end(`Method ${req.method} Not Allowed`);
 }
