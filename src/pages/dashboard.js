@@ -44,7 +44,7 @@ export default function Dashboard() {
 const [openNoteFor, setOpenNoteFor] = useState(null);         // welke lead open staat
 const [noteDraft, setNoteDraft] = useState('');               // tekst in textarea
 const [noteUpdatedAt, setNoteUpdatedAt] = useState({});       // laatste bewerkt per domein
-
+const [authToken, setAuthToken] = useState(null);
 
 
 
@@ -109,6 +109,10 @@ const [noteUpdatedAt, setNoteUpdatedAt] = useState({});       // laatste bewerkt
       }
       setUser(user);
 
+const { data: sessionData } = await supabase.auth.getSession();
+const token = sessionData?.session?.access_token || null;
+setAuthToken(token);
+
       const { data: allData } = await supabase
   .from("leads")
   .select(`
@@ -129,20 +133,28 @@ for (const company of allData) {
   if (!company.company_domain) continue;
 
   try {
-    const res = await fetch(`/api/lead-note?company_domain=${company.company_domain}`);
+    const res = await fetch(
+      `/api/lead-note?company_domain=${encodeURIComponent(company.company_domain)}`,
+      {
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+      }
+    );
     const json = await res.json();
-    company.note = json.note;
-// altijd updaten (kan null zijn)
-   company.updated_at = json.updated_at;
-   setNoteUpdatedAt(prev => ({
-     ...prev,
-     [company.company_domain]: json.updated_at
-   }));
-       // ─────────────────────────────────────────────────
+
+    // Sla de note op in je lead‑object
+    company.note = json.note || '';
+
+    // ⚠️ Gebruik GEEN company.updated_at (dat botst met leads.updated_at)
+    // We bewaren de timestamp in een aparte map:
+    setNoteUpdatedAt(prev => ({
+      ...prev,
+      [company.company_domain]: json.updated_at || null,
+    }));
   } catch (e) {
-    console.warn("❌ Notitie ophalen mislukt voor", company.company_domain);
+    console.warn("❌ Notitie ophalen mislukt voor", company.company_domain, e);
   }
 }
+
 setAllLeads(allData || []);
 console.log("Gelezen leads:", allData);
 
@@ -1291,31 +1303,36 @@ if (leadRating >= 80) {
               <button
                 onClick={async () => {
                   const res = await fetch('/api/lead-note', {
-                    method: 'POST',
-                    headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({
-                      company_domain: openNoteFor,
-                      note: noteDraft
-                    })
-                  });
-// 1) Lees eerst de volledige JSON-response in
-const json       = await res.json();
-// 2) Pak nu expliciet de timestamp eruit
-const updated_at = json.updated_at;
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+  },
+  body: JSON.stringify({
+    company_domain: openNoteFor,
+    note: noteDraft,
+  }),
+});
+const json = await res.json();
+const updated_at = json?.updated_at || null;
 
-                  // werk state bij
-                  setNoteUpdatedAt(prev => ({
-   ...prev,
-  [openNoteFor]: updated_at
- }));
-                  setAllLeads(prev =>
-                    prev.map(l =>
-                      l.company_domain === openNoteFor
-                        ? { ...l, note: noteDraft, updated_at }
-                        : l
-                    )
-                  );
-                  setOpenNoteFor(null);
+// Bewaar de "laatst bewerkt" timestamp in aparte map
+setNoteUpdatedAt(prev => ({
+  ...prev,
+  [openNoteFor]: updated_at,
+}));
+
+// Update alleen de note in je leads‑lijst (NIET leads.updated_at overschrijven)
+setAllLeads(prev =>
+  prev.map(l =>
+    l.company_domain === openNoteFor
+      ? { ...l, note: noteDraft }
+      : l
+  )
+);
+
+setOpenNoteFor(null);
+
                 }}
                 className="bg-blue-600 text-white px-4 py-1.5 rounded-lg hover:bg-blue-700 transition"
               >
@@ -1323,19 +1340,31 @@ const updated_at = json.updated_at;
               </button>
               <button
                 onClick={async () => {
-                  await fetch('/api/lead-note', {
-                    method: 'DELETE',
-                    headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({ company_domain: openNoteFor })
-                  });
-                 setAllLeads(prev =>
-                    prev.map(l =>
-                      l.company_domain === openNoteFor
-                        ? { ...l, note: '' }
-                        : l
-                    )
-                  );
-                  setOpenNoteFor(null);
+                 await fetch('/api/lead-note', {
+  method: 'DELETE',
+  headers: {
+    'Content-Type': 'application/json',
+    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+  },
+  body: JSON.stringify({ company_domain: openNoteFor }),
+});
+
+// Note leegmaken en "laatst bewerkt" weghalen
+setAllLeads(prev =>
+  prev.map(l =>
+    l.company_domain === openNoteFor
+      ? { ...l, note: '' }
+      : l
+  )
+);
+setNoteUpdatedAt(prev => {
+  const copy = { ...prev };
+  delete copy[openNoteFor];
+  return copy;
+});
+
+setOpenNoteFor(null);
+
                 }}
                 className="border border-gray-300 px-4 py-1.5 rounded-lg hover:bg-gray-100 transition"
               >
