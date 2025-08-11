@@ -6,24 +6,7 @@ import "react-datepicker/dist/react-datepicker.css";
 import { formatDutchDateTime } from '../lib/formatTimestamp';
 import { isToday, isYesterday, isWithinInterval, subDays } from 'date-fns';
 import { utcToZonedTime } from 'date-fns-tz';
-
-function countryNameToCode(name) {
-  if (!name) return null;
-  const map = {
-    Netherlands: "nl",
-    Germany: "de",
-    Belgium: "be",
-    France: "fr",
-    Spain: "es",
-    Italy: "it",
-    United Kingdom: "gb",
-    United States: "us",
-    Canada: "ca",
-    Australia: "au",
-    // voeg meer landen toe indien nodig
-  };
-  return map[name] ? map[name].toLowerCase() : null;
-}
+import { countryNameToCode } from "../lib/countryNameToCode";
 
 
 // Skeletons loading
