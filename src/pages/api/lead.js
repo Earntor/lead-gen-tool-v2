@@ -516,10 +516,50 @@ if (!company_domain && domainSignals.length > 0) {
     signals: domainSignals.length > 0 ? domainSignals : null
   });
 
+  // ✅ baseline cache zetten zodat track.js iets heeft
+  try {
+    await supabaseAdmin
+      .from('ipapi_cache')
+      .upsert({
+        ip_address,
+        company_name: null,
+        company_domain: null,
+        location,
+        ip_street: null,
+        ip_postal_code: ipapi.zip || null,
+        ip_city: ipapi.city || null,
+        ip_country: ipapi.country || null,
+        lat: ipapi.lat || null,
+        lon: ipapi.lon || null,
+        enrichment_source: 'isp_baseline',
+        confidence: null,
+        confidence_reason: null,
+        rdns_hostname: null,
+        domain_address: null,
+        domain_postal_code: null,
+        domain_city: null,
+        domain_country: null,
+        domain_lat: null,
+        domain_lon: null,
+        phone: null,
+        email: null,
+        linkedin_url: null,
+        facebook_url: null,
+        instagram_url: null,
+        twitter_url: null,
+        meta_description: null,
+        category: null,
+        enriched_at: new Date().toISOString(),
+        last_updated: new Date().toISOString()
+      }, { onConflict: 'ip_address' });
+  } catch (e) {
+    console.warn('⚠️ baseline cache upsert (ISP) faalde:', e.message);
+  }
+
   return res.status(200).json({ ignored: true, reason: 'known ISP (no valid domain)' });
 }
 
-// 🚫 Geen domein gevonden en geen ISP → fallback logging
+
 if (!isISP && !company_domain) {
   await supabaseAdmin.from('ignored_ip_log').insert({
     ip_address,
@@ -531,8 +571,49 @@ if (!isISP && !company_domain) {
     signals: domainSignals.length > 0 ? domainSignals : null
   });
 
+  // ✅ baseline cache zetten zodat track.js iets heeft
+  try {
+    await supabaseAdmin
+      .from('ipapi_cache')
+      .upsert({
+        ip_address,
+        company_name: null,
+        company_domain: null,
+        location,
+        ip_street: null,
+        ip_postal_code: ipapi.zip || null,
+        ip_city: ipapi.city || null,
+        ip_country: ipapi.country || null,
+        lat: ipapi.lat || null,
+        lon: ipapi.lon || null,
+        enrichment_source: 'ipapi_baseline',
+        confidence: null,
+        confidence_reason: null,
+        rdns_hostname: null,
+        domain_address: null,
+        domain_postal_code: null,
+        domain_city: null,
+        domain_country: null,
+        domain_lat: null,
+        domain_lon: null,
+        phone: null,
+        email: null,
+        linkedin_url: null,
+        facebook_url: null,
+        instagram_url: null,
+        twitter_url: null,
+        meta_description: null,
+        category: null,
+        enriched_at: new Date().toISOString(),
+        last_updated: new Date().toISOString()
+      }, { onConflict: 'ip_address' });
+  } catch (e) {
+    console.warn('⚠️ baseline cache upsert (no-domain) faalde:', e.message);
+  }
+
   return res.status(200).json({ ignored: true, reason: 'no domain found' });
 }
+
 
 // 🧠 Check op bestaande enrichment in ip_enrichment_cache
 let cachedDomainEnrichment = null;
@@ -798,70 +879,18 @@ await upsertDomainEnrichmentCache(company_domain, {
       }
     }
 
-    const { data, error } = await supabaseAdmin
-  .from('leads')
-  .insert([{
-    user_id,
-    ip_address,
-    page_url,
-    timestamp: new Date().toISOString(),
-    company_name: ipData.company_name,
-    company_domain: ipData.company_domain,
-    location: ipData.location,
-    ip_street: ipData.ip_street,
-    ip_postal_code: ipData.ip_postal_code,
-    ip_city: ipData.ip_city,
-    ip_country: ipData.ip_country,
-    domain_address: ipData.domain_address,
-    domain_postal_code: ipData.domain_postal_code,
-    domain_city: ipData.domain_city,
-    domain_country: ipData.domain_country,
-    confidence_reason: ipData.confidence_reason || null,
-    phone: ipData.phone || null,
-    email: ipData.email || null,
-    linkedin_url: ipData.linkedin_url || null,
-    facebook_url: ipData.facebook_url || null,
-    instagram_url: ipData.instagram_url || null,
-    twitter_url: ipData.twitter_url || null,
-    meta_description: ipData.meta_description || null,
-    anon_id: anon_id || null,
-    referrer: referrer || null,
-    utm_source: utm_source || null,
-    utm_medium: utm_medium || null,
-    utm_campaign: utm_campaign || null,
-    duration_seconds: duration_seconds || null,
-    domain_lat: ipData.domain_lat || null,
-    domain_lon: ipData.domain_lon || null,
-    rdns_hostname: ipData.rdns_hostname || null,
-    category: ipData.category || null,
-    site_id: site_id || null
-  }])
-  .select();
+    // ⛔️ Belangrijk: geen insert in 'leads' vanuit /api/lead!
+// Deze endpoint verzorgt alleen enrichment + cache.
+// track.js schrijft de pageview en triggert KvK.
 
-    if (error) {
-      return res.status(500).json({ error: error.message || 'Database insert failed' });
-    }
+return res.status(200).json({
+  success: true,
+  mode: 'enrichment_only',
+  company_domain: ipData?.company_domain ?? null,
+  company_name: ipData?.company_name ?? null,
+  confidence: ipData?.confidence ?? null
+});
 
-    const insertedRow = data[0];
-    console.log('Inserted row:', insertedRow);
-
-    if (ipData.company_name) {
-      try {
-        await fetch(`${process.env.NEXT_PUBLIC_TRACKING_DOMAIN || 'http://localhost:3000'}/api/kvk-lookup`, {
-
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            lead_id: insertedRow.id,
-            company_name: ipData.company_name
-          })
-        });
-      } catch (err) {
-        console.error('KvK lookup error:', err.message);
-      }
-    }
-
-    res.status(200).json({ success: true });
   } catch (err) {
     console.error('Server error:', err);
     res.status(500).json({ error: 'Internal server error' });
