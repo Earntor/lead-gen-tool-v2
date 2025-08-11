@@ -1307,16 +1307,25 @@ if (leadRating >= 80) {
   )}
 
  {/* ─── Notitie open/klap knop ─────────────────── */}
-         <button
-           onClick={() => {
-             setOpenNoteFor(selectedCompanyData.company_domain);
-             setNoteDraft(selectedCompanyData.note || '');
-           }}
-           className="mt-4 px-3 py-1 border border-gray-300 rounded-lg hover:bg-gray-100 transition"
-         >
-           Notitie toevoegen
-         </button>
-        {/* ─────────────────────────────────────────────── */}
+<button
+  onClick={() => {
+    setOpenNoteFor(selectedCompanyData.company_domain);
+    setNoteDraft(selectedCompanyData.note || '');
+  }}
+  className="mt-4 px-3 py-1 border border-gray-300 rounded-lg hover:bg-gray-100 transition"
+>
+  {selectedCompanyData.note ? 'Notitie bewerken' : 'Notitie toevoegen'}
+</button>
+
+{/* Mini‑preview van bestaande notitie (1 regel) */}
+{selectedCompanyData.note && (
+  <p className="text-xs text-gray-500 mt-1 line-clamp-1">
+    {selectedCompanyData.note}
+  </p>
+)}
+{/* ─────────────────────────────────────────────── */}
+
+
        {/* ─── Texteer-veld als openNoteFor gelijk is ───────────────── */}
         {openNoteFor === selectedCompanyData.company_domain && (
           <div className="mt-2 bg-gray-50 border border-gray-200 rounded-lg p-4">
@@ -1329,75 +1338,99 @@ if (leadRating >= 80) {
             />
             <div className="mt-2 flex gap-2">
               <button
-                onClick={async () => {
-                  const res = await fetch('/api/lead-note', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-  },
-  body: JSON.stringify({
-    company_domain: openNoteFor,
-    note: noteDraft,
-  }),
-});
-const json = await res.json();
-const updated_at = json?.updated_at || null;
+  onClick={async () => {
+    try {
+      const res = await fetch('/api/lead-note', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        body: JSON.stringify({
+          company_domain: openNoteFor,
+          note: noteDraft,
+        }),
+      });
 
-// Bewaar de "laatst bewerkt" timestamp in aparte map
-setNoteUpdatedAt(prev => ({
-  ...prev,
-  [openNoteFor]: updated_at,
-}));
+      // Fout tonen en stoppen
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Opslaan mislukt: ${err.error || res.status}`);
+        return;
+      }
 
-// Update alleen de note in je leads‑lijst (NIET leads.updated_at overschrijven)
-setAllLeads(prev =>
-  prev.map(l =>
-    l.company_domain === openNoteFor
-      ? { ...l, note: noteDraft }
-      : l
-  )
-);
+      const json = await res.json();
+      const updated_at = json?.updated_at ?? null;
 
-setOpenNoteFor(null);
+      // "Laatst bewerkt" timestamp bijwerken
+      setNoteUpdatedAt(prev => ({
+        ...prev,
+        [openNoteFor]: updated_at,
+      }));
 
-                }}
-                className="bg-blue-600 text-white px-4 py-1.5 rounded-lg hover:bg-blue-700 transition"
-              >
-                Opslaan
-              </button>
-              <button
-                onClick={async () => {
-                 await fetch('/api/lead-note', {
-  method: 'DELETE',
-  headers: {
-    'Content-Type': 'application/json',
-    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-  },
-  body: JSON.stringify({ company_domain: openNoteFor }),
-});
+      // Alleen de note in je leads‑lijst updaten
+      setAllLeads(prev =>
+        prev.map(l =>
+          l.company_domain === openNoteFor
+            ? { ...l, note: noteDraft }
+            : l
+        )
+      );
 
-// Note leegmaken en "laatst bewerkt" weghalen
-setAllLeads(prev =>
-  prev.map(l =>
-    l.company_domain === openNoteFor
-      ? { ...l, note: '' }
-      : l
-  )
-);
-setNoteUpdatedAt(prev => {
-  const copy = { ...prev };
-  delete copy[openNoteFor];
-  return copy;
-});
+      setOpenNoteFor(null);
+    } catch (e) {
+      alert(`Opslaan mislukt: ${e?.message || e}`);
+    }
+  }}
+  className="bg-blue-600 text-white px-4 py-1.5 rounded-lg hover:bg-blue-700 transition"
+>
+  Opslaan
+</button>
 
-setOpenNoteFor(null);
+             <button
+  onClick={async () => {
+    try {
+      const delRes = await fetch('/api/lead-note', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        body: JSON.stringify({ company_domain: openNoteFor }),
+      });
 
-                }}
-                className="border border-gray-300 px-4 py-1.5 rounded-lg hover:bg-gray-100 transition"
-              >
-                Verwijderen
-              </button>
+      // Fout tonen en stoppen
+      if (!delRes.ok) {
+        const err = await delRes.json().catch(() => ({}));
+        alert(`Verwijderen mislukt: ${err.error || delRes.status}`);
+        return;
+      }
+
+      // Note leegmaken en "laatst bewerkt" weghalen
+      setAllLeads(prev =>
+        prev.map(l =>
+          l.company_domain === openNoteFor
+            ? { ...l, note: '' }
+            : l
+        )
+      );
+
+      setNoteUpdatedAt(prev => {
+        const copy = { ...prev };
+        delete copy[openNoteFor];
+        return copy;
+      });
+
+      setOpenNoteFor(null);
+    } catch (e) {
+      alert(`Verwijderen mislukt: ${e?.message || e}`);
+    }
+  }}
+  className="border border-gray-300 px-4 py-1.5 rounded-lg hover:bg-gray-100 transition"
+>
+  Verwijderen
+</button>
+
             </div>
           </div>
         )}
