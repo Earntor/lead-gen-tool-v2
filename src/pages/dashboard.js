@@ -129,32 +129,6 @@ setAuthToken(token);
   .eq("user_id", user.id)
   .not("company_name", "is", null);
 
-for (const company of allData) {
-  if (!company.company_domain) continue;
-
-  try {
-    const res = await fetch(
-      `/api/lead-note?company_domain=${encodeURIComponent(company.company_domain)}`,
-      {
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
-      }
-    );
-    const json = await res.json();
-
-    // Sla de note op in je lead‑object
-    company.note = json.note || '';
-
-    // ⚠️ Gebruik GEEN company.updated_at (dat botst met leads.updated_at)
-    // We bewaren de timestamp in een aparte map:
-    setNoteUpdatedAt(prev => ({
-      ...prev,
-      [company.company_domain]: json.updated_at || null,
-    }));
-  } catch (e) {
-    console.warn("❌ Notitie ophalen mislukt voor", company.company_domain, e);
-  }
-}
-
 setAllLeads(allData || []);
 console.log("Gelezen leads:", allData);
 
@@ -204,6 +178,60 @@ setUniqueCategories(Array.from(categoriesSet).sort());
     };
     getData();
   }, [router]);
+
+  // ⬇️ NIEUWE useEffect: notities ophalen zodra we een token én leads hebben
+useEffect(() => {
+  if (!authToken || allLeads.length === 0) return;
+
+  let cancelled = false;
+
+  (async () => {
+    // Unieke domeinen uit je leads
+    const domains = [...new Set(allLeads.map(l => l.company_domain).filter(Boolean))];
+    if (domains.length === 0) return;
+
+    // In parallel ophalen (met Authorization header)
+    const results = await Promise.all(
+      domains.map(async (domain) => {
+        try {
+          const res = await fetch(
+            `/api/lead-note?company_domain=${encodeURIComponent(domain)}`,
+            { headers: { Authorization: `Bearer ${authToken}` } }
+          );
+          if (!res.ok) return [domain, null, null]; // niet overschrijven bij fout
+          const json = await res.json();
+          return [domain, json?.note ?? '', json?.updated_at ?? null];
+        } catch {
+          return [domain, null, null]; // niet overschrijven bij fout
+        }
+      })
+    );
+
+    if (cancelled) return;
+
+    // Merge notes in allLeads (alleen als we een note hebben)
+    setAllLeads(prev =>
+      prev.map(l => {
+        const hit = results.find(r => r[0] === l.company_domain);
+        if (!hit) return l;
+        const [, note] = hit;
+        return note !== null ? { ...l, note } : l; // bij fout: niets wijzigen
+      })
+    );
+
+    // Merge "laatst bewerkt" timestamps
+    setNoteUpdatedAt(prev => {
+      const copy = { ...prev };
+      results.forEach(([domain, , ts]) => {
+        if (ts !== null) copy[domain] = ts;
+      });
+      return copy;
+    });
+  })();
+
+  return () => { cancelled = true; };
+}, [authToken, allLeads]);
+
 
     const refreshLabels = async () => {
     const { data } = await supabase
@@ -1404,9 +1432,14 @@ setOpenNoteFor(null);
        {selectedCompanyData.note && (
          <div className="mb-4 p-4 bg-white border border-gray-200 rounded-lg text-gray-700">
            <strong>
-             Notitie (laatst bewerkt:
-             {' '}{formatDutchDateTime(noteUpdatedAt[selectedCompanyData.company_domain])})
-           </strong>
+  Notitie (laatst bewerkt:{' '}
+  {
+    noteUpdatedAt[selectedCompanyData.company_domain]
+      ? formatDutchDateTime(noteUpdatedAt[selectedCompanyData.company_domain])
+      : '—'
+  })
+</strong>
+
            <p className="mt-1 italic whitespace-pre-wrap">
              {selectedCompanyData.note}
            </p>
