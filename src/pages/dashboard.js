@@ -7,6 +7,95 @@ import { formatDutchDateTime } from '../lib/formatTimestamp';
 import { isToday, isYesterday, isWithinInterval, subDays } from 'date-fns';
 import { utcToZonedTime } from 'date-fns-tz';
 
+function countryNameToCode(name) {
+  if (!name) return null;
+  const map = {
+    Netherlands: "nl",
+    Germany: "de",
+    Belgium: "be",
+    France: "fr",
+    Spain: "es",
+    Italy: "it",
+    United Kingdom: "gb",
+    United States: "us",
+    Canada: "ca",
+    Australia: "au",
+    // voeg meer landen toe indien nodig
+  };
+  return map[name] ? map[name].toLowerCase() : null;
+}
+
+
+// Skeletons loading
+function FiltersSkeleton() {
+  return (
+    <div
+      className="flex flex-col h-full overflow-y-auto bg-gray-50 border border-gray-200 p-4 shadow-md space-y-4 animate-pulse"
+      style={{ flexBasis: "250px", flexShrink: 0 }}
+    >
+      <div className="h-5 w-1/2 bg-gray-200 rounded" />
+      <div className="h-9 w-full bg-gray-200 rounded" />
+      <div className="h-20 w-full bg-gray-200 rounded" />
+      <div className="h-5 w-1/3 bg-gray-200 rounded" />
+      <div className="h-9 w-full bg-gray-200 rounded" />
+      <div className="h-9 w-full bg-gray-200 rounded" />
+      <div className="h-5 w-1/3 bg-gray-200 rounded" />
+      <div className="h-9 w-full bg-gray-200 rounded" />
+      <div className="h-9 w-full bg-gray-200 rounded" />
+      <div className="h-24 w-full bg-gray-200 rounded" />
+    </div>
+  );
+}
+
+function LeadCardSkeleton() {
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-4 shadow animate-pulse">
+      <div className="flex justify-between items-start gap-4">
+        <div className="flex-1">
+          <div className="h-4 w-2/5 bg-gray-200 rounded mb-2" />
+          <div className="h-3 w-1/4 bg-gray-200 rounded mb-1" />
+          <div className="h-3 w-1/2 bg-gray-200 rounded" />
+        </div>
+        <div className="w-24">
+          <div className="h-3 w-3/4 bg-gray-200 rounded mb-2" />
+          <div className="h-3 w-2/3 bg-gray-200 rounded mb-2" />
+          <div className="h-2 w-full bg-gray-200 rounded" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DetailSkeleton() {
+  return (
+    <div className="flex flex-col flex-grow overflow-y-auto bg-white border border-gray-200 p-4 shadow animate-pulse">
+      <div className="bg-white border border-gray-200 rounded-xl p-4 shadow">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-14 h-14 bg-gray-200 rounded-xl" />
+          <div className="flex-1">
+            <div className="h-4 w-48 bg-gray-200 rounded mb-2" />
+            <div className="h-3 w-32 bg-gray-200 rounded" />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div className="space-y-3">
+            <div className="h-4 w-24 bg-gray-200 rounded" />
+            <div className="h-3 w-3/4 bg-gray-200 rounded" />
+            <div className="h-3 w-2/3 bg-gray-200 rounded" />
+            <div className="h-3 w-1/2 bg-gray-200 rounded" />
+          </div>
+          <div className="h-40 bg-gray-200 rounded-xl border" />
+        </div>
+
+        <div className="h-3 w-40 bg-gray-200 rounded mb-2" />
+        <div className="h-20 w-full bg-gray-200 rounded" />
+      </div>
+    </div>
+  );
+}
+
+
 
 export default function Dashboard() {
   const router = useRouter();
@@ -585,12 +674,48 @@ const resetFilters = () => {
 };
 
   if (loading) {
-    return (
-      <div className="flex justify-center items-center h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-b-4 border-accent"></div>
+  return (
+    <div className="w-full">
+      <div className="flex w-full h-[calc(100vh-6rem)]">
+        {/* Linker kolom: Filters skeleton */}
+        <FiltersSkeleton />
+
+        {/* Resizer */}
+        <div
+          className="w-1 cursor-col-resize bg-gray-200"
+          aria-hidden
+        />
+
+        {/* Midden kolom: lijst met 10 skeleton cards */}
+        <div
+          className="flex flex-col h-full bg-white border border-gray-200 shadow"
+          style={{ flexBasis: "500px", flexShrink: 0 }}
+        >
+          <div className="bg-blue-50 border-b border-blue-200 p-3 space-y-2 animate-pulse">
+            <div className="h-4 w-48 bg-blue-100 rounded" />
+            <div className="h-3 w-40 bg-blue-100 rounded" />
+            <div className="h-3 w-36 bg-blue-100 rounded" />
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {Array.from({ length: 10 }).map((_, i) => (
+              <LeadCardSkeleton key={i} />
+            ))}
+          </div>
+        </div>
+
+        {/* Resizer */}
+        <div
+          className="w-1 cursor-col-resize bg-gray-200"
+          aria-hidden
+        />
+
+        {/* Rechter kolom: detail skeleton */}
+        <DetailSkeleton />
       </div>
-    );
-  }
+    </div>
+  );
+}
+
 
 return (
   <div className="w-full">
@@ -945,18 +1070,41 @@ if (leadRating >= 80) {
 
             <div>
               <div className="flex items-center gap-2">
-                {company.company_domain && (
-                  <img
-                    src={`https://img.logo.dev/${company.company_domain}?token=pk_R_r8ley_R_C7tprVCpFASQ`}
-                    alt="logo"
-                    className="w-6 h-6 object-contain rounded"
-                    onError={(e) => (e.target.style.display = "none")}
-                  />
-                )}
-                <h3 className="text-base font-semibold text-gray-800">
-                  {company.company_name}
-                </h3>
-              </div>
+  {company.company_domain && (
+    <img
+      src={`https://img.logo.dev/${company.company_domain}?token=pk_R_r8ley_R_C7tprVCpFASQ`}
+      alt="logo"
+      className="w-6 h-6 object-contain rounded"
+      onError={(e) => (e.target.style.display = "none")}
+    />
+  )}
+
+  {/* Vlag op basis van domain_country (naam → code) */}
+  {company.domain_country && countryNameToCode(company.domain_country) && (
+    <img
+      src={`https://flagcdn.com/w20/${countryNameToCode(company.domain_country)}.png`}
+      alt={company.domain_country}
+      className="w-5 h-3 rounded shadow-sm"
+      title={company.domain_country}
+    />
+  )}
+
+  {/* Fallback: als domain_country ontbreekt, gebruik ip_country (ISO) */}
+  {!company.domain_country && company.ip_country && (
+    <img
+      src={`https://flagcdn.com/w20/${String(company.ip_country).toLowerCase()}.png`}
+      alt={company.ip_country}
+      className="w-5 h-3 rounded shadow-sm"
+      title={company.ip_country}
+    />
+  )}
+
+  <h3 className="text-base font-semibold text-gray-800">
+    {company.company_name}
+  </h3>
+</div>
+
+
               {company.kvk_city && (
                 <p className="text-xs text-gray-500 mt-0.5">📍 {company.kvk_city}</p>
               )}
@@ -1103,9 +1251,30 @@ if (leadRating >= 80) {
   )}
   <div>
     <div className="flex items-center gap-2 relative">
-      <span className="font-semibold text-gray-800">
-        {selectedCompanyData.company_name}
-      </span>
+  <span className="font-semibold text-gray-800">
+    {selectedCompanyData.company_name}
+  </span>
+
+  {/* Vlag op basis van domain_country */}
+  {selectedCompanyData.domain_country && countryNameToCode(selectedCompanyData.domain_country) && (
+    <img
+      src={`https://flagcdn.com/w20/${countryNameToCode(selectedCompanyData.domain_country)}.png`}
+      alt={selectedCompanyData.domain_country}
+      className="w-5 h-3 rounded shadow-sm"
+      title={selectedCompanyData.domain_country}
+    />
+  )}
+
+  {/* Fallback naar ip_country als domain_country ontbreekt */}
+  {!selectedCompanyData.domain_country && selectedCompanyData.ip_country && (
+    <img
+      src={`https://flagcdn.com/w20/${String(selectedCompanyData.ip_country).toLowerCase()}.png`}
+      alt={selectedCompanyData.ip_country}
+      className="w-5 h-3 rounded shadow-sm"
+      title={selectedCompanyData.ip_country}
+    />
+  )}
+
       <div className="relative">
         <button
           onClick={() =>
@@ -1453,7 +1622,10 @@ if (leadRating >= 80) {
       src={`https://www.openstreetmap.org/export/embed.html?bbox=${parseFloat(mapCoords.lon) - 0.01},${parseFloat(mapCoords.lat) - 0.01},${parseFloat(mapCoords.lon) + 0.01},${parseFloat(mapCoords.lat) + 0.01}&marker=${mapCoords.lat},${mapCoords.lon}`}
     />
   ) : (
-    <p className="text-sm text-gray-500 p-2">Locatie wordt geladen...</p>
+<div className="p-2 animate-pulse">
+  <div className="h-6 w-1/3 bg-gray-200 rounded mb-2" />
+  <div className="h-40 w-full bg-gray-200 rounded" />
+</div>
   )}
 </div>
 
