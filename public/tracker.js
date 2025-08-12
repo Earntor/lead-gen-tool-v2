@@ -35,10 +35,26 @@
     const utmMedium = utm.get("utm_medium") || null;
     const utmCampaign = utm.get("utm_campaign") || null;
 
-    // Starttijd per pagina
-    const startTime = Date.now();
+    // Starttijd per pagina (nauwkeuriger dan Date.now)
+    const startTime = performance.now();
 
-    function send(eventType, durationSeconds) {
+    // ⛔️ Zorg dat "end" maar één keer wordt verzonden
+    let ended = false;
+
+    function sendViaFetch(payload) {
+      fetch(`${baseUrl}/api/track`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        keepalive: true
+      }).catch(() => {});
+    }
+
+    // ✅ Betrouwbare verzending bij afsluiten/weggaan
+    function sendEndOnce(reason) {
+      if (ended) return;
+      ended = true;
+      const seconds = Math.max(0, Math.round((performance.now() - startTime) / 1000));
       const payload = {
         projectId,
         siteId,
@@ -49,38 +65,54 @@
         utmSource,
         utmMedium,
         utmCampaign,
-        durationSeconds,
-        eventType // "load" of "end"
+        durationSeconds: seconds,
+        eventType: "end",
+        endReason: reason
       };
 
-      fetch(`${baseUrl}/api/track`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        keepalive: true
-      });
+      // Probeer eerst sendBeacon (werkt tijdens unload). Lukt dat niet: fallback naar fetch.
+      try {
+        const ok = navigator.sendBeacon(
+          `${baseUrl}/api/track`,
+          new Blob([JSON.stringify(payload)], { type: "application/json" })
+        );
+        if (!ok) sendViaFetch(payload);
+      } catch {
+        sendViaFetch(payload);
+      }
     }
 
-    // ✅ 1) Meteen een pageview sturen bij page load (zorgt dat de homepage nooit mist)
-    // duur = 0 bij start
+    function sendLoad() {
+      const payload = {
+        projectId,
+        siteId,
+        pageUrl,
+        referrer,
+        anonId,
+        sessionId,
+        utmSource,
+        utmMedium,
+        utmCampaign,
+        durationSeconds: 0,
+        eventType: "load"
+      };
+      sendViaFetch(payload);
+    }
+
+    // ✅ 1) Meteen een pageview sturen bij page load (duur = 0)
     if (document.readyState === "complete" || document.readyState === "interactive") {
-      send("load", 0);
+      sendLoad();
     } else {
-      window.addEventListener("DOMContentLoaded", () => send("load", 0), { once: true });
+      window.addEventListener("DOMContentLoaded", () => sendLoad(), { once: true });
     }
 
-    // ✅ 2) Bij verlaten/tab verbergen nog een keer sturen met werkelijke duur (gecappt server-side)
-    window.addEventListener("visibilitychange", () => {
-      if (document.visibilityState !== "hidden") return;
-      const seconds = Math.round((Date.now() - startTime) / 1000);
-      send("end", seconds);
+    // ✅ 2) Bij verlaten/tab verbergen nog een keer sturen met werkelijke duur (één keer!)
+    // Gebruik pagehide (betrouwbaarder in Safari/iOS); visibilitychange als vangnet
+    window.addEventListener("pagehide", () => sendEndOnce("pagehide"));
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") sendEndOnce("visibilitychange");
     });
 
-    // Extra vangnet als iemand het tab sluit zonder visibilitychange
-    window.addEventListener("pagehide", () => {
-      const seconds = Math.round((Date.now() - startTime) / 1000);
-      send("end", seconds);
-    });
   } catch (err) {
     console.warn("Tracking script error:", err);
   }

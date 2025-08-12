@@ -45,6 +45,18 @@ function normalizeDuration(d) {
   return Math.min(1800, rounded);
 }
 
+// URL normaliseren: zelfde pagina → zelfde key (zonder query/hash, zonder trailing slash)
+function canonicalizeUrl(input) {
+  try {
+    const u = new URL(input, 'https://fallback.nl');
+    let p = u.pathname || '/';
+    if (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
+    return `${u.origin}${p}`;
+  } catch {
+    return input;
+  }
+}
+
 // ipapi_cache -> leads kolommen
 function mapCacheToLead(ipCache) {
   if (!ipCache) return {};
@@ -129,6 +141,7 @@ export default async function handler(req, res) {
     eventType // "load" of "end" (kan ontbreken bij oudere scripts)
   } = body;
 
+  const canonicalPageUrl = canonicalizeUrl(pageUrl);
   const isValidation = validationTest === true;
 
   // Basis validaties
@@ -231,7 +244,7 @@ export default async function handler(req, res) {
         body: JSON.stringify({
           ip_address: ipAddress,
           user_id: projectId,
-          page_url: pageUrl,
+          page_url: canonicalPageUrl, // canonisch meest nuttig
           anon_id: anonId || null,
           referrer: referrer || null,
           utm_source: utmSource || null,
@@ -264,7 +277,7 @@ export default async function handler(req, res) {
       .from('leads')
       .select('id, created_at, duration_seconds, company_domain, company_name, domain_lat')
       .eq('session_id', sessionId)
-      .eq('page_url', pageUrl)
+      .eq('page_url', canonicalPageUrl)
       .order('created_at', { ascending: false })
       .limit(1));
   } else if (anonId) {
@@ -272,7 +285,7 @@ export default async function handler(req, res) {
       .from('leads')
       .select('id, created_at, duration_seconds, company_domain, company_name, domain_lat')
       .eq('anon_id', anonId)
-      .eq('page_url', pageUrl)
+      .eq('page_url', canonicalPageUrl)
       .order('created_at', { ascending: false })
       .limit(1));
   } else {
@@ -282,7 +295,7 @@ export default async function handler(req, res) {
       .from('leads')
       .select('id, created_at, duration_seconds, company_domain, company_name, domain_lat')
       .eq('ip_address', ipAddress)
-      .eq('page_url', pageUrl)
+      .eq('page_url', canonicalPageUrl)
       .gte('created_at', tenSecAgo)
       .order('created_at', { ascending: false })
       .limit(1));
@@ -338,11 +351,36 @@ export default async function handler(req, res) {
     // Valt niet onder bovenstaande -> laat nieuwe insert toe
   }
 
+  // 🔎 Fallback: "end" maar geen recent record gevonden → probeer alsnog op sessie+canonieke URL
+  if (eventType === 'end') {
+    const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+
+    if (sessionId) {
+      const { data: fb, error: fbErr } = await supabase
+        .from('leads')
+        .select('id, duration_seconds')
+        .eq('session_id', sessionId)
+        .eq('page_url', canonicalPageUrl)
+        .gte('created_at', threeHoursAgo)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (!fbErr && fb && fb.length > 0) {
+        const prevDur = Number(fb[0].duration_seconds ?? 0);
+        if (dur > prevDur) {
+          await supabase.from('leads').update({ duration_seconds: dur }).eq('id', fb[0].id);
+        }
+        await supabase.from('profiles').update({ last_tracking_ping: nowIso }).eq('id', projectId);
+        return res.status(200).json({ success: true, updated: true, fallbackMatched: true });
+      }
+    }
+  }
+
   // Nieuwe pageview inserten (meestal bij "load")
   const insertPayload = {
     user_id: projectId,
     site_id: siteId,
-    page_url: pageUrl,
+    page_url: canonicalPageUrl,
     ip_address: ipAddress,
     source: 'tracker',
     anon_id: anonId || null,

@@ -117,8 +117,9 @@ const [openNoteFor, setOpenNoteFor] = useState(null);         // welke lead open
 const [noteDraft, setNoteDraft] = useState('');               // tekst in textarea
 const [noteUpdatedAt, setNoteUpdatedAt] = useState({});       // laatste bewerkt per domein
 const [authToken, setAuthToken] = useState(null);
-
-
+const [notesByDomain, setNotesByDomain] = useState({}); // { [domain]: "note text" }
+const fetchedDomainsRef = useRef(new Set());            // om dubbele fetches te voorkomen
+const geocodeCacheRef = useRef(new Map()); // key: adres-string → { lat, lon }
 
   useEffect(() => {
   setGlobalSearch((router.query.search || "").toLowerCase());
@@ -252,57 +253,68 @@ setUniqueCategories(Array.from(categoriesSet).sort());
   }, [router]);
 
   // ⬇️ NIEUWE useEffect: notities ophalen zodra we een token én leads hebben
+// Notities ophalen: alleen voor domeinen die we nog niet gehaald hebben.
+// Let op: we updaten *niet* allLeads, maar alleen notesByDomain.
 useEffect(() => {
   if (!authToken || allLeads.length === 0) return;
+
+  // Unieke, stabiele lijst domeinen
+  const domains = [...new Set(allLeads.map(l => l.company_domain).filter(Boolean))];
+  if (domains.length === 0) return;
+
+  // Filter op domeinen die we nog niet fetched hebben
+  const toFetch = domains.filter(d => !fetchedDomainsRef.current.has(d));
+  if (toFetch.length === 0) return;
 
   let cancelled = false;
 
   (async () => {
-    // Unieke domeinen uit je leads
-    const domains = [...new Set(allLeads.map(l => l.company_domain).filter(Boolean))];
-    if (domains.length === 0) return;
+    try {
+      const results = await Promise.all(
+        toFetch.map(async (domain) => {
+          try {
+            const res = await fetch(`/api/lead-note?company_domain=${encodeURIComponent(domain)}`, {
+              headers: { Authorization: `Bearer ${authToken}` },
+            });
+            if (!res.ok) return [domain, null, null];
+            const json = await res.json();
+            return [domain, json?.note ?? '', json?.updated_at ?? null];
+          } catch {
+            return [domain, null, null];
+          }
+        })
+      );
 
-    // In parallel ophalen (met Authorization header)
-    const results = await Promise.all(
-      domains.map(async (domain) => {
-        try {
-          const res = await fetch(
-            `/api/lead-note?company_domain=${encodeURIComponent(domain)}`,
-            { headers: { Authorization: `Bearer ${authToken}` } }
-          );
-          if (!res.ok) return [domain, null, null]; // niet overschrijven bij fout
-          const json = await res.json();
-          return [domain, json?.note ?? '', json?.updated_at ?? null];
-        } catch {
-          return [domain, null, null]; // niet overschrijven bij fout
-        }
-      })
-    );
+      if (cancelled) return;
 
-    if (cancelled) return;
+      // Markeer als fetched zodat we ze niet opnieuw ophalen
+      toFetch.forEach(d => fetchedDomainsRef.current.add(d));
 
-    // Merge notes in allLeads (alleen als we een note hebben)
-    setAllLeads(prev =>
-      prev.map(l => {
-        const hit = results.find(r => r[0] === l.company_domain);
-        if (!hit) return l;
-        const [, note] = hit;
-        return note !== null ? { ...l, note } : l; // bij fout: niets wijzigen
-      })
-    );
-
-    // Merge "laatst bewerkt" timestamps
-    setNoteUpdatedAt(prev => {
-      const copy = { ...prev };
-      results.forEach(([domain, , ts]) => {
-        if (ts !== null) copy[domain] = ts;
+      // Note‑map bijwerken zonder allLeads te raken
+      setNotesByDomain(prev => {
+        const next = { ...prev };
+        results.forEach(([domain, note]) => {
+          if (note !== null && note !== undefined) next[domain] = note;
+        });
+        return next;
       });
-      return copy;
-    });
+
+      // Laatst‑bewerkt timestamps vullen
+      setNoteUpdatedAt(prev => {
+        const next = { ...prev };
+        results.forEach(([domain, , ts]) => {
+          if (ts) next[domain] = ts;
+        });
+        return next;
+      });
+    } catch {
+      // stil falen is oké
+    }
   })();
 
   return () => { cancelled = true; };
 }, [authToken, allLeads]);
+
 
 
     const refreshLabels = async () => {
@@ -530,64 +542,73 @@ const groupedCompanies = filteredLeads.reduce((acc, lead) => {
   ? allCompanies.find((c) => c.company_name === selectedCompany)
   : null;
 
-  useEffect(() => {
+  // boven in je component: een kleine cache is handig
+// const geocodeCacheRef = useRef(new Map());  // heb je deze nog niet, voeg 'm toe
+
+useEffect(() => {
   if (!selectedCompanyData) {
     setMapCoords(null);
     return;
   }
 
-  // 🧭 Stap 1: eerst adres gebruiken
-  const straat = selectedCompanyData.domain_address || "";
-  const postcode = selectedCompanyData.domain_postal_code || "";
-  const stad = selectedCompanyData.domain_city || "";
+  // Altijd geocoden op adres (géén lat/lon fallback)
+  const straat   = selectedCompanyData.domain_address || '';
+  const postcode = selectedCompanyData.domain_postal_code || '';
+  const stad     = selectedCompanyData.domain_city || '';
+  const land     = selectedCompanyData.domain_country || ''; // helpt nauwkeurigheid
 
-  const query = [straat, postcode, stad].filter(Boolean).join(", ");
+  const fullQuery     = [straat, postcode, stad, land].filter(Boolean).join(', ').trim();
+  const fallbackQuery = [postcode, stad, land].filter(Boolean).join(', ').trim();
 
-  if (!query) {
-    // Geen adres? Dan eventueel fallback op lat/lon
-    if (selectedCompanyData.domain_lat && selectedCompanyData.domain_lon) {
-      setMapCoords({
-        lat: selectedCompanyData.domain_lat,
-        lon: selectedCompanyData.domain_lon,
-      });
-    } else {
-      setMapCoords(null);
-    }
+  if (!fullQuery && !fallbackQuery) {
+    setMapCoords(null);
     return;
   }
 
-  // 🔍 Geocode op basis van adres
-  fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json`)
-    .then((res) => res.json())
-    .then((data) => {
-      if (data && data.length > 0) {
-        setMapCoords({
-          lat: data[0].lat,
-          lon: data[0].lon,
-        });
-      } else if (selectedCompanyData.domain_lat && selectedCompanyData.domain_lon) {
-        // Geen geocode-resultaat → fallback op lat/lon
-        setMapCoords({
-          lat: selectedCompanyData.domain_lat,
-          lon: selectedCompanyData.domain_lon,
-        });
-      } else {
-        setMapCoords(null);
-      }
-    })
-    .catch((err) => {
-      console.error("Geocode error:", err);
-      // Bij fout: fallback op lat/lon als beschikbaar
-      if (selectedCompanyData.domain_lat && selectedCompanyData.domain_lon) {
-        setMapCoords({
-          lat: selectedCompanyData.domain_lat,
-          lon: selectedCompanyData.domain_lon,
-        });
-      } else {
-        setMapCoords(null);
-      }
-    });
+  // (optioneel) snelle cache
+  const tryFromCache = (q) => {
+    if (!q) return false;
+    const hit = geocodeCacheRef.current?.get(q);
+    if (hit?.lat && hit?.lon) {
+      setMapCoords({ lat: hit.lat, lon: hit.lon });
+      return true;
+    }
+    return false;
+  };
+  if (tryFromCache(fullQuery) || tryFromCache(fallbackQuery)) return;
+
+  let cancelled = false;
+
+  const doGeocode = async (q) => {
+    if (!q) return null;
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 2500);
+    try {
+      const res = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`, { signal: controller.signal });
+      clearTimeout(t);
+      if (!res.ok) return null;
+      const json = await res.json();
+      const lat = json?.lat, lon = json?.lon;
+      if (lat && lon && geocodeCacheRef.current) geocodeCacheRef.current.set(q, { lat, lon });
+      return lat && lon ? { lat, lon } : null;
+    } catch {
+      clearTimeout(t);
+      return null;
+    }
+  };
+
+  (async () => {
+    // 1) Volledig adres
+    let coords = await doGeocode(fullQuery);
+    // 2) Fallback naar postcode + stad (+ land)
+    if (!coords) coords = await doGeocode(fallbackQuery);
+
+    if (!cancelled) setMapCoords(coords || null);
+  })();
+
+  return () => { cancelled = true; };
 }, [selectedCompanyData]);
+
 
 
 const filteredActivities = filteredLeads.filter(
@@ -1462,19 +1483,19 @@ if (leadRating >= 80) {
 <button
   onClick={() => {
     setOpenNoteFor(selectedCompanyData.company_domain);
-    setNoteDraft(selectedCompanyData.note || '');
+    setNoteDraft(notesByDomain[selectedCompanyData.company_domain] || '');
   }}
   className="mt-4 px-3 py-1 border border-gray-300 rounded-lg hover:bg-gray-100 transition"
 >
-  {selectedCompanyData.note ? 'Notitie bewerken' : 'Notitie toevoegen'}
+  {notesByDomain[selectedCompanyData.company_domain] ? 'Notitie bewerken' : 'Notitie toevoegen'}
 </button>
 
-{/* Mini‑preview van bestaande notitie (1 regel) */}
-{selectedCompanyData.note && (
+{notesByDomain[selectedCompanyData.company_domain] && (
   <p className="text-xs text-gray-500 mt-1 line-clamp-1">
-    {selectedCompanyData.note}
+    {notesByDomain[selectedCompanyData.company_domain]}
   </p>
 )}
+
 {/* ─────────────────────────────────────────────── */}
 
 
@@ -1492,47 +1513,36 @@ if (leadRating >= 80) {
               <button
   onClick={async () => {
     try {
-      const res = await fetch('/api/lead-note', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-        },
-        body: JSON.stringify({
-          company_domain: openNoteFor,
-          note: noteDraft,
-        }),
-      });
+  const res = await fetch('/api/lead-note', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    },
+    body: JSON.stringify({
+      company_domain: openNoteFor,
+      note: noteDraft,
+    }),
+  });
 
-      // Fout tonen en stoppen
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        alert(`Opslaan mislukt: ${err.error || res.status}`);
-        return;
-      }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(`Opslaan mislukt: ${err.error || res.status}`);
+    return;
+  }
 
-      const json = await res.json();
-      const updated_at = json?.updated_at ?? null;
+  const json = await res.json();
+  const updated_at = json?.updated_at ?? null;
 
-      // "Laatst bewerkt" timestamp bijwerken
-      setNoteUpdatedAt(prev => ({
-        ...prev,
-        [openNoteFor]: updated_at,
-      }));
+  // Update maps, niet allLeads
+  setNotesByDomain(prev => ({ ...prev, [openNoteFor]: noteDraft }));
+  setNoteUpdatedAt(prev => ({ ...prev, [openNoteFor]: updated_at }));
 
-      // Alleen de note in je leads‑lijst updaten
-      setAllLeads(prev =>
-        prev.map(l =>
-          l.company_domain === openNoteFor
-            ? { ...l, note: noteDraft }
-            : l
-        )
-      );
+  setOpenNoteFor(null);
+} catch (e) {
+  alert(`Opslaan mislukt: ${e?.message || e}`);
+}
 
-      setOpenNoteFor(null);
-    } catch (e) {
-      alert(`Opslaan mislukt: ${e?.message || e}`);
-    }
   }}
   className="bg-blue-600 text-white px-4 py-1.5 rounded-lg hover:bg-blue-700 transition"
 >
@@ -1542,41 +1552,39 @@ if (leadRating >= 80) {
              <button
   onClick={async () => {
     try {
-      const delRes = await fetch('/api/lead-note', {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-        },
-        body: JSON.stringify({ company_domain: openNoteFor }),
-      });
+  const delRes = await fetch('/api/lead-note', {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    },
+    body: JSON.stringify({ company_domain: openNoteFor }),
+  });
 
-      // Fout tonen en stoppen
-      if (!delRes.ok) {
-        const err = await delRes.json().catch(() => ({}));
-        alert(`Verwijderen mislukt: ${err.error || delRes.status}`);
-        return;
-      }
+  if (!delRes.ok) {
+    const err = await delRes.json().catch(() => ({}));
+    alert(`Verwijderen mislukt: ${err.error || delRes.status}`);
+    return;
+  }
 
-      // Note leegmaken en "laatst bewerkt" weghalen
-      setAllLeads(prev =>
-        prev.map(l =>
-          l.company_domain === openNoteFor
-            ? { ...l, note: '' }
-            : l
-        )
-      );
+  // Maps opschonen
+  setNotesByDomain(prev => {
+    const next = { ...prev };
+    delete next[openNoteFor];
+    return next;
+  });
 
-      setNoteUpdatedAt(prev => {
-        const copy = { ...prev };
-        delete copy[openNoteFor];
-        return copy;
-      });
+  setNoteUpdatedAt(prev => {
+    const next = { ...prev };
+    delete next[openNoteFor];
+    return next;
+  });
 
-      setOpenNoteFor(null);
-    } catch (e) {
-      alert(`Verwijderen mislukt: ${e?.message || e}`);
-    }
+  setOpenNoteFor(null);
+} catch (e) {
+  alert(`Verwijderen mislukt: ${e?.message || e}`);
+}
+
   }}
   className="border border-gray-300 px-4 py-1.5 rounded-lg hover:bg-gray-100 transition"
 >
@@ -1605,34 +1613,32 @@ if (leadRating >= 80) {
       src={`https://www.openstreetmap.org/export/embed.html?bbox=${parseFloat(mapCoords.lon) - 0.01},${parseFloat(mapCoords.lat) - 0.01},${parseFloat(mapCoords.lon) + 0.01},${parseFloat(mapCoords.lat) + 0.01}&marker=${mapCoords.lat},${mapCoords.lon}`}
     />
   ) : (
-<div className="p-2 animate-pulse">
-  <div className="h-6 w-1/3 bg-gray-200 rounded mb-2" />
-  <div className="h-40 w-full bg-gray-200 rounded" />
-</div>
+    <div className="p-4 text-sm text-gray-500 flex items-center justify-center h-full">
+      Geen kaart beschikbaar.
+    </div>
   )}
 </div>
+
 
           </div>
         </>
       )}
 
  {/* ─── Weergave opgeslagen notitie ─────────────── */}
-       {selectedCompanyData.note && (
-         <div className="mb-4 p-4 bg-white border border-gray-200 rounded-lg text-gray-700">
-           <strong>
-  Notitie (laatst bewerkt:{' '}
-  {
-    noteUpdatedAt[selectedCompanyData.company_domain]
-      ? formatDutchDateTime(noteUpdatedAt[selectedCompanyData.company_domain])
-      : '—'
-  })
-</strong>
-
-           <p className="mt-1 italic whitespace-pre-wrap">
-             {selectedCompanyData.note}
-           </p>
-         </div>
-       )}
+       {notesByDomain[selectedCompanyData?.company_domain] && (
+  <div className="mb-4 p-4 bg-white border border-gray-200 rounded-lg text-gray-700">
+    <strong>
+      Notitie (laatst bewerkt:{' '}
+      {noteUpdatedAt[selectedCompanyData.company_domain]
+        ? formatDutchDateTime(noteUpdatedAt[selectedCompanyData.company_domain])
+        : '—'}
+      )
+    </strong>
+    <p className="mt-1 italic whitespace-pre-wrap">
+      {notesByDomain[selectedCompanyData.company_domain]}
+    </p>
+  </div>
+)}
        {/* ──────────────────────────────────────────────── */}
 
       <h2 className="text-lg font-semibold text-gray-800 mb-2">
