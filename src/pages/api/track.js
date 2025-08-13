@@ -1,14 +1,17 @@
 import { createClient } from '@supabase/supabase-js';
 import getRawBody from 'raw-body';
+import jwt from 'jsonwebtoken';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-export const config = {
-  api: { bodyParser: false }
-};
+// JWT ingest auth (noodrem mogelijk via env)
+const REQUIRE_TOKEN = process.env.REQUIRE_TOKEN !== 'false';
+const INGEST_JWT_SECRET = process.env.INGEST_JWT_SECRET;
+
+export const config = { api: { bodyParser: false } };
 
 /* ----------------------- Helpers ----------------------- */
 
@@ -23,7 +26,7 @@ function isValidDomain(domain) {
   );
 }
 
-// Interne pagina’s (let op: GEEN '/' -> homepage wordt niet uitgefilterd)
+// Interne pagina’s (GEEN '/' -> homepage niet uitfilteren)
 function isInternalPage(pageUrl) {
   try {
     const url = new URL(pageUrl, 'https://fallback.nl');
@@ -32,12 +35,11 @@ function isInternalPage(pageUrl) {
       (p) => url.pathname === p || url.pathname.startsWith(p + '/')
     );
   } catch {
-    // Onparseerbaar -> overslaan om rommel te voorkomen
-    return true;
+    return true; // onparseerbaar -> overslaan
   }
 }
 
-// Duur normaliseren (altijd een nummer tussen 0 en 1800s)
+// Duur normaliseren
 function normalizeDuration(d) {
   const n = Number(d);
   if (!Number.isFinite(n) || n < 0) return 0;
@@ -45,7 +47,7 @@ function normalizeDuration(d) {
   return Math.min(1800, rounded);
 }
 
-// URL normaliseren: zelfde pagina → zelfde key (zonder query/hash, zonder trailing slash)
+// URL normaliseren (zonder query/hash, zonder trailing slash)
 function canonicalizeUrl(input) {
   try {
     const u = new URL(input, 'https://fallback.nl');
@@ -96,39 +98,90 @@ function mapCacheToLead(ipCache) {
   };
 }
 
+// IP helpers (IPv4/IPv6 + proxies)
+function isPrivate(ip){
+  if (!ip) return true;
+  ip = ip.replace(/^::ffff:/,'');
+  if (ip === '127.0.0.1' || ip === '::1') return true;
+  if (/^10\./.test(ip)) return true;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(ip)) return true;
+  if (/^192\.168\./.test(ip)) return true;
+  if (/^(fc|fd)/i.test(ip)) return true; // ULA
+  return false;
+}
+function firstPublicIp(xff, remoteAddr){
+  const list = []
+    .concat((xff || '').split(',').map(s=>s.trim()).filter(Boolean))
+    .concat(remoteAddr || []);
+  for (const cand of list){
+    const ip = cand.replace(/^::ffff:/,'');
+    if (!isPrivate(ip)) return ip;
+  }
+  return (remoteAddr || '').replace(/^::ffff:/,'') || null;
+}
+
 /* ----------------------- Handler ----------------------- */
 
 export default async function handler(req, res) {
+  // CORS (voeg Authorization toe)
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Site-Id');
     return res.status(200).end();
   }
-
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Body lezen
-  let body = {};
+  // Lees RAW body (prima, ook zonder HMAC)
+  let rawBody = '';
   try {
-    const rawBody = await getRawBody(req, {
+    rawBody = await getRawBody(req, {
       encoding: true,
       length: req.headers['content-length'],
       limit: '1mb'
     });
+  } catch (err) {
+    console.error('❌ raw-body error:', err.message);
+    return res.status(400).json({ error: 'Invalid body' });
+  }
+
+  // Bearer-token (JWT) i.p.v. HMAC
+  let tokenPayload = null;
+  if (REQUIRE_TOKEN) {
+    const auth = req.headers['authorization'] || '';
+    if (!auth.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'missing bearer token' });
+    }
+    const token = auth.slice('Bearer '.length);
+    try {
+      tokenPayload = jwt.verify(token, INGEST_JWT_SECRET, { algorithms: ['HS256'] });
+      if (!tokenPayload?.site_id || !tokenPayload?.user_id) {
+        return res.status(401).json({ error: 'invalid token payload' });
+      }
+    } catch {
+      return res.status(401).json({ error: 'bad token' });
+    }
+  }
+
+  // JSON parsen
+  let body = {};
+  try {
     body = JSON.parse(rawBody);
   } catch (err) {
     console.error('❌ JSON parse error:', err.message);
     return res.status(400).json({ error: 'Invalid JSON body' });
   }
 
+  // (optioneel) header-site (alleen voor logging/safety)
+  const siteIdHdr = req.headers['x-site-id'];
+
   const {
     projectId,
-    siteId,
+    siteId: siteIdFromBody,
     pageUrl,
     anonId,
     sessionId,
@@ -138,40 +191,37 @@ export default async function handler(req, res) {
     utmCampaign,
     referrer,
     validationTest,
-    eventType // "load" of "end" (kan ontbreken bij oudere scripts)
+    eventType // "load" of "end"
   } = body;
+
+  // Kies effectieve user/site (body → token → header)
+  const userId = projectId || tokenPayload?.user_id || null;
+  const siteId = siteIdFromBody || tokenPayload?.site_id || siteIdHdr || null;
 
   const canonicalPageUrl = canonicalizeUrl(pageUrl);
   const isValidation = validationTest === true;
 
   // Basis validaties
-  if (!projectId || !pageUrl || !siteId) {
-    return res
-      .status(400)
-      .json({ error: 'projectId, siteId and pageUrl are required' });
+  if (!userId || !pageUrl || !siteId) {
+    return res.status(400).json({ error: 'projectId/userId, siteId and pageUrl are required' });
   }
   if (!isValidDomain(siteId)) {
-    return res
-      .status(200)
-      .json({ success: false, message: 'Invalid siteId - ignored' });
+    return res.status(200).json({ success: false, message: 'Invalid siteId - ignored' });
   }
-  if (isInternalPage(pageUrl) && !isValidation) {
-    return res
-      .status(200)
-      .json({ success: true, skipped: true, reason: 'internal page' });
+  if (!isValidation && isInternalPage(pageUrl)) {
+    return res.status(200).json({ success: true, skipped: true, reason: 'internal page' });
   }
 
   // IP bepalen
-  const ipAddress =
-    req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
-    req.socket?.remoteAddress ||
-    null;
-
+  const ipAddress = firstPublicIp(
+    req.headers['x-forwarded-for'],
+    req.socket?.remoteAddress || req.connection?.remoteAddress
+  );
   if (!ipAddress) {
     return res.status(400).json({ error: 'Missing IP address' });
   }
 
-  // sites bijhouden (optioneel)
+  // sites bijhouden (zoals je had)
   try {
     const { data: existingSite, error: siteErr } = await supabase
       .from('sites')
@@ -180,10 +230,10 @@ export default async function handler(req, res) {
       .maybeSingle();
 
     if (!existingSite && !siteErr) {
-      const cleanedDomain = siteId.replace(/^www\./, '');
+      const cleanedDomain = String(siteId).replace(/^www\./, '');
       await supabase.from('sites').insert({
         site_id: siteId,
-        user_id: projectId,
+        user_id: userId,
         domain_name: cleanedDomain
       });
     }
@@ -191,7 +241,7 @@ export default async function handler(req, res) {
     console.warn('⚠️ sites insert check faalde:', e.message);
   }
 
-  // Enrichment uit cache ophalen (volledige rij)
+  // Enrichment uit cache
   let ipCache = null;
   try {
     const { data } = await supabase
@@ -207,11 +257,9 @@ export default async function handler(req, res) {
   const confidenceScore =
     enrichment.confidence === undefined ? null : enrichment.confidence;
   const confidenceReason =
-    enrichment.confidence_reason === undefined
-      ? null
-      : enrichment.confidence_reason;
+    enrichment.confidence_reason === undefined ? null : enrichment.confidence_reason;
 
-  // ---- Fire-and-forget enrichment trigger (alleen als cache leeg of incompleet)
+  // ---- Queue insert i.p.v. fire-and-forget enrich ----
   try {
     const needsEnrichment =
       !ipCache ||
@@ -236,39 +284,40 @@ export default async function handler(req, res) {
       ));
 
     if (needsEnrichment) {
-      const base = process.env.NEXT_PUBLIC_TRACKING_DOMAIN || 'http://localhost:3000';
-      // Niet wachten — laat de tracker snel terugkeren
-      fetch(`${base}/api/lead`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const { error: qErr } = await supabase
+        .from('enrichment_queue')
+        .insert({
           ip_address: ipAddress,
-          user_id: projectId,
-          page_url: canonicalPageUrl, // canonisch meest nuttig
-          anon_id: anonId || null,
-          referrer: referrer || null,
-          utm_source: utmSource || null,
-          utm_medium: utmMedium || null,
-          utm_campaign: utmCampaign || null,
-          duration_seconds: normalizeDuration(durationSeconds),
-          site_id: siteId
-        })
-      }).catch(() => {});
+          user_id: userId,
+          site_id: siteId,
+          page_url: canonicalPageUrl,
+          payload: {
+            anonId: anonId || null,
+            referrer: referrer || null,
+            utmSource: utmSource || null,
+            utmMedium: utmMedium || null,
+            utmCampaign: utmCampaign || null,
+            durationSeconds: normalizeDuration(durationSeconds)
+          }
+        });
+
+      if (qErr) console.warn('⚠️ queue insert faalde:', qErr.message);
     }
   } catch (e) {
-    console.warn('⚠️ enrichment trigger faalde:', e.message);
+    console.warn('⚠️ queue insert exception:', e.message);
   }
 
   // Health ping
+  const nowIso = new Date().toISOString();
   if (isValidation) {
     await supabase
       .from('profiles')
-      .update({ last_tracking_ping: new Date().toISOString() })
-      .eq('id', projectId);
+      .update({ last_tracking_ping: nowIso })
+      .eq('id', userId);
     return res.status(200).json({ success: true, validation: true });
   }
 
-  // -------- Dedup-strategie (met NULL-fallback) --------
+  // -------- Dedup (zoals je had) --------
   let recent = null;
   let recentErr = null;
 
@@ -289,7 +338,6 @@ export default async function handler(req, res) {
       .order('created_at', { ascending: false })
       .limit(1));
   } else {
-    // Laatste redmiddel: dedup op IP + page_url binnen 10s window
     const tenSecAgo = new Date(Date.now() - 10_000).toISOString();
     ({ data: recent, error: recentErr } = await supabase
       .from('leads')
@@ -301,33 +349,28 @@ export default async function handler(req, res) {
       .limit(1));
   }
 
-  const nowIso = new Date().toISOString();
   const dur = normalizeDuration(durationSeconds);
 
-  // Als er al een rij bestaat
   if (!recentErr && recent && recent.length > 0) {
     const last = recent[0];
     const lastCreated = new Date(last.created_at).getTime();
     const ageMs = Date.now() - lastCreated;
 
-    // 1) "load" binnen 10s -> zie als dubbel en sla over
     if (eventType === 'load' && ageMs < 10_000) {
       await supabase
         .from('profiles')
         .update({ last_tracking_ping: nowIso })
-        .eq('id', projectId);
+        .eq('id', userId);
       return res
         .status(200)
         .json({ success: true, deduped: true, reason: 'load duplicate' });
     }
 
-    // 2) "end" -> update duur (indien groter) en vul enrichment aan als het nu bekend is
     if (eventType === 'end') {
       const updates = {};
       const prevDur = Number(last.duration_seconds ?? 0);
       if (dur > prevDur) updates.duration_seconds = dur;
 
-      // Vul enrichment bij als we eerder nog niets hadden (of er nu meer is)
       const hasEnrichmentAlready =
         !!last.company_domain || !!last.company_name || !!last.domain_lat;
       if (!hasEnrichmentAlready && ipCache) {
@@ -345,13 +388,12 @@ export default async function handler(req, res) {
       await supabase
         .from('profiles')
         .update({ last_tracking_ping: nowIso })
-        .eq('id', projectId);
+        .eq('id', userId);
       return res.status(200).json({ success: true, updated: true });
     }
-    // Valt niet onder bovenstaande -> laat nieuwe insert toe
+    // anders: laat nieuwe insert toe
   }
 
-  // 🔎 Fallback: "end" maar geen recent record gevonden → probeer alsnog op sessie+canonieke URL
   if (eventType === 'end') {
     const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
 
@@ -370,15 +412,15 @@ export default async function handler(req, res) {
         if (dur > prevDur) {
           await supabase.from('leads').update({ duration_seconds: dur }).eq('id', fb[0].id);
         }
-        await supabase.from('profiles').update({ last_tracking_ping: nowIso }).eq('id', projectId);
+        await supabase.from('profiles').update({ last_tracking_ping: nowIso }).eq('id', userId);
         return res.status(200).json({ success: true, updated: true, fallbackMatched: true });
       }
     }
   }
 
-  // Nieuwe pageview inserten (meestal bij "load")
+  // Nieuwe pageview
   const insertPayload = {
-    user_id: projectId,
+    user_id: userId,
     site_id: siteId,
     page_url: canonicalPageUrl,
     ip_address: ipAddress,
@@ -393,7 +435,7 @@ export default async function handler(req, res) {
     utm_campaign: utmCampaign || null,
     referrer: referrer || null,
     timestamp: nowIso,
-    ...enrichment // alle verrijkte velden uit cache (als beschikbaar)
+    ...enrichment
   };
 
   const { data: inserted, error: insertErr } = await supabase
@@ -406,7 +448,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: insertErr.message });
   }
 
-  // 🔔 KvK-lookup (alleen als we een naam hebben)
+  // KvK-lookup (ongewijzigd)
   try {
     const lead = inserted?.[0];
     const companyNameForKvk = insertPayload.company_name || lead?.company_name || null;
@@ -414,10 +456,7 @@ export default async function handler(req, res) {
       fetch(`${process.env.NEXT_PUBLIC_TRACKING_DOMAIN || 'http://localhost:3000'}/api/kvk-lookup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lead_id: lead.id,
-          company_name: companyNameForKvk
-        })
+        body: JSON.stringify({ lead_id: lead.id, company_name: companyNameForKvk })
       }).catch(() => {});
     }
   } catch (e) {
@@ -427,7 +466,71 @@ export default async function handler(req, res) {
   await supabase
     .from('profiles')
     .update({ last_tracking_ping: nowIso })
-    .eq('id', projectId);
+    .eq('id', userId);
+
+// Plan B: verwerk 1 pending enrichment job als fallback
+try {
+  const { data: job } = await supabase
+    .from('enrichment_queue')
+    .select('*')
+    .eq('status', 'pending')
+    .lt('created_at', new Date(Date.now() - 10 * 60 * 1000).toISOString()) // ouder dan 10 min
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (job) {
+    await supabase
+      .from('enrichment_queue')
+      .update({ status: 'running', updated_at: new Date().toISOString() })
+      .eq('id', job.id)
+      .eq('status', 'pending');
+
+    const p = job.payload && typeof job.payload === 'object' ? job.payload : {};
+    const body = {
+      ip_address: job.ip_address,
+      user_id: job.user_id,
+      page_url: job.page_url,
+      anon_id: p.anonId ?? null,
+      referrer: p.referrer ?? null,
+      utm_source: p.utmSource ?? null,
+      utm_medium: p.utmMedium ?? null,
+      utm_campaign: p.utmCampaign ?? null,
+      duration_seconds: p.durationSeconds ?? 0,
+      site_id: job.site_id
+    };
+
+    const BASE_URL =
+      process.env.NEXT_PUBLIC_TRACKING_DOMAIN
+      || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+
+    const resp = await fetch(`${BASE_URL}/api/lead`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (resp.ok) {
+      await supabase
+        .from('enrichment_queue')
+        .update({ status: 'done', updated_at: new Date().toISOString() })
+        .eq('id', job.id);
+    } else {
+      await supabase
+        .from('enrichment_queue')
+        .update({
+          status: 'error',
+          attempts: (job.attempts || 0) + 1,
+          error_text: `Fallback lead ${resp.status}`,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', job.id);
+    }
+  }
+} catch (e) {
+  console.warn('⚠️ Fallback enrichment faalde:', e.message);
+}
+
 
   return res.status(200).json({ success: true });
 }

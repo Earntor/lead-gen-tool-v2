@@ -1,119 +1,109 @@
 (function () {
   try {
-    const currentHost = window.location.hostname;
-    if (currentHost.endsWith("vercel.app")) {
-      // Niet tracken op je eigen dashboard
-      return;
-    }
+    // Basis-URL = waar dit script vandaan komt
+    const ORIGIN = new URL((document.currentScript && document.currentScript.src) || window.location.href).origin;
+    const TRACK_URL = ORIGIN + '/api/track';
+    const TOKEN_URL = ORIGIN + '/api/ingest-token';
+
+    // Niet tracken op je eigen dashboard
+    if (window.location.hostname.endsWith('vercel.app')) return;
 
     const scriptTag = document.currentScript;
-    const projectId = scriptTag.getAttribute("data-project-id");
-    if (!projectId) return;
-
-    const siteId = window.location.hostname; // automatisch
-    const baseUrl = new URL(scriptTag.src).origin;
+    const projectId = scriptTag?.getAttribute('data-project-id') || null;
+    const siteId = window.location.hostname;
 
     // Anonieme ID per browser
-    let anonId = localStorage.getItem("anonId");
-    if (!anonId) {
-      anonId = crypto.randomUUID();
-      localStorage.setItem("anonId", anonId);
-    }
+    let anonId = localStorage.getItem('anonId');
+    if (!anonId) { anonId = crypto.randomUUID(); localStorage.setItem('anonId', anonId); }
 
     // Session ID per tab
-    let sessionId = sessionStorage.getItem("sessionId");
-    if (!sessionId) {
-      sessionId = crypto.randomUUID();
-      sessionStorage.setItem("sessionId", sessionId);
-    }
+    let sessionId = sessionStorage.getItem('sessionId');
+    if (!sessionId) { sessionId = crypto.randomUUID(); sessionStorage.setItem('sessionId', sessionId); }
 
     const pageUrl = window.location.href;
     const referrer = document.referrer || null;
 
     const utm = new URLSearchParams(window.location.search);
-    const utmSource = utm.get("utm_source") || null;
-    const utmMedium = utm.get("utm_medium") || null;
-    const utmCampaign = utm.get("utm_campaign") || null;
+    const utmSource = utm.get('utm_source') || null;
+    const utmMedium = utm.get('utm_medium') || null;
+    const utmCampaign = utm.get('utm_campaign') || null;
 
-    // Starttijd per pagina (nauwkeuriger dan Date.now)
     const startTime = performance.now();
-
-    // ⛔️ Zorg dat "end" maar één keer wordt verzonden
     let ended = false;
+    let ingestToken = null;
 
-    function sendViaFetch(payload) {
-      fetch(`${baseUrl}/api/track`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        keepalive: true
-      }).catch(() => {});
+    // 1) Kort-levend token ophalen (server tekent JWT)
+    async function getToken() {
+      try {
+        const r = await fetch(
+          `${TOKEN_URL}?site=${encodeURIComponent(siteId)}&projectId=${encodeURIComponent(projectId || '')}`,
+          { method: 'GET', cache: 'no-store', credentials: 'omit' }
+        );
+        if (!r.ok) return;
+        const j = await r.json();
+        ingestToken = j.token || null;
+      } catch { /* stil */ }
     }
 
-    // ✅ Betrouwbare verzending bij afsluiten/weggaan
-    function sendEndOnce(reason) {
+    // 2) Payload helper
+    function basePayload(extra = {}) {
+      return {
+        projectId,
+        siteId,
+        pageUrl,
+        referrer,
+        anonId,
+        sessionId,
+        utmSource,
+        utmMedium,
+        utmCampaign,
+        userAgent: navigator.userAgent || null,
+        dnt: navigator.doNotTrack || null,
+        chUa: (navigator.userAgentData && navigator.userAgentData.brands) ? navigator.userAgentData.brands : null,
+        ...extra
+      };
+    }
+
+    // 3) Versturen met Bearer token (geen HMAC headers meer nodig)
+    async function sendSigned(bodyObj) {
+      if (!ingestToken) return; // zonder token niet posten
+      return fetch(TRACK_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${ingestToken}`,
+          'X-Site-Id': siteId
+        },
+        body: JSON.stringify(bodyObj),
+        keepalive: true // werkt netjes tijdens unload
+      }).catch(()=>{});
+    }
+
+    async function sendLoad() {
+      await sendSigned(basePayload({ durationSeconds: 0, eventType: 'load' }));
+    }
+
+    async function sendEndOnce(reason) {
       if (ended) return;
       ended = true;
       const seconds = Math.max(0, Math.round((performance.now() - startTime) / 1000));
-      const payload = {
-        projectId,
-        siteId,
-        pageUrl,
-        referrer,
-        anonId,
-        sessionId,
-        utmSource,
-        utmMedium,
-        utmCampaign,
-        durationSeconds: seconds,
-        eventType: "end",
-        endReason: reason
-      };
-
-      // Probeer eerst sendBeacon (werkt tijdens unload). Lukt dat niet: fallback naar fetch.
-      try {
-        const ok = navigator.sendBeacon(
-          `${baseUrl}/api/track`,
-          new Blob([JSON.stringify(payload)], { type: "application/json" })
-        );
-        if (!ok) sendViaFetch(payload);
-      } catch {
-        sendViaFetch(payload);
-      }
+      await sendSigned(basePayload({ durationSeconds: seconds, eventType: 'end', endReason: reason }));
     }
 
-    function sendLoad() {
-      const payload = {
-        projectId,
-        siteId,
-        pageUrl,
-        referrer,
-        anonId,
-        sessionId,
-        utmSource,
-        utmMedium,
-        utmCampaign,
-        durationSeconds: 0,
-        eventType: "load"
-      };
-      sendViaFetch(payload);
-    }
+    // Start: eerst token, dan 'load'
+    (async () => {
+      await getToken();
+      if (document.readyState === 'complete' || document.readyState === 'interactive') sendLoad();
+      else window.addEventListener('DOMContentLoaded', () => { sendLoad(); }, { once: true });
+    })();
 
-    // ✅ 1) Meteen een pageview sturen bij page load (duur = 0)
-    if (document.readyState === "complete" || document.readyState === "interactive") {
-      sendLoad();
-    } else {
-      window.addEventListener("DOMContentLoaded", () => sendLoad(), { once: true });
-    }
-
-    // ✅ 2) Bij verlaten/tab verbergen nog een keer sturen met werkelijke duur (één keer!)
-    // Gebruik pagehide (betrouwbaarder in Safari/iOS); visibilitychange als vangnet
-    window.addEventListener("pagehide", () => sendEndOnce("pagehide"));
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "hidden") sendEndOnce("visibilitychange");
+    // Einde: duur sturen (één keer)
+    window.addEventListener('pagehide', () => { sendEndOnce('pagehide'); });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') sendEndOnce('visibilitychange');
     });
 
   } catch (err) {
-    console.warn("Tracking script error:", err);
+    console.warn('Tracking script error:', err);
   }
 })();
