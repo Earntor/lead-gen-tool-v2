@@ -9,11 +9,5 @@
         }
       ]
     }
-  ],
-  "crons": [
-    {
-      "path": "/api/worker-enrich",
-      "schedule": "*/5 * * * *"
-    }
   ]
 }
