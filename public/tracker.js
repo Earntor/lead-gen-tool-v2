@@ -28,7 +28,7 @@
     const utmMedium = utm.get('utm_medium') || null;
     const utmCampaign = utm.get('utm_campaign') || null;
 
-    const startTime = performance.now();
+const startTime = Date.now();
     let ended = false;
     let ingestToken = null;
 
@@ -67,21 +67,30 @@
     // 3) Versturen met Bearer token (geen HMAC headers meer nodig)
     async function sendSigned(bodyObj) {
       if (!ingestToken) return; // zonder token niet posten
-      return fetch(TRACK_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${ingestToken}`,
-          'X-Site-Id': siteId
-        },
-        body: JSON.stringify(bodyObj),
-        keepalive: true // werkt netjes tijdens unload
-      }).catch(()=>{});
+      const payload = JSON.stringify(bodyObj);
+if (bodyObj.eventType === 'end' && navigator.sendBeacon) {
+  // Betrouwbaar bij tab sluiten / navigeren
+  const blob = new Blob([payload], { type: 'application/json' });
+  navigator.sendBeacon(TRACK_URL, blob);
+  return;
+}
+return fetch(TRACK_URL, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${ingestToken}`,
+    'X-Site-Id': siteId
+  },
+  body: payload,
+  keepalive: true
+}).catch(()=>{});
+
     }
 
     async function sendLoad() {
-      await sendSigned(basePayload({ durationSeconds: 0, eventType: 'load' }));
-    }
+  await sendSigned(basePayload({ eventType: 'load' }));
+}
+
 
     async function sendEndOnce(reason) {
       if (ended) return;

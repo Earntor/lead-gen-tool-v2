@@ -22,6 +22,71 @@ function pruneEmpty(obj) {
   return out;
 }
 
+// Bekende consumenten-ISPs
+const KNOWN_ISPS = [
+  'Ziggo', 'KPN', 'T-Mobile', 'Vodafone', 'Tele2', 'Delta', 'Freedom Internet', 'Online.nl', 'Odido'
+];
+
+// Enrichment source gelijktrekken
+const ENRICHMENT_SOURCES = {
+  RDNS: 'reverse_dns',
+  TLS: 'tls_cert',
+  HTTP_FETCH: 'http_fetch',
+  FAVICON: 'favicon_hash',
+  HOST_HEADER: 'host_header',
+  FINAL_LIKELY: 'final_likely',
+  GMAPS: 'google_maps',
+  SCRAPE: 'website_scrape',
+  ISP_BASELINE: 'isp_baseline',
+  IPAPI_BASELINE: 'ipapi_baseline',
+  CACHE_REUSE: 'cache_reuse'
+};
+
+// confidence reason gelijktrekken
+const CONFIDENCE_REASONS = {
+  RDNS: 'Reverse DNS match',
+  TLS: 'TLS-certificaat CN/SAN domeinextractie',
+  HTTP_FETCH: 'HTTP fetch domeinextractie',
+  FAVICON: 'Favicon hash match',
+  HOST_HEADER: 'Host header probe match',
+  FINAL_LIKELY: 'Gekozen op basis van gecombineerde signalen',
+  GMAPS: 'Google Maps bedrijfsverrijking',
+  SCRAPE: 'Website scraping',
+  ISP_BASELINE: 'Baseline ISP-gegevens',
+  IPAPI_BASELINE: 'Baseline IP-API-gegevens',
+  CACHE_REUSE: 'Herbruikte domeinverrijking uit cache'
+};
+
+
+// Hostingproviders
+const HOSTING_DOMAINS = [
+  'sr-srv.net', 'dfn.nl', 'leaseweb.net', 'ovh.net', 'azure.com', 'amazonaws.com',
+  'googleusercontent.com', 'linode.com', 'digitalocean.com', 'hetzner.de'
+];
+
+// Extra blacklist voor reverse DNS (consumenten en irrelevante domeinen)
+const EXTRA_BLACKLIST_DOMAINS = [
+  'kpn.net', 'ziggo.nl', 'glasoperator.nl', 't-mobilethuis.nl', 'chello.nl',
+  'dynamic.upc.nl', 'vodafone.nl', 'versatel', 'msn.com', 'akamaitechnologies.com',
+  'telenet.be', 'myaisfibre.com', 'filterplatform.nl', 'xs4all.nl', 'home.nl',
+  'weserve.nl', 'client.t-mobilethuis.nl', 'starlinkisp.net', 'baremetal.scw.cloud','fbsv','sprious.com', 'your-server.de', 'ip.telfort.nl', 'amazonaws.com', 'dataproviderbot.com', 'apple.com', 'belgacom.be' 
+];
+
+async function logBlockedSignal({ ip_address, domain, source, asname, reason, user_id, page_url, confidence, confidence_reason }) {
+  await supabaseAdmin.from('ignored_ip_log').insert({
+    ip_address,
+    as_name: asname || null,
+    blocked_domain: domain || null,
+    blocked_source: source || null,
+    reason: reason || 'blacklisted in step',
+    confidence: (typeof confidence === 'number' && !Number.isNaN(confidence)) ? confidence : 0.3,
+    confidence_reason: (confidence_reason && confidence_reason.trim()) ? confidence_reason : CONFIDENCE_REASONS.IPAPI_BASELINE,
+    ignored_at: new Date().toISOString(),
+    user_id: user_id || null,
+    page_url: page_url || null
+  });
+}
+
 
 
 // Kleine helpers
@@ -40,6 +105,53 @@ const stripSubdomain = (domain) => {
 
   return clean;
 };
+
+function cleanAndValidateDomain(domain, source, asname, user_id, page_url, ip_address, confidence, confidence_reason) {
+  if (!domain) return null;
+
+  // Strip subdomein + lowercase + ongeldige tekens eruit
+  let cleaned = stripSubdomain(domain)
+    ?.toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9.-]/g, '') || null;
+
+  if (!cleaned) return null;
+
+  // Check blacklist/hosting
+  const isBlocked =
+    HOSTING_DOMAINS.some(dom => cleaned.endsWith(dom)) ||
+    EXTRA_BLACKLIST_DOMAINS.some(dom => cleaned.endsWith(dom));
+
+  if (isBlocked) {
+  console.log(`⛔ Geblokkeerd domein (${source}): ${cleaned}`);
+
+  // 🛡️ Fallback zodat confidence nooit leeg is
+  const safeConfidence = typeof confidence === 'number' && !Number.isNaN(confidence)
+    ? confidence
+    : 0.3;
+
+  const safeConfidenceReason = confidence_reason && confidence_reason.trim()
+    ? confidence_reason: CONFIDENCE_REASONS.IPAPI_BASELINE;
+
+  logBlockedSignal({
+    ip_address,
+    domain: cleaned,
+    source,
+    asname,
+    reason: 'blacklisted domain in cleanup',
+    user_id,
+    page_url,
+    confidence: safeConfidence,
+    confidence_reason: safeConfidenceReason
+  });
+  return null;
+}
+
+
+
+  return cleaned;
+}
+
 
 async function calculateConfidenceByFrequency(ip, domain) {
   const { data, error } = await supabaseAdmin
@@ -143,14 +255,33 @@ export default async function handler(req, res) {
         throw new Error(`IP-API error: ${ipapi.message || 'onbekende fout'}`);
       }
 
-      const ip_country = ipapi.country || null;
-      const ip_city = ipapi.city || null;
-      const ip_postal_code = ipapi.zip || null;
-      const location = ip_city && ipapi.regionName ? `${ip_city}, ${ipapi.regionName}` : ip_country;
+let ip_country = ipapi.country || null;
+let ip_city = ipapi.city || null;
+let ip_postal_code = ipapi.zip || null;
 
-      const knownISPs = ['Ziggo', 'KPN', 'T-Mobile', 'Vodafone', 'Tele2', 'Delta', 'Freedom Internet', 'Online.nl', 'Odido'];
-      const asname = ipapi.asname || '';
-      const isISP = knownISPs.some(isp => asname.toLowerCase().includes(isp.toLowerCase()));
+// Consistente location opbouw
+let location = null;
+if (ip_city && ip_country) {
+  location = ipapi.regionName ? `${ip_city}, ${ipapi.regionName}` : ip_city;
+} else if (ip_country) {
+  location = ip_country;
+}
+
+// Als location bestaat maar city/country niet, vul ze alsnog afgeleid
+if (location && (!ip_city || !ip_country)) {
+  if (!ip_city && ipapi.city) ip_city = ipapi.city;
+  if (!ip_country && ipapi.country) ip_country = ipapi.country;
+}
+
+// Als city/country leeg zijn én geen IP-data → alles null
+if (!ip_city && !ip_country) {
+  location = null;
+}
+
+
+     const asname = ipapi.asname || '';
+const isISP = KNOWN_ISPS.some(isp => asname.toLowerCase().includes(isp.toLowerCase()));
+
 
       if (isISP) {
         console.log('⚠️ Bekende ISP gedetecteerd:', asname);
@@ -196,17 +327,22 @@ export default async function handler(req, res) {
         for (const hostname of hostnames) {
           const lowerHost = hostname.toLowerCase();
           const blacklistKeywords = ['dynamic', 'client', 'customer', 'dsl', 'broadband', 'home', 'pool', 'ip'];
-          const blacklistedDomains = [
-            'kpn.net', 'ziggo.nl', 'glasoperator.nl', 't-mobilethuis.nl', 'chello.nl',
-            'dynamic.upc.nl', 'vodafone.nl', 'versatel', 'msn.com', 'akamaitechnologies.com',
-            'sr-srv.net', 'telenet.be', 'myaisfibre.com', 'filterplatform.nl','xs4all.nl', 'home.nl', 'dfn.nl', 'weserve.nl', 'client.t-mobilethuis.nl', 'your-server.de', 'ip.telfort.nl'
-          ];
 
         const hasBlacklisted = blacklistKeywords.some(k => lowerHost.includes(k));
         if (hasBlacklisted) continue;
 
-        const extracted = stripSubdomain(hostname);
-        if (!extracted || blacklistedDomains.includes(extracted)) continue;
+const extracted = cleanAndValidateDomain(
+  hostname,
+  ENRICHMENT_SOURCES.RDNS,
+  asname,
+  user_id,
+  page_url,
+  ip_address,
+  confidence,
+  confidence_reason
+);
+
+if (!extracted) continue;
 
         const enrichmentStub = {
           domain: extracted,
@@ -233,15 +369,18 @@ export default async function handler(req, res) {
         const signal = await logDomainSignal({
           ip_address,
           domain: extracted,
-          source: 'reverse_dns',
+          source: ENRICHMENT_SOURCES.RDNS,
           confidence: score,
           confidence_reason: reason
         });
 
         if (signal) {
           domainSignals.push(signal);
-          company_domain = extracted;
-          enrichment_source = 'reverse_dns';
+company_domain = stripSubdomain(extracted)
+  ?.toLowerCase()
+  .trim()
+  .replace(/[^a-z0-9.-]/g, '') || null;
+          enrichment_source = ENRICHMENT_SOURCES.RDNS;
           confidence = score;
           confidence_reason = reason;
           reverseDnsDomain = hostname;
@@ -273,227 +412,308 @@ export default async function handler(req, res) {
     }
 
     // 🔐 Stap 3 – TLS-certificaatinspectie → SIGNAL
-    try {
-      const certInfo = await getTlsCertificateFromIp(ip_address);
-      if (certInfo && (certInfo.commonName || certInfo.subjectAltName)) {
-        let extracted = null;
+try {
+  const certInfo = await getTlsCertificateFromIp(ip_address);
+  if (certInfo && (certInfo.commonName || certInfo.subjectAltName)) {
+    let extracted = null;
 
-        if (certInfo.commonName?.includes('.')) {
-          extracted = stripSubdomain(certInfo.commonName);
-        }
-
-        if (!extracted && certInfo.subjectAltName) {
-          const matches = certInfo.subjectAltName.match(/DNS:([a-zA-Z0-9.-]+\.[a-z]{2,})/g);
-
-          if (matches && matches.length > 0) {
-            const cleaned = matches
-              .map(m => stripSubdomain(m.replace('DNS:', '').trim()))
-              .filter(Boolean);
-
-            const uniqueDomains = [...new Set(cleaned)];
-            extracted = uniqueDomains.sort((a, b) => a.length - b.length)[0];
-          }
-        }
-
-        if (extracted) {
-          const signal = await logDomainSignal({
-            ip_address,
-            domain: extracted,
-            source: 'tls_cert',
-            confidence: 0.75,
-            confidence_reason: 'TLS-certificaat CN/SAN domeinextractie'
-          });
-
-          if (signal) domainSignals.push(signal);
-
-          await supabaseAdmin.from('tls_log').insert({
-            ip_address,
-            common_name: certInfo.commonName || null,
-            subject_alt_name: certInfo.subjectAltName || null,
-            extracted_domain: extracted,
-            used: true,
-            confidence: 0.75,
-            confidence_reason: 'TLS-certificaat CN/SAN domeinextractie',
-            enrichment_source: 'tls_cert'
-          });
-        }
-      }
-    } catch (e) {
-      console.warn('⚠️ TLS-certificaat ophalen mislukt:', e.message);
+    if (certInfo.commonName?.includes('.')) {
+      extracted = cleanAndValidateDomain(
+        certInfo.commonName,
+        ENRICHMENT_SOURCES.TLS,
+        asname,
+        user_id,
+        page_url,
+        ip_address,
+        confidence,
+        confidence_reason
+      );
     }
+
+    if (!extracted && certInfo.subjectAltName) {
+      const matches = certInfo.subjectAltName.match(/DNS:([a-zA-Z0-9.-]+\.[a-z]{2,})/g);
+      if (matches && matches.length > 0) {
+        const cleaned = matches
+          .map(m => stripSubdomain(m.replace('DNS:', '').trim()))
+          .filter(Boolean);
+
+        const uniqueDomains = [...new Set(cleaned)];
+        const chosen = uniqueDomains.sort((a, b) => a.length - b.length)[0];
+
+        extracted = cleanAndValidateDomain(
+          chosen,
+          ENRICHMENT_SOURCES.TLS,
+          asname,
+          user_id,
+          page_url,
+          ip_address,
+          confidence,
+          confidence_reason
+        );
+      }
+    }
+
+    if (extracted) {
+      const signal = await logDomainSignal({
+        ip_address,
+        domain: extracted,
+        source: ENRICHMENT_SOURCES.TLS,
+        confidence: 0.75,
+        confidence_reason: CONFIDENCE_REASONS.TLS 
+      });
+
+      if (signal) domainSignals.push(signal);
+
+      await supabaseAdmin.from('tls_log').insert({
+        ip_address,
+        common_name: certInfo.commonName || null,
+        subject_alt_name: certInfo.subjectAltName || null,
+        extracted_domain: extracted,
+        used: true,
+        confidence: 0.75,
+        confidence_reason: CONFIDENCE_REASONS.TLS,
+        enrichment_source: ENRICHMENT_SOURCES.TLS
+      });
+    }
+  }
+} catch (e) {
+  console.warn('⚠️ TLS-certificaat ophalen mislukt:', e.message);
+}
 
     // 🌐 Stap 6 – HTTP fetch naar IP → SIGNAL
-    try {
-      const result = await getDomainFromHttpIp(ip_address);
+try {
+  const result = await getDomainFromHttpIp(ip_address);
 
-      const extractedDomain = stripSubdomain(result.extracted_domain);
+  const extractedDomain = cleanAndValidateDomain(
+    result.extracted_domain,
+    ENRICHMENT_SOURCES.HTTP_FETCH,
+    asname,
+    user_id,
+    page_url,
+    ip_address,
+    confidence,
+    confidence_reason
+  );
 
-      await supabaseAdmin.from('http_fetch_log').insert({
-        ip_address,
-        fetched_at: new Date().toISOString(),
-        success: result.success || false,
-        extracted_domain: extractedDomain || null,
-        enrichment_source: result.enrichment_source || null,
-        confidence: result.confidence || null,
-        confidence_reason: result.confidence_reason || null,
-        redirect_location: result.redirect_location || null,
-        og_url: result.og_url || null,
-        html_snippet: result.html_snippet || null,
-        error_message: result.error_message || null
-      });
+  await supabaseAdmin.from('http_fetch_log').insert({
+    ip_address,
+    fetched_at: new Date().toISOString(),
+    success: result.success || false,
+    extracted_domain: extractedDomain || null,
+    enrichment_source: ENRICHMENT_SOURCES.HTTP_FETCH,
+    confidence: result.confidence || null,
+    confidence_reason: result.confidence_reason || CONFIDENCE_REASONS.HTTP_FETCH,
+    redirect_location: result.redirect_location || null,
+    og_url: result.og_url || null,
+    html_snippet: result.html_snippet || null,
+    error_message: result.error_message || null
+  });
 
-      if (result.success && extractedDomain) {
-        const signal = await logDomainSignal({
+  if (result.success && extractedDomain) {
+    const signal = await logDomainSignal({
+      ip_address,
+      domain: extractedDomain,
+      source: ENRICHMENT_SOURCES.HTTP_FETCH,
+      confidence: result.confidence || 0.6,
+      confidence_reason: result.confidence_reason || CONFIDENCE_REASONS.HTTP_FETCH
+    });
+
+    if (signal) domainSignals.push(signal);
+  }
+} catch (e) {
+  console.warn('⚠️ HTTP fetch naar IP mislukte:', e.message);
+
+  await supabaseAdmin.from('http_fetch_log').insert({
+    ip_address,
+    fetched_at: new Date().toISOString(),
+    success: false,
+    error_message: e.message || 'onbekende fout'
+  });
+}
+
+
+   // 🖼️ Stap 7 – favicon hash matching → SIGNAL
+try {
+  const hash = await getFaviconHash(ip_address);
+  if (hash) {
+    const { data: match } = await supabaseAdmin
+      .from('favicon_hash_map')
+      .select('*')
+      .eq('hash', hash)
+      .single();
+
+    const logInserts = [];
+
+    const matchedDomain = match?.domain
+      ? cleanAndValidateDomain(
+          match.domain,
+          ENRICHMENT_SOURCES.FAVICON,
+          asname,
+          user_id,
+          page_url,
           ip_address,
-          domain: extractedDomain,
-          source: result.enrichment_source || 'http_fetch',
-          confidence: result.confidence || 0.6,
-          confidence_reason: result.confidence_reason || 'via HTTP fetch'
-        });
+          confidence,
+          confidence_reason
+        )
+      : null;
 
-        if (signal) domainSignals.push(signal);
-      }
-    } catch (e) {
-      console.warn('⚠️ HTTP fetch naar IP mislukte:', e.message);
-
-      await supabaseAdmin.from('http_fetch_log').insert({
+    if (matchedDomain) {
+      const signal = await logDomainSignal({
         ip_address,
-        fetched_at: new Date().toISOString(),
-        success: false,
-        error_message: e.message || 'onbekende fout'
+        domain: matchedDomain,
+        source: ENRICHMENT_SOURCES.FAVICON,
+        confidence: match.confidence || 0.8,
+confidence_reason: CONFIDENCE_REASONS.FAVICON
       });
+
+      if (signal) domainSignals.push(signal);
+
+      logInserts.push(
+        supabaseAdmin.from('favicon_hash_log').insert({
+          ip_address,
+          favicon_hash: hash,
+          matched_domain: matchedDomain,
+          used: true,
+          confidence: match.confidence || 0.8,
+confidence_reason: CONFIDENCE_REASONS.FAVICON,
+          enrichment_source: ENRICHMENT_SOURCES.FAVICON
+        })
+      );
+    } else {
+      logInserts.push(
+        supabaseAdmin.from('favicon_hash_log').insert({
+          ip_address,
+          favicon_hash: hash,
+          matched_domain: null,
+          used: false,
+          confidence: null,
+          confidence_reason: 'Geen match in favicon_hash_map',
+          enrichment_source: ENRICHMENT_SOURCES.FAVICON
+        })
+      );
     }
 
-    // 🖼️ Stap 7 – favicon hash matching → SIGNAL
-    try {
-      const hash = await getFaviconHash(ip_address);
-      if (hash) {
-        const { data: match } = await supabaseAdmin
-          .from('favicon_hash_map')
-          .select('*')
-          .eq('hash', hash)
-          .single();
+    await Promise.all(logInserts);
+  }
+} catch (err) {
+  console.warn('⚠️ Favicon match faalde:', err.message);
+}
 
-        const logInserts = [];
-
-        const matchedDomain = match?.domain ? stripSubdomain(match.domain) : null;
-
-        if (matchedDomain) {
-          const signal = await logDomainSignal({
-            ip_address,
-            domain: matchedDomain,
-            source: 'favicon_hash',
-            confidence: match.confidence || 0.8,
-            confidence_reason: 'Favicon hash match'
-          });
-
-          if (signal) domainSignals.push(signal);
-
-          logInserts.push(
-            supabaseAdmin.from('favicon_hash_log').insert({
-              ip_address,
-              favicon_hash: hash,
-              matched_domain: matchedDomain,
-              used: true,
-              confidence: match.confidence || 0.8,
-              confidence_reason: 'Favicon hash match'
-            })
-          );
-        } else {
-          logInserts.push(
-            supabaseAdmin.from('favicon_hash_log').insert({
-              ip_address,
-              favicon_hash: hash,
-              matched_domain: null,
-              used: false,
-              confidence: null,
-              confidence_reason: 'Geen match in favicon_hash_map'
-            })
-          );
-        }
-
-        await Promise.all(logInserts);
-      }
-    } catch (err) {
-      console.warn("⚠️ Favicon match faalde:", err.message);
-    }
 
     // 🧪 Stap 8 – Host header probing → SIGNAL
-    try {
-      const { data: fdnsResults } = await supabaseAdmin
-        .from('fdns_lookup')
-        .select('domain')
-        .eq('ip', ip_address);
+try {
+  const { data: fdnsResults } = await supabaseAdmin
+    .from('fdns_lookup')
+    .select('domain')
+    .eq('ip', ip_address);
 
-      const domainsToTry = fdnsResults?.map(r => r.domain).filter(Boolean).slice(0, 5);
+  const domainsToTry = fdnsResults?.map(r => r.domain).filter(Boolean).slice(0, 5);
 
-      if (domainsToTry?.length > 0) {
-        const result = await probeHostHeader(ip_address, domainsToTry);
+  if (domainsToTry?.length > 0) {
+    const result = await probeHostHeader(ip_address, domainsToTry);
 
-        if (result?.domain) {
-          const cleanedDomain = stripSubdomain(result.domain);
+    if (result?.domain) {
+  const cleanedDomain = cleanAndValidateDomain(
+    result.domain,
+    ENRICHMENT_SOURCES.HOST_HEADER,
+    asname,
+    user_id,
+    page_url,
+    ip_address,
+    confidence,
+    confidence_reason
+  );
 
-          const signal = await logDomainSignal({
-            ip_address,
-            domain: cleanedDomain,
-            source: 'host_header',
-            confidence: result.confidence || 0.6,
-            confidence_reason: result.reason || 'Host header probe match'
-          });
+  if (cleanedDomain) {
+    const signal = await logDomainSignal({
+      ip_address,
+      domain: cleanedDomain,
+      source: ENRICHMENT_SOURCES.HOST_HEADER,
+      confidence: result.confidence || 0.6,
+      confidence_reason: result.reason || CONFIDENCE_REASONS.HOST_HEADER
+    });
+    if (signal) domainSignals.push(signal);
+  }
 
-          if (signal) domainSignals.push(signal);
-        }
-      }
-    } catch (e) {
-      console.warn('⚠️ Host header probing faalde:', e.message);
-    }
+  await supabaseAdmin.from('host_header_log').insert({
+    ip_address,
+    tried_domains: domainsToTry,
+    matched_domain: cleanedDomain || null,
+    used: !!cleanedDomain,
+    confidence: result.confidence || 0.6,
+    confidence_reason: result.reason || CONFIDENCE_REASONS.HOST_HEADER,
+    enrichment_source: ENRICHMENT_SOURCES.HOST_HEADER
+  });
+}
+
+  }
+} catch (e) {
+  console.warn('⚠️ Host header probing faalde:', e.message);
+}
+
 
     // ✅ Stap 9 – Combineer signalen
-    if (!company_domain && domainSignals.length > 0) {
-      const likely = getLikelyDomainFromSignals(domainSignals);
+if (!company_domain && domainSignals.length > 0) {
+  const likely = getLikelyDomainFromSignals(domainSignals);
 
-      if (likely?.domain) {
-        const freqBoost = await calculateConfidenceByFrequency(ip_address, likely.domain);
-        if (freqBoost && freqBoost.confidence > likely.confidence) {
-          likely.confidence = freqBoost.confidence;
-          likely.confidence_reason = freqBoost.reason;
-          console.log('🔁 Confidence aangepast op basis van frequentieboost:', freqBoost);
-        }
-      }
-
-      if (likely) {
-        const cleanedDomain = stripSubdomain(likely.domain);
-
-        company_domain = cleanedDomain;
-        enrichment_source = likely.enrichment_source;
-        confidence = likely.confidence;
-        confidence_reason = likely.confidence_reason;
-
-        console.log('🧠 Gekozen domein op basis van signalen:', company_domain);
-
-        await supabaseAdmin.from('domain_signal_log').insert({
-          ip_address,
-          signals: domainSignals,
-          chosen_domain: company_domain,
-          enrichment_source,
-          confidence,
-          confidence_reason,
-          logged_at: new Date().toISOString()
-        });
-      } else {
-        console.log('❌ Geen domein gekozen op basis van gecombineerde signalen');
-
-        await supabaseAdmin.from('domain_signal_log').insert({
-          ip_address,
-          signals: domainSignals,
-          chosen_domain: null,
-          enrichment_source: null,
-          confidence: null,
-          confidence_reason: 'Geen dominante kandidaat',
-          logged_at: new Date().toISOString()
-        });
-      }
+  if (likely?.domain) {
+    const freqBoost = await calculateConfidenceByFrequency(ip_address, likely.domain);
+    if (freqBoost && freqBoost.confidence > likely.confidence) {
+      likely.confidence = freqBoost.confidence;
+      likely.confidence_reason = freqBoost.reason;
+      console.log('🔁 Confidence aangepast op basis van frequentieboost:', freqBoost);
     }
+  }
+
+  if (likely) {
+    // Laat ook het 'likely domain' via onze centrale validatie gaan
+    const validatedLikely = cleanAndValidateDomain(
+      likely.domain,
+      ENRICHMENT_SOURCES.FINAL_LIKELY,
+      asname,
+      user_id,
+      page_url,
+      ip_address,
+      likely.confidence,
+      likely.confidence_reason
+    );
+
+    if (!validatedLikely) {
+      console.log(`⛔ Domein uit signals geblokkeerd door cleanAndValidateDomain: ${likely.domain}`);
+      return res.status(200).json({ ignored: true, reason: 'blocked by cleanAndValidateDomain' });
+    }
+
+    company_domain = validatedLikely;
+    enrichment_source = likely.enrichment_source || ENRICHMENT_SOURCES.FINAL_LIKELY;
+    confidence = likely.confidence;
+    confidence_reason = likely.confidence_reason;
+
+    console.log('🧠 Gekozen domein op basis van signalen:', company_domain);
+
+    await supabaseAdmin.from('domain_signal_log').insert({
+      ip_address,
+      signals: domainSignals,
+      chosen_domain: company_domain,
+      enrichment_source,
+      confidence,
+      confidence_reason,
+      logged_at: new Date().toISOString()
+    });
+  } else {
+    console.log('❌ Geen domein gekozen op basis van gecombineerde signalen');
+
+    await supabaseAdmin.from('domain_signal_log').insert({
+      ip_address,
+      signals: domainSignals,
+      chosen_domain: null,
+      enrichment_source: ENRICHMENT_SOURCES.FINAL_LIKELY,
+      confidence: null,
+confidence_reason: CONFIDENCE_REASONS.FINAL_LIKELY,
+      logged_at: new Date().toISOString()
+    });
+  }
+}
+
 
     // ---- BASELINE PATHS -----------------------------------------------------
 
@@ -502,6 +722,8 @@ export default async function handler(req, res) {
         ip_address,
         as_name: asname,
         reason: 'known ISP (no valid domain)',
+        confidence: (typeof confidence === 'number' && !Number.isNaN(confidence)) ? confidence : 0.3,
+confidence_reason: (confidence_reason && confidence_reason.trim()) ? confidence_reason: CONFIDENCE_REASONS.ISP_BASELINE,
         ignored_at: new Date().toISOString(),
         user_id: user_id || null,
         page_url: page_url || null,
@@ -521,10 +743,23 @@ export default async function handler(req, res) {
     existingIsp = r.data || null;
   } catch (_) {}
 
-  const nextConfidenceIsp =
-    (typeof confidence === 'number' && !Number.isNaN(confidence))
-      ? (existingIsp?.confidence != null ? Math.max(confidence, existingIsp.confidence) : confidence)
-      : (existingIsp?.confidence ?? null);
+  // Fallback: als nog steeds leeg → baseline confidence instellen
+if (!confidence) {
+  confidence = 0.3;
+  confidence_reason = CONFIDENCE_REASONS.ISP_BASELINE;
+}
+
+// Confidence nooit omlaag
+const finalConfidence =
+  (typeof confidence === 'number' && !Number.isNaN(confidence))
+    ? (cached?.confidence != null ? Math.max(confidence, cached.confidence) : confidence)
+    : (cached?.confidence ?? null);
+
+// Ook confidence_reason nooit leeg laten
+if (!confidence_reason) {
+  confidence_reason = CONFIDENCE_REASONS.ISP_BASELINE;
+}
+
 
   const payload = pruneEmpty({
     ip_address,
@@ -534,8 +769,8 @@ export default async function handler(req, res) {
     ip_city: ipapi.city || undefined,
     ip_country: ipapi.country || undefined,
     // ⚠️ GEEN IP lat/lon opslaan
-    enrichment_source: 'isp_baseline',
-    confidence: nextConfidenceIsp,
+    enrichment_source: ENRICHMENT_SOURCES.ISP_BASELINE,
+confidence: finalConfidence,
     confidence_reason,
     enriched_at: new Date().toISOString(),
     last_updated: new Date().toISOString()
@@ -557,6 +792,8 @@ export default async function handler(req, res) {
         ip_address,
         as_name: asname || null,
         reason: 'no domain found after full enrichment',
+        confidence: (typeof confidence === 'number' && !Number.isNaN(confidence)) ? confidence : 0.3,
+confidence_reason: (confidence_reason && confidence_reason.trim()) ? confidence_reason : CONFIDENCE_REASONS.IPAPI_BASELINE,
         ignored_at: new Date().toISOString(),
         user_id: user_id || null,
         page_url: page_url || null,
@@ -580,20 +817,25 @@ export default async function handler(req, res) {
       ? (existingNoDom?.confidence != null ? Math.max(confidence, existingNoDom.confidence) : confidence)
       : (existingNoDom?.confidence ?? null);
 
-  const payload = pruneEmpty({
-    ip_address,
-    // ⚠️ GEEN bedrijfsvelden hier
-    location,
-    ip_postal_code: ipapi.zip || undefined,
-    ip_city: ipapi.city || undefined,
-    ip_country: ipapi.country || undefined,
-    // ⚠️ GEEN IP lat/lon opslaan
-    enrichment_source: 'ipapi_baseline',
-    confidence: nextConfidenceNoDom,
-    confidence_reason,
-    enriched_at: new Date().toISOString(),
-    last_updated: new Date().toISOString()
-  });
+ if (!confidence_reason) {
+  confidence_reason = CONFIDENCE_REASONS.IPAPI_BASELINE;
+}
+
+const payload = pruneEmpty({
+  ip_address,
+  // ⚠️ GEEN bedrijfsvelden hier
+  location,
+  ip_postal_code: ipapi.zip || undefined,
+  ip_city: ipapi.city || undefined,
+  ip_country: ipapi.country || undefined,
+  // ⚠️ GEEN IP lat/lon opslaan
+  enrichment_source: ENRICHMENT_SOURCES.IPAPI_BASELINE,
+  confidence: nextConfidenceNoDom,
+  confidence_reason,
+  enriched_at: new Date().toISOString(),
+  last_updated: new Date().toISOString()
+});
+
 
   await supabaseAdmin
     .from('ipapi_cache')
@@ -641,6 +883,19 @@ export default async function handler(req, res) {
           domain_city: null,
           domain_country: null
         };
+        if (company_domain) {
+  company_domain = cleanAndValidateDomain(
+    company_domain,
+   ENRICHMENT_SOURCES.CACHE_REUSE,
+    asname,
+    user_id,
+    page_url,
+    ip_address,
+    confidence,
+    confidence_reason
+  );
+}
+
       }
     } catch (e) {
       console.warn('⚠️ ip_enrichment_cache fetch faalde:', e.message);
@@ -652,6 +907,22 @@ export default async function handler(req, res) {
 
       try {
         domainEnrichment = await enrichFromDomain(company_domain, ipapi.lat, ipapi.lon);
+        if (domainEnrichment?.domain) {
+  const cleaned = cleanAndValidateDomain(
+    domainEnrichment.domain,
+    ENRICHMENT_SOURCES.GMAPS,
+    asname,
+    user_id,
+    page_url,
+    ip_address,
+    confidence,
+    confidence_reason
+  );
+  if (cleaned) {
+    company_domain = cleaned;
+  }
+}
+
       } catch (e) {
         console.error("❌ enrichFromDomain() crashte:", e.message);
       }
@@ -684,14 +955,20 @@ export default async function handler(req, res) {
       }
 
       if (scraped) {
-        phone = scraped.phone || null;
-        email = scraped.email || null;
-        linkedin_url = scraped.linkedin_url || null;
-        facebook_url = scraped.facebook_url || null;
-        instagram_url = scraped.instagram_url || null;
-        twitter_url = scraped.twitter_url || null;
-        meta_description = scraped.meta_description || null;
-      }
+  phone = scraped.phone || null;
+  email = scraped.email || null;
+  linkedin_url = scraped.linkedin_url || null;
+  facebook_url = scraped.facebook_url || null;
+  instagram_url = scraped.instagram_url || null;
+  twitter_url = scraped.twitter_url || null;
+  meta_description = scraped.meta_description || null;
+
+  // Scrape mag nooit de primaire bron overschrijven:
+  if (!enrichment_source) {
+    enrichment_source = ENRICHMENT_SOURCES.SCRAPE;
+  }
+}
+
 
       if (domainEnrichment) {
         domain_lat = domainEnrichment.lat || null;
@@ -702,7 +979,7 @@ export default async function handler(req, res) {
         domain_city = domainEnrichment.domain_city || null;
         domain_country = domainEnrichment.domain_country || null;
         category = domainEnrichment.category || null;
-        enrichment_source = 'maps_domain';
+        enrichment_source = ENRICHMENT_SOURCES.GMAPS;
 
         // 👇 Override confidence op basis van frequentie (indien aanwezig)
         const freqBoost = await calculateConfidenceByFrequency(ip_address, company_domain);
@@ -711,7 +988,7 @@ export default async function handler(req, res) {
           confidence_reason = freqBoost.reason;
         } else {
           confidence = domainEnrichment.confidence || 0.65;
-          confidence_reason = domainEnrichment.confidence_reason || 'Verrijking via Google Maps (domain)';
+          confidence_reason = domainEnrichment.confidence_reason || CONFIDENCE_REASONS.GMAPS;
         }
 
         // Eén duidelijke call, geen dubbeling
@@ -733,7 +1010,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // ---- HOOFD-WRITE naar ipapi_cache (downgrade-proof) ---------------------
 
     // Confidence nooit omlaag
 const finalConfidence =
