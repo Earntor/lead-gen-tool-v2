@@ -7,7 +7,7 @@ const ROLES = [
   { value: 'viewer', label: 'Viewer' },
 ]
 
-// Houd dit gelijk aan je DB-limiet
+// Houd dit gelijk aan je DB-limiet (of maak ‘m dynamisch later)
 const SEAT_LIMIT = 5
 
 export default function TeamTab() {
@@ -15,6 +15,7 @@ export default function TeamTab() {
   const [orgId, setOrgId] = useState(null)
   const [meRole, setMeRole] = useState(null)
   const [ownerId, setOwnerId] = useState(null)
+  const [selfId, setSelfId] = useState(null) // ⬅️ nieuw
 
   // UI state
   const [members, setMembers] = useState([])
@@ -46,6 +47,7 @@ export default function TeamTab() {
     try {
       const { data: { session } } = await supabase.auth.getSession()
       const userId = session?.user?.id
+      setSelfId(userId) // ⬅️ nieuw
       if (!userId) {
         setOrgId(null)
         setMeRole(null)
@@ -69,7 +71,7 @@ export default function TeamTab() {
         return
       }
 
-      // 2) mijn rol in deze org
+      // 2) mijn rol in deze org (kan soms traag/leeg zijn; vangen we later ook via ledenlijst)
       const { data: myMember } = await supabase
         .from('organization_members')
         .select('role')
@@ -87,7 +89,7 @@ export default function TeamTab() {
       setOrgName(org?.name || '')
       setOwnerId(org?.owner_user_id || null)
     } catch {
-      // stil falen: context blijft onveranderd
+      // stil falen
     }
   }, [])
 
@@ -111,7 +113,18 @@ export default function TeamTab() {
         setError(json?.error || 'Kon leden niet laden.')
         return
       }
-      setMembers(Array.isArray(json.members) ? json.members : [])
+      const list = Array.isArray(json.members) ? json.members : []
+      setMembers(list)
+
+      // ⬇️ NIEUW: rol van mijzelf afleiden uit de ledenlijst (betrouwbaar voor ALLE admins)
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        const uid = session?.user?.id
+        if (uid) {
+          const mine = list.find(m => m.user_id === uid)
+          if (mine?.role) setMeRole(mine.role)
+        }
+      } catch {}
     } catch (e) {
       setMembers([])
       setError(e?.message || 'Onbekende fout bij laden leden.')
@@ -120,10 +133,14 @@ export default function TeamTab() {
     }
   }, [getToken])
 
-  // === Openstaande invites laden (direct via Supabase; alleen admin ziet ze) ===
+  // Afgeleide admin-status: werkt voor iedereen zodra de ledenlijst geladen is
+  const derivedIsAdmin = members.some(m => m.user_id === selfId && m.role === 'admin')
+  const canAdmin = (meRole === 'admin') || derivedIsAdmin
+
+  // === Openstaande invites laden (alleen admin) ===
   const loadInvites = useCallback(async () => {
     try {
-      if (!orgId || meRole !== 'admin') {
+      if (!orgId || !canAdmin) {
         setInvites([])
         return
       }
@@ -138,15 +155,20 @@ export default function TeamTab() {
     } catch {
       setInvites([])
     }
-  }, [orgId, meRole])
+  }, [orgId, canAdmin])
 
+  // Initieel laden
   useEffect(() => {
     (async () => {
       await loadContext()
       await loadMembers()
-      await loadInvites()
     })()
-  }, [loadContext, loadMembers, loadInvites])
+  }, [loadContext, loadMembers])
+
+  // Nodig om invites na het bepalen van admin-status alsnog te laden
+  useEffect(() => {
+    if (orgId && canAdmin) loadInvites()
+  }, [orgId, canAdmin, loadInvites])
 
   // Derived UI helpers
   const seatCount = members.length
@@ -166,7 +188,7 @@ export default function TeamTab() {
     setInviteLink('')
     setError(null)
     try {
-      if (meRole !== 'admin') return setError('Alleen admins mogen uitnodigen.')
+      if (!canAdmin) return setError('Alleen admins mogen uitnodigen.')
       if (atLimit) return setError(`Limiet bereikt (${seatCount}/${SEAT_LIMIT}). Verwijder eerst iemand.`)
 
       const token = await getToken()
@@ -190,7 +212,7 @@ export default function TeamTab() {
   async function revokeInvite(id) {
     if (!confirm('Deze uitnodiging intrekken?')) return
     try {
-      if (meRole !== 'admin') return setError('Alleen admins mogen uitnodigingen intrekken.')
+      if (!canAdmin) return setError('Alleen admins mogen uitnodigingen intrekken.')
       const { error } = await supabase.from('organization_invites').delete().eq('id', id)
       if (error) return setError(error.message || 'Intrekken mislukt.')
       loadInvites()
@@ -202,7 +224,7 @@ export default function TeamTab() {
   async function changeRole(user_id, role) {
     setError(null)
     try {
-      if (meRole !== 'admin') return setError('Alleen admins mogen rollen wijzigen.')
+      if (!canAdmin) return setError('Alleen admins mogen rollen wijzigen.')
       if (isLastAdmin(user_id) && role !== 'admin') {
         return setError('Minstens één admin vereist.')
       }
@@ -225,7 +247,7 @@ export default function TeamTab() {
     if (!confirm('Weet je zeker dat je dit lid wilt verwijderen?')) return
     setError(null)
     try {
-      if (meRole !== 'admin') return setError('Alleen admins mogen leden verwijderen.')
+      if (!canAdmin) return setError('Alleen admins mogen leden verwijderen.')
       if (isLastAdmin(user_id)) return setError('Minstens één admin vereist.')
       const token = await getToken()
       if (!token) return setError('Niet ingelogd.')
@@ -247,7 +269,7 @@ export default function TeamTab() {
     setSavingName(true)
     setError(null)
     try {
-      if (meRole !== 'admin') {
+      if (!canAdmin) {
         setSavingName(false)
         return setError('Alleen admins mogen de naam wijzigen.')
       }
@@ -315,7 +337,7 @@ export default function TeamTab() {
           )}
         </div>
         <div className="text-sm text-gray-600">
-          Seats: <span className="font-medium">{seatCount}/{SEAT_LIMIT}</span>
+          Seats: <span className="font-medium">{members.length}/{SEAT_LIMIT}</span>
         </div>
       </div>
       {!orgId && <div className="text-sm text-red-600">Geen organisatie gekoppeld</div>}
@@ -336,25 +358,25 @@ export default function TeamTab() {
             placeholder="Organisatienaam"
             value={orgName}
             onChange={(e) => setOrgName(e.target.value)}
-            disabled={meRole !== 'admin'}
+            disabled={!canAdmin}
           />
           <button
             className="px-4 py-2 rounded bg-black text-white disabled:opacity-50"
-            disabled={savingName || !orgName.trim() || meRole !== 'admin'}
+            disabled={savingName || !orgName.trim() || !canAdmin}
           >
             {savingName ? 'Opslaan…' : 'Opslaan'}
           </button>
         </div>
-        {meRole !== 'admin' && (
+        {!canAdmin && (
           <p className="text-xs text-gray-500 mt-1">Alleen admin kan de naam wijzigen.</p>
         )}
       </form>
 
-      {/* Zoeken */}
+      {/* Teamleden + zoeken */}
       <div className="p-4 border rounded-xl">
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-semibold">Teamleden</h3>
-          <button onClick={() => { loadMembers(); loadInvites(); }} className="text-sm underline">
+          <button onClick={() => { loadMembers(); if (orgId && canAdmin) loadInvites(); }} className="text-sm underline">
             Vernieuwen
           </button>
         </div>
@@ -395,14 +417,14 @@ export default function TeamTab() {
                     value={m.role}
                     onChange={(e) => changeRole(m.user_id, e.target.value)}
                     className="border rounded px-2 py-1"
-                    disabled={meRole !== 'admin' || isLastAdmin(m.user_id)}
+                    disabled={!canAdmin || isLastAdmin(m.user_id)}
                   >
                     {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                   </select>
                   <button
                     onClick={() => removeMember(m.user_id)}
                     className="text-red-600 text-sm"
-                    disabled={meRole !== 'admin' || isLastAdmin(m.user_id)}
+                    disabled={!canAdmin || isLastAdmin(m.user_id)}
                   >
                     Verwijderen
                   </button>
@@ -424,19 +446,19 @@ export default function TeamTab() {
             placeholder="email@bedrijf.nl"
             value={inviteEmail}
             onChange={(e) => setInviteEmail(e.target.value)}
-            disabled={meRole !== 'admin' || atLimit}
+            disabled={!canAdmin || atLimit}
           />
-        <select
+          <select
             value={inviteRole}
             onChange={(e) => setInviteRole(e.target.value)}
             className="border rounded px-3 py-2"
-            disabled={meRole !== 'admin' || atLimit}
+            disabled={!canAdmin || atLimit}
           >
             {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
           </select>
           <button
             className="px-4 py-2 rounded bg-black text-white disabled:opacity-50"
-            disabled={meRole !== 'admin' || atLimit}
+            disabled={!canAdmin || atLimit}
           >
             Uitnodigen
           </button>
@@ -444,7 +466,7 @@ export default function TeamTab() {
 
         {atLimit && (
           <p className="text-xs text-gray-500">
-            Limiet bereikt ({seatCount}/{SEAT_LIMIT}). Verwijder eerst iemand om te kunnen uitnodigen.
+            Limiet bereikt ({members.length}/{SEAT_LIMIT}). Verwijder eerst iemand om te kunnen uitnodigen.
           </p>
         )}
 
@@ -466,7 +488,7 @@ export default function TeamTab() {
       </form>
 
       {/* Openstaande uitnodigingen (alleen admin) */}
-      {meRole === 'admin' && (
+      {canAdmin && (
         <div className="p-4 border rounded-xl">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-semibold">Openstaande uitnodigingen</h3>
