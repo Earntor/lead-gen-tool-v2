@@ -4,7 +4,14 @@ import { supabaseAdmin } from '../../../lib/supabaseAdminClient'
 import { getUserFromRequest } from '../../../lib/getUserFromRequest'
 import { Resend } from 'resend'
 
+// Let op: NIET op Edge draaien voor deze route
+// (dus GEEN: export const runtime = 'edge')
+
 const resend = new Resend(process.env.RESEND_API_KEY)
+
+function safeStringify(obj) {
+  try { return JSON.stringify(obj) } catch { return String(obj) }
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end()
@@ -37,7 +44,7 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: 'not_org_admin' })
   }
 
-  // Als email al lid is: stop
+  // Al lid?
   const { data: profByEmail } = await supabaseAdmin
     .from('profiles')
     .select('id')
@@ -61,12 +68,12 @@ export default async function handler(req, res) {
     .single()
   const orgName = org?.name || 'je organisatie'
 
-  // Base URL (prod of lokaal)
+  // Base URL
   const proto = req.headers['x-forwarded-proto'] || 'https'
   const host = req.headers['host']
   const base = process.env.NEXT_PUBLIC_APP_URL || `${proto}://${host}`
 
-  // Open invite (case-insensitive)
+  // Bestaande open invite?
   const { data: existing } = await supabaseAdmin
     .from('organization_invites')
     .select('id, token')
@@ -126,72 +133,47 @@ export default async function handler(req, res) {
 
   const inviteUrl = `${base}/invite/accept?token=${encodeURIComponent(token)}`
 
-  // --- MAIL VERSTUREN met Resend SDK v3: { data, error } ---
+  // --- MAIL VERSTUREN (SDK v3: { data, error }) ---
   if (!process.env.RESEND_API_KEY) {
     return res.status(500).json({ ok: false, error: 'resend_key_missing', inviteId, inviteUrl })
   }
 
   const from = process.env.EMAIL_FROM || 'LeadGen <onboarding@resend.dev>'
 
-  try {
-    const { data, error } = await resend.emails.send({
-      from,
-      to: normEmail,
-      subject: `Uitnodiging voor ${orgName}`,
-      text: `Je bent uitgenodigd om mee te werken in ${orgName}.
+  const { data, error } = await resend.emails.send({
+    from,
+    to: normEmail,
+    subject: `Uitnodiging voor ${orgName}`,
+    text: `Je bent uitgenodigd om mee te werken in ${orgName}.
 
 Accepteer je uitnodiging via:
 ${inviteUrl}
 
 Let op: deze link verloopt over ${expiryDays} dagen.`,
-      html: `
-        <div style="font-family: Arial, sans-serif; line-height:1.5;">
-          <p>Je bent uitgenodigd om mee te werken in <strong>${orgName}</strong>.</p>
-          <p>
-            <a href="${inviteUrl}" style="display:inline-block;padding:10px 16px;border-radius:6px;background:#111;color:#fff;text-decoration:none">
-              Uitnodiging accepteren
-            </a>
-          </p>
-          <p>Of kopieer deze link: <a href="${inviteUrl}">${inviteUrl}</a></p>
-          <p>Deze link verloopt over ${expiryDays} dagen.</p>
-        </div>
-      `,
-    })
+    html: `
+      <div style="font-family: Arial, sans-serif; line-height:1.5;">
+        <p>Je bent uitgenodigd om mee te werken in <strong>${orgName}</strong>.</p>
+        <p>
+          <a href="${inviteUrl}" style="display:inline-block;padding:10px 16px;border-radius:6px;background:#111;color:#fff;text-decoration:none">
+            Uitnodiging accepteren
+          </a>
+        </p>
+        <p>Of kopieer deze link: <a href="${inviteUrl}">${inviteUrl}</a></p>
+        <p>Deze link verloopt over ${expiryDays} dagen.</p>
+      </div>
+    `,
+  })
 
-    if (error) {
-      // SDK gooit niet, maar retourneert error hier.
-      console.error('Resend returned error', {
-        name: error.name,
-        message: error.message,
-        cause: error.cause,
-      })
-      return res.status(200).json({
-        ok: true,
-        inviteId,
-        inviteUrl,
-        emailed: false,
-        warning: 'email_send_failed',
-        details: error.message || 'unknown_resend_error',
-      })
-    }
-
-    console.log('Resend sent invite', { to: normEmail, id: data?.id })
-
-    return res.status(200).json({
-      ok: true,
-      inviteId,
-      inviteUrl,
-      emailed: true,
-      messageId: data?.id || null,
-    })
-  } catch (mailErr) {
-    // Alleen voor onverwachte exceptions (netwerk/runtime)
-    console.error('Resend exception', {
-      name: mailErr?.name,
-      message: mailErr?.message,
-      cause: mailErr?.cause,
-      response: mailErr?.response,
-    })
+  if (error) {
+    // Belangrijk: sommige velden zijn undefined → log het HELE object veilig
+    console.error('Resend returned error (raw):', safeStringify(error))
+    // Probeer nuttige velden te pakken indien aanwezig
+    const details =
+      error?.message ||
+      error?.name ||
+      error?.statusCode ||
+      error?.code ||
+      safeStringify(error)
 
     return res.status(200).json({
       ok: true,
@@ -199,7 +181,16 @@ Let op: deze link verloopt over ${expiryDays} dagen.`,
       inviteUrl,
       emailed: false,
       warning: 'email_send_failed',
-      details: mailErr?.message || 'unknown_resend_exception',
+      details,
     })
   }
+
+  console.log('Resend sent invite', { to: normEmail, id: data?.id || null })
+  return res.status(200).json({
+    ok: true,
+    inviteId,
+    inviteUrl,
+    emailed: true,
+    messageId: data?.id || null,
+  })
 }
