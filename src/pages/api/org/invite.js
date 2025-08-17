@@ -18,9 +18,17 @@ export default async function handler(req, res) {
   const orgId = profile?.current_org_id;
   if (!orgId) return res.status(400).json({ error: 'no_current_org' });
 
-  // admin check via RPC
-  const { data: isAdmin } = await supabaseAdmin.rpc('is_org_admin', { p_org: orgId });
-  if (!isAdmin) return res.status(403).json({ error: 'not_org_admin' });
+  const { data: me, error: meErr } = await supabaseAdmin
+  .from('organization_members')
+  .select('role')
+  .eq('org_id', orgId)
+  .eq('user_id', user.id)
+  .single()
+
+if (meErr || !me || me.role !== 'admin') {
+  return res.status(403).json({ error: 'not_org_admin' })
+}
+
 
   // maak token + verloop
   const token = crypto.randomBytes(24).toString('hex');
