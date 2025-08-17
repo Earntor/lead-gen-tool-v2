@@ -10,6 +10,8 @@ import { getLikelyDomainFromSignals } from '../../lib/getLikelyDomainFromSignals
 import { logDomainSignal } from '../../lib/logDomainSignal.js';
 import { probeHostHeader } from '../../lib/probeHostHeader';
 import { upsertDomainEnrichmentCache } from '../../lib/upsertDomainEnrichmentCache';
+import punycode from 'node:punycode'; // voor IDN → ASCII normalisatie
+
 
 // Verwijder null/undefined en lege strings uit een payload
 function pruneEmpty(obj) {
@@ -61,7 +63,7 @@ const CONFIDENCE_REASONS = {
 // Hostingproviders
 const HOSTING_DOMAINS = [
   'sr-srv.net', 'dfn.nl', 'leaseweb.net', 'ovh.net', 'azure.com', 'amazonaws.com',
-  'googleusercontent.com', 'linode.com', 'digitalocean.com', 'hetzner.de'
+  'googleusercontent.com', 'linode.com', 'digitalocean.com', 'hetzner.de',
 ];
 
 // Extra blacklist voor reverse DNS (consumenten en irrelevante domeinen)
@@ -69,10 +71,13 @@ const EXTRA_BLACKLIST_DOMAINS = [
   'kpn.net', 'ziggo.nl', 'glasoperator.nl', 't-mobilethuis.nl', 'chello.nl',
   'dynamic.upc.nl', 'vodafone.nl', 'versatel', 'msn.com', 'akamaitechnologies.com',
   'telenet.be', 'myaisfibre.com', 'filterplatform.nl', 'xs4all.nl', 'home.nl',
-  'weserve.nl', 'client.t-mobilethuis.nl', 'starlinkisp.net', 'baremetal.scw.cloud','fbsv','sprious.com', 'your-server.de', 'ip.telfort.nl', 'amazonaws.com', 'dataproviderbot.com', 'apple.com', 'belgacom.be' 
+  'weserve.nl', 'crawl.cloudflare.com', 'googlebot.com','client.t-mobilethuis.nl', 'starlinkisp.net', 'baremetal.scw.cloud','fbsv','sprious.com', 'your-server.de', 'vodafone.pt', 'ip.telfort.nl', 'amazonaws.com', 'dataproviderbot.com', 'apple.com', 'belgacom.be' 
 ];
 
-async function logBlockedSignal({ ip_address, domain, source, asname, reason, user_id, page_url, confidence, confidence_reason }) {
+async function logBlockedSignal({
+  ip_address, domain, source, asname, reason, user_id, page_url, confidence, confidence_reason,
+  ignore_type = 'blocked'
+}) {
   await supabaseAdmin.from('ignored_ip_log').insert({
     ip_address,
     as_name: asname || null,
@@ -83,74 +88,106 @@ async function logBlockedSignal({ ip_address, domain, source, asname, reason, us
     confidence_reason: (confidence_reason && confidence_reason.trim()) ? confidence_reason : CONFIDENCE_REASONS.IPAPI_BASELINE,
     ignored_at: new Date().toISOString(),
     user_id: user_id || null,
-    page_url: page_url || null
+    page_url: page_url || null,
+    ignore_type
   });
 }
-
 
 
 // Kleine helpers
 const validNum = (v) => typeof v === 'number' && !Number.isNaN(v);
 
-const stripSubdomain = (domain) => {
+// service-subdomeinen die we wegstrippen
+const SERVICE_LABELS = /^(mail|vpn|smtp|webmail|pop3|imap|owa|remote|ns\d*|mx\d*|cpanel|webdisk|autodiscover|server|host|exchange|secure|ssl|admin|gateway|proxy|support|login|portal|test|staging|dev)\./i;
+
+function stripSubdomain(domain) {
   if (!domain) return null;
-  let clean = domain.trim().toLowerCase();
+  let d = String(domain).trim();
 
-  clean = clean.replace(
-    /^(mail|vpn|smtp|webmail|pop3|imap|owa|remote|ns\d*|mx\d*|cpanel|webdisk|autodiscover|server|host|exchange|secure|ssl|admin|gateway|proxy|support|login|portal)\./,
-    ''
-  );
+  // wildcard & trailing dot weg
+  d = d.replace(/^\*\.\s*/, '').replace(/\.$/, '');
 
-  clean = clean.replace(/^www\./, '');
+  // IDN → ASCII (punycode)
+  try { d = punycode.toASCII(d); } catch { /* laat d zoals het is */ }
 
-  return clean;
-};
+  d = d.toLowerCase();
+
+  // normalize: underscores → hyphen, multiple dots → single dot
+  d = d.replace(/_+/g, '-').replace(/\.+/g, '.');
+
+  // service labels & www weghalen
+  d = d.replace(SERVICE_LABELS, '').replace(/^www\./, '');
+
+  return d;
+}
+
 
 function cleanAndValidateDomain(domain, source, asname, user_id, page_url, ip_address, confidence, confidence_reason) {
   if (!domain) return null;
 
-  // Strip subdomein + lowercase + ongeldige tekens eruit
-  let cleaned = stripSubdomain(domain)
-    ?.toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9.-]/g, '') || null;
-
+  // basis normalisatie
+  let cleaned = stripSubdomain(domain);
   if (!cleaned) return null;
 
-  // Check blacklist/hosting
-  const isBlocked =
-    HOSTING_DOMAINS.some(dom => cleaned.endsWith(dom)) ||
-    EXTRA_BLACKLIST_DOMAINS.some(dom => cleaned.endsWith(dom));
+  // alleen toegestane tekens
+  cleaned = cleaned.replace(/[^a-z0-9.-]/g, '');
+
+  // geen leading/trailing dot of hyphen
+  cleaned = cleaned.replace(/^\.+/, '').replace(/\.+$/, '').replace(/^-+/, '').replace(/-+$/, '');
+
+  // moet minstens één dot hebben
+  if (!cleaned.includes('.')) return null;
+
+  // geen IP-adressen
+  const isIPv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(cleaned);
+  const isIPv6 = /:/.test(cleaned);
+  if (isIPv4 || isIPv6) return null;
+
+  // labels valideren
+  const labels = cleaned.split('.');
+  if (labels.some(l => l.length === 0 || l.length > 63)) return null;
+  if (labels.some(l => !/^[a-z0-9-]+$/.test(l))) return null;
+  if (labels.some(l => l.startsWith('-') || l.endsWith('-'))) return null;
+
+  // TLD: letters, 2–24
+  const tld = labels[labels.length - 1];
+if (!/^([a-z]{2,24}|xn--[a-z0-9-]{2,})$/.test(tld)) return null;
+
+  // minstens één label met een letter
+  if (!labels.some(l => /[a-z]/.test(l))) return null;
+
+  // hosting/blacklist blokkeren
+  const endsWithDomain = (host, tail) =>
+  host === tail || host.endsWith(`.${tail}`);
+const isBlocked =
+  HOSTING_DOMAINS.some(dom => endsWithDomain(cleaned, dom)) ||
+  EXTRA_BLACKLIST_DOMAINS.some(dom => endsWithDomain(cleaned, dom));
 
   if (isBlocked) {
-  console.log(`⛔ Geblokkeerd domein (${source}): ${cleaned}`);
+    const safeConfidence =
+      (typeof confidence === 'number' && !Number.isNaN(confidence)) ? confidence : 0.3;
+    const safeReason =
+      (confidence_reason && confidence_reason.trim()) ? confidence_reason : CONFIDENCE_REASONS.IPAPI_BASELINE;
 
-  // 🛡️ Fallback zodat confidence nooit leeg is
-  const safeConfidence = typeof confidence === 'number' && !Number.isNaN(confidence)
-    ? confidence
-    : 0.3;
-
-  const safeConfidenceReason = confidence_reason && confidence_reason.trim()
-    ? confidence_reason: CONFIDENCE_REASONS.IPAPI_BASELINE;
-
-  logBlockedSignal({
-    ip_address,
-    domain: cleaned,
-    source,
-    asname,
-    reason: 'blacklisted domain in cleanup',
-    user_id,
-    page_url,
-    confidence: safeConfidence,
-    confidence_reason: safeConfidenceReason
-  });
-  return null;
-}
-
-
+    console.log(`⛔ Geblokkeerd domein (${source}): ${cleaned}`);
+    logBlockedSignal({
+      ip_address,
+      domain: cleaned,
+      source,
+      asname,
+      reason: 'blacklisted domain in cleanup',
+      user_id,
+      page_url,
+      confidence: safeConfidence,
+      confidence_reason: safeReason,
+      ignore_type: 'blocked'
+    });
+    return null;
+  }
 
   return cleaned;
 }
+
 
 
 async function calculateConfidenceByFrequency(ip, domain) {
@@ -286,11 +323,12 @@ const isISP = KNOWN_ISPS.some(isp => asname.toLowerCase().includes(isp.toLowerCa
       if (isISP) {
         console.log('⚠️ Bekende ISP gedetecteerd:', asname);
         await supabaseAdmin.from('ignored_ip_log').insert({
-          ip_address,
-          as_name: asname,
-          reason: 'known ISP (not blocking)',
-          ignored_at: new Date().toISOString()
-        });
+  ip_address,
+  as_name: asname,
+  reason: 'known ISP (not blocking)',
+  ignored_at: new Date().toISOString(),
+  ignore_type: 'isp-info' // ✅ duidelijk dat dit informatief is
+});
       }
 
       let company_name = null;
@@ -375,11 +413,9 @@ if (!extracted) continue;
         });
 
         if (signal) {
-          domainSignals.push(signal);
-company_domain = stripSubdomain(extracted)
-  ?.toLowerCase()
-  .trim()
-  .replace(/[^a-z0-9.-]/g, '') || null;
+domainSignals.push(signal);
+          company_domain = extracted; // al gevalideerd door cleanAndValidateDomain
+
           enrichment_source = ENRICHMENT_SOURCES.RDNS;
           confidence = score;
           confidence_reason = reason;
@@ -431,7 +467,7 @@ try {
     }
 
     if (!extracted && certInfo.subjectAltName) {
-      const matches = certInfo.subjectAltName.match(/DNS:([a-zA-Z0-9.-]+\.[a-z]{2,})/g);
+const matches = certInfo.subjectAltName.match(/DNS:([A-Za-z0-9.-]+\.[A-Za-z0-9-]{2,})/g);
       if (matches && matches.length > 0) {
         const cleaned = matches
           .map(m => stripSubdomain(m.replace('DNS:', '').trim()))
@@ -719,131 +755,34 @@ confidence_reason: CONFIDENCE_REASONS.FINAL_LIKELY,
 
     if (isISP && !company_domain) {
       await supabaseAdmin.from('ignored_ip_log').insert({
-        ip_address,
-        as_name: asname,
-        reason: 'known ISP (no valid domain)',
-        confidence: (typeof confidence === 'number' && !Number.isNaN(confidence)) ? confidence : 0.3,
-confidence_reason: (confidence_reason && confidence_reason.trim()) ? confidence_reason: CONFIDENCE_REASONS.ISP_BASELINE,
-        ignored_at: new Date().toISOString(),
-        user_id: user_id || null,
-        page_url: page_url || null,
-        signals: domainSignals.length > 0 ? domainSignals : null
-      });
+  ip_address,
+  as_name: asname,
+  reason: 'known ISP (no valid domain)',
+  confidence: (typeof confidence === 'number' && !Number.isNaN(confidence)) ? confidence : 0.3,
+  confidence_reason: (confidence_reason && confidence_reason.trim()) ? confidence_reason: CONFIDENCE_REASONS.ISP_BASELINE,
+  ignored_at: new Date().toISOString(),
+  user_id: user_id || null,
+  page_url: page_url || null,
+  signals: domainSignals.length > 0 ? domainSignals : null,
+  ignore_type: 'isp' // ✅ nieuw
+});
 
-      // ✅ baseline cache zetten zodat track.js iets heeft (downgrade-proof)
-      try {
-  // Bestaande confidence lezen zodat die nooit daalt
-  let existingIsp = null;
-  try {
-    const r = await supabaseAdmin
-      .from('ipapi_cache')
-      .select('confidence')
-      .eq('ip_address', ip_address)
-      .maybeSingle();
-    existingIsp = r.data || null;
-  } catch (_) {}
-
-  // Fallback: als nog steeds leeg → baseline confidence instellen
-if (!confidence) {
-  confidence = 0.3;
-  confidence_reason = CONFIDENCE_REASONS.ISP_BASELINE;
-}
-
-// Confidence nooit omlaag
-const finalConfidence =
-  (typeof confidence === 'number' && !Number.isNaN(confidence))
-    ? (cached?.confidence != null ? Math.max(confidence, cached.confidence) : confidence)
-    : (cached?.confidence ?? null);
-
-// Ook confidence_reason nooit leeg laten
-if (!confidence_reason) {
-  confidence_reason = CONFIDENCE_REASONS.ISP_BASELINE;
-}
-
-
-  const payload = pruneEmpty({
-    ip_address,
-    // ⚠️ GEEN bedrijfsvelden hier
-    location,
-    ip_postal_code: ipapi.zip || undefined,
-    ip_city: ipapi.city || undefined,
-    ip_country: ipapi.country || undefined,
-    // ⚠️ GEEN IP lat/lon opslaan
-    enrichment_source: ENRICHMENT_SOURCES.ISP_BASELINE,
-confidence: finalConfidence,
-    confidence_reason,
-    enriched_at: new Date().toISOString(),
-    last_updated: new Date().toISOString()
-  });
-
-  await supabaseAdmin
-    .from('ipapi_cache')
-    .upsert(payload, { onConflict: 'ip_address' });
-} catch (e) {
-  console.warn('⚠️ baseline cache upsert (ISP) faalde:', e.message);
-}
-
-
-      return res.status(200).json({ ignored: true, reason: 'known ISP (no valid domain)' });
+return res.status(200).json({ ignored: true, reason: 'known ISP (no valid domain)' });
     }
 
     if (!isISP && !company_domain) {
       await supabaseAdmin.from('ignored_ip_log').insert({
-        ip_address,
-        as_name: asname || null,
-        reason: 'no domain found after full enrichment',
-        confidence: (typeof confidence === 'number' && !Number.isNaN(confidence)) ? confidence : 0.3,
-confidence_reason: (confidence_reason && confidence_reason.trim()) ? confidence_reason : CONFIDENCE_REASONS.IPAPI_BASELINE,
-        ignored_at: new Date().toISOString(),
-        user_id: user_id || null,
-        page_url: page_url || null,
-        signals: domainSignals.length > 0 ? domainSignals : null
-      });
-
-      // ✅ baseline cache zetten zodat track.js iets heeft (downgrade-proof)
-      try {
-  let existingNoDom = null;
-  try {
-    const r2 = await supabaseAdmin
-      .from('ipapi_cache')
-      .select('confidence')
-      .eq('ip_address', ip_address)
-      .maybeSingle();
-    existingNoDom = r2.data || null;
-  } catch (_) {}
-
-  const nextConfidenceNoDom =
-    (typeof confidence === 'number' && !Number.isNaN(confidence))
-      ? (existingNoDom?.confidence != null ? Math.max(confidence, existingNoDom.confidence) : confidence)
-      : (existingNoDom?.confidence ?? null);
-
- if (!confidence_reason) {
-  confidence_reason = CONFIDENCE_REASONS.IPAPI_BASELINE;
-}
-
-const payload = pruneEmpty({
   ip_address,
-  // ⚠️ GEEN bedrijfsvelden hier
-  location,
-  ip_postal_code: ipapi.zip || undefined,
-  ip_city: ipapi.city || undefined,
-  ip_country: ipapi.country || undefined,
-  // ⚠️ GEEN IP lat/lon opslaan
-  enrichment_source: ENRICHMENT_SOURCES.IPAPI_BASELINE,
-  confidence: nextConfidenceNoDom,
-  confidence_reason,
-  enriched_at: new Date().toISOString(),
-  last_updated: new Date().toISOString()
+  as_name: asname || null,
+  reason: 'no domain found after full enrichment',
+  confidence: (typeof confidence === 'number' && !Number.isNaN(confidence)) ? confidence : 0.3,
+  confidence_reason: (confidence_reason && confidence_reason.trim()) ? confidence_reason : CONFIDENCE_REASONS.IPAPI_BASELINE,
+  ignored_at: new Date().toISOString(),
+  user_id: user_id || null,
+  page_url: page_url || null,
+  signals: domainSignals.length > 0 ? domainSignals : null,
+  ignore_type: 'no-domain' // ✅ nieuw
 });
-
-
-  await supabaseAdmin
-    .from('ipapi_cache')
-    .upsert(payload, { onConflict: 'ip_address' });
-} catch (e) {
-  console.warn('⚠️ baseline cache upsert (no-domain) faalde:', e.message);
-}
-
 
       return res.status(200).json({ ignored: true, reason: 'no domain found' });
     }
@@ -1016,6 +955,28 @@ const finalConfidence =
   (typeof confidence === 'number' && !Number.isNaN(confidence))
     ? (cached?.confidence != null ? Math.max(confidence, cached.confidence) : confidence)
     : (cached?.confidence ?? null);
+
+// ⛔️ Confidence-drempel check
+const MIN_CONFIDENCE = 0.5;
+
+// Alleen blokkeren als er GEEN domein is én confidence te laag is
+// 👉 Als er wél een domein is, mag hij altijd door (ook bij lage confidence)
+if ((!company_domain || company_domain.trim() === '') 
+    && (typeof finalConfidence === 'number' && finalConfidence < MIN_CONFIDENCE)) {
+  console.log(`⛔ Geen domein én confidence (${finalConfidence}) lager dan drempel (${MIN_CONFIDENCE}) → niet in cache`);
+  await supabaseAdmin.from('ignored_ip_log').insert({
+    ip_address,
+as_name: asname || null,
+    reason: 'low confidence enrichment (no domain)',
+    confidence: finalConfidence,
+    confidence_reason: confidence_reason || 'Onder minimumdrempel',
+    ignored_at: new Date().toISOString(),
+    user_id: user_id || null,
+    page_url: page_url || null,
+    ignore_type: 'low-confidence'
+  });
+  return res.status(200).json({ ignored: true, reason: 'low confidence no domain' });
+}
 
 // Coördinaten alleen als beide bestaan (voor DOMAIN coords)
 const domainLatOk = validNum(domain_lat);

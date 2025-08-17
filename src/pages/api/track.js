@@ -254,6 +254,11 @@ export default async function handler(req, res) {
     console.warn('⚠️ ipapi_cache fetch faalde:', e.message);
   }
   const enrichment = mapCacheToLead(ipCache);
+if (!ipCache) {
+  console.log(`ℹ️ Geen enrichment gevonden voor IP ${ipAddress} (waarschijnlijk ISP/no-domain)`);
+}
+
+
   const confidenceScore =
     enrichment.confidence === undefined ? null : enrichment.confidence;
   const confidenceReason =
@@ -262,13 +267,13 @@ export default async function handler(req, res) {
   // ---- Queue insert i.p.v. fire-and-forget enrich ----
   try {
     const needsEnrichment =
-      !ipCache ||
-      ipCache.company_name === 'Testbedrijf' ||
-      (ipCache.company_domain && (
-        !ipCache.domain_address ||
-        !ipCache.domain_city ||
-        !ipCache.domain_country ||
-        ipCache.confidence == null ||
+  (!ipCache && ipAddress && ipCache?.company_domain) ||
+  ipCache?.company_name === 'Testbedrijf' ||
+  (ipCache?.company_domain && (
+    !ipCache.domain_address ||
+    !ipCache.domain_city ||
+    !ipCache.domain_country ||
+    ipCache.confidence == null ||
         !ipCache.confidence_reason ||
         !ipCache.meta_description ||
         !ipCache.phone ||
