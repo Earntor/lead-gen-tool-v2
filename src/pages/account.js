@@ -203,6 +203,7 @@ useEffect(() => {
   { key: 'instellingen', label: 'Instellingen' },
   { key: 'facturen', label: 'Facturen' },
   { key: 'betaling', label: 'Betaalmethode' },
+  { key: 'team', label: 'Team' }, // ⬅️ nieuw
   {
     key: 'tracking',
     label: (
@@ -212,26 +213,25 @@ useEffect(() => {
       </span>
     ),
   },
-]
+].map((tab) => (
+  <button
+    key={tab.key}
+    onClick={() => {
+      setActiveTab(tab.key)
+      window.location.hash = tab.key
+      setGeneralMessage(null)
+      setTrackingMessage(null)
+    }}
+    className={`block w-full text-left px-4 py-2 rounded ${
+      activeTab === tab.key
+        ? 'bg-blue-100 text-blue-700 font-medium'
+        : 'hover:bg-gray-100 text-gray-700'
+    }`}
+  >
+    {tab.label}
+  </button>
+))}
 
-.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => {
-              setActiveTab(tab.key)
-              window.location.hash = tab.key
-              setGeneralMessage(null)
-              setTrackingMessage(null)
-            }}
-            className={`block w-full text-left px-4 py-2 rounded ${
-              activeTab === tab.key
-                ? 'bg-blue-100 text-blue-700 font-medium'
-                : 'hover:bg-gray-100 text-gray-700'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
         <button
           onClick={handleLogout}
           className="block w-full text-left px-4 py-2 rounded hover:bg-red-100 text-red-600 mt-4"
@@ -350,6 +350,14 @@ useEffect(() => {
             <p className="text-gray-600">Hier beheer je je betaalmethoden.</p>
           </div>
         )}
+
+        {activeTab === 'team' && (
+  <div>
+    <h2 className="text-xl font-semibold mb-4">Team</h2>
+    <TeamTab />
+  </div>
+)}
+
 
         {activeTab === 'tracking' && (
           <div>

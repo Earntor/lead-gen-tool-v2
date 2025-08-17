@@ -71,7 +71,7 @@ const EXTRA_BLACKLIST_DOMAINS = [
   'kpn.net', 'ziggo.nl', 'glasoperator.nl', 't-mobilethuis.nl', 'chello.nl',
   'dynamic.upc.nl', 'vodafone.nl', 'versatel', 'msn.com', 'akamaitechnologies.com',
   'telenet.be', 'myaisfibre.com', 'filterplatform.nl', 'xs4all.nl', 'home.nl',
-  'weserve.nl', 'crawl.cloudflare.com', 'googlebot.com','client.t-mobilethuis.nl', 'starlinkisp.net', 'baremetal.scw.cloud','fbsv','sprious.com', 'your-server.de', 'vodafone.pt', 'ip.telfort.nl', 'amazonaws.com', 'dataproviderbot.com', 'apple.com', 'belgacom.be' 
+  'weserve.nl', 'crawl.cloudflare.com', 'kabelnoord.net', 'googlebot.com','client.t-mobilethuis.nl', 'starlinkisp.net', 'baremetal.scw.cloud','fbsv','sprious.com', 'your-server.de', 'vodafone.pt', 'ip.telfort.nl', 'amazonaws.com', 'dataproviderbot.com', 'apple.com', 'belgacom.be' 
 ];
 
 async function logBlockedSignal({
