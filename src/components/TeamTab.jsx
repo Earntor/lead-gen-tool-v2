@@ -1,3 +1,4 @@
+// src/components/TeamTab.jsx
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '../lib/supabaseClient'
 
@@ -7,7 +8,7 @@ const ROLES = [
   { value: 'viewer', label: 'Viewer' },
 ]
 
-// Houd dit gelijk aan je DB-limiet (of maak ‘m dynamisch later)
+// Houd dit gelijk aan je DB-limiet (of maak ‘m later dynamisch)
 const SEAT_LIMIT = 5
 
 export default function TeamTab() {
@@ -15,7 +16,7 @@ export default function TeamTab() {
   const [orgId, setOrgId] = useState(null)
   const [meRole, setMeRole] = useState(null)
   const [ownerId, setOwnerId] = useState(null)
-  const [selfId, setSelfId] = useState(null) // ⬅️ nieuw
+  const [selfId, setSelfId] = useState(null)
 
   // UI state
   const [members, setMembers] = useState([])
@@ -30,8 +31,13 @@ export default function TeamTab() {
   const [orgName, setOrgName] = useState('')
   const [savingName, setSavingName] = useState(false)
 
-  // Zoeken/filteren
+  // Zoeken / notices
   const [q, setQ] = useState('')
+  const [notice, setNotice] = useState(null) // {type:'success'|'warning'|'error', text:string} | null
+  function flash(type, text, ms = 4500) {
+    setNotice({ type, text })
+    if (ms) setTimeout(() => setNotice(null), ms)
+  }
 
   const getToken = useCallback(async () => {
     try {
@@ -47,11 +53,12 @@ export default function TeamTab() {
     try {
       const { data: { session } } = await supabase.auth.getSession()
       const userId = session?.user?.id
-      setSelfId(userId) // ⬅️ nieuw
+      setSelfId(userId)
       if (!userId) {
         setOrgId(null)
         setMeRole(null)
         setOwnerId(null)
+        setOrgName('')
         return
       }
 
@@ -71,7 +78,7 @@ export default function TeamTab() {
         return
       }
 
-      // 2) mijn rol in deze org (kan soms traag/leeg zijn; vangen we later ook via ledenlijst)
+      // 2) mijn rol (kan soms leeg/traag zijn; vangen we later ook via ledenlijst)
       const { data: myMember } = await supabase
         .from('organization_members')
         .select('role')
@@ -80,7 +87,7 @@ export default function TeamTab() {
         .maybeSingle()
       setMeRole(myMember?.role || null)
 
-      // 3) org naam + owner ophalen
+      // 3) org naam + owner (zorg dat je een SELECT-policy hebt voor members)
       const { data: org } = await supabase
         .from('organizations')
         .select('name, owner_user_id')
@@ -93,7 +100,7 @@ export default function TeamTab() {
     }
   }, [])
 
-  // === Leden laden via jouw API ===
+  // === Leden laden via je API (service-role) ===
   const loadMembers = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -116,7 +123,7 @@ export default function TeamTab() {
       const list = Array.isArray(json.members) ? json.members : []
       setMembers(list)
 
-      // ⬇️ NIEUW: rol van mijzelf afleiden uit de ledenlijst (betrouwbaar voor ALLE admins)
+      // Rol betrouwbaarder afleiden uit lijst (werkt voor ALLE admins)
       try {
         const { data: { session } } = await supabase.auth.getSession()
         const uid = session?.user?.id
@@ -133,7 +140,7 @@ export default function TeamTab() {
     }
   }, [getToken])
 
-  // Afgeleide admin-status: werkt voor iedereen zodra de ledenlijst geladen is
+  // Afgeleide admin-status
   const derivedIsAdmin = members.some(m => m.user_id === selfId && m.role === 'admin')
   const canAdmin = (meRole === 'admin') || derivedIsAdmin
 
@@ -165,12 +172,12 @@ export default function TeamTab() {
     })()
   }, [loadContext, loadMembers])
 
-  // Nodig om invites na het bepalen van admin-status alsnog te laden
+  // Invites ophalen zodra adminstatus/orga bekend is
   useEffect(() => {
     if (orgId && canAdmin) loadInvites()
   }, [orgId, canAdmin, loadInvites])
 
-  // Derived UI helpers
+  // Derived helpers
   const seatCount = members.length
   const atLimit = seatCount >= SEAT_LIMIT
   const adminIds = members.filter(m => m.role === 'admin').map(m => m.user_id)
@@ -191,16 +198,40 @@ export default function TeamTab() {
       if (!canAdmin) return setError('Alleen admins mogen uitnodigen.')
       if (atLimit) return setError(`Limiet bereikt (${seatCount}/${SEAT_LIMIT}). Verwijder eerst iemand.`)
 
+      const emailTo = inviteEmail.trim().toLowerCase()
       const token = await getToken()
       if (!token) return setError('Niet ingelogd.')
+
       const res = await fetch('/api/org/invite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
+        body: JSON.stringify({ email: emailTo, role: inviteRole }),
       })
       const json = await res.json().catch(() => ({}))
-      if (!res.ok) return setError(json?.error || 'Uitnodigen mislukt.')
-      setInviteLink(json.inviteUrl)
+
+      if (!res.ok) {
+        if (json?.error === 'already_member') {
+          flash('error', 'Deze gebruiker is al lid van de organisatie.')
+          return
+        }
+        if (json?.error === 'not_org_admin') {
+          flash('error', 'Je bent geen admin in deze organisatie.')
+          return
+        }
+        if (json?.error === 'org_member_limit_reached') {
+          flash('error', 'Het maximum aantal gebruikers is bereikt.')
+          return
+        }
+        return setError(json?.error || 'Uitnodigen mislukt.')
+      }
+
+      setInviteLink(json.inviteUrl || '')
+      if (json.emailed) {
+        flash('success', `Uitnodiging verstuurd naar ${emailTo}.`)
+      } else {
+        flash('warning', `E-mail verzenden lukte niet. Kopieer de link hieronder en stuur deze handmatig naar ${emailTo}.`)
+      }
+
       setInviteEmail('')
       setInviteRole('member')
       loadInvites()
@@ -215,6 +246,7 @@ export default function TeamTab() {
       if (!canAdmin) return setError('Alleen admins mogen uitnodigingen intrekken.')
       const { error } = await supabase.from('organization_invites').delete().eq('id', id)
       if (error) return setError(error.message || 'Intrekken mislukt.')
+      flash('success', 'Uitnodiging ingetrokken.')
       loadInvites()
     } catch (e) {
       setError(e?.message || 'Onbekende fout bij intrekken.')
@@ -237,6 +269,7 @@ export default function TeamTab() {
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) return setError(json?.error || 'Rol wijzigen mislukt.')
+      flash('success', 'Rol bijgewerkt.')
       loadMembers()
     } catch (e) {
       setError(e?.message || 'Onbekende fout bij rol wijzigen.')
@@ -258,6 +291,7 @@ export default function TeamTab() {
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) return setError(json?.error || 'Verwijderen mislukt.')
+      flash('success', 'Lid verwijderd.')
       loadMembers()
     } catch (e) {
       setError(e?.message || 'Onbekende fout bij verwijderen.')
@@ -285,8 +319,10 @@ export default function TeamTab() {
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) return setError(json?.error || 'Opslaan mislukt.')
-      alert('Naam opgeslagen')
-      await loadContext() // naam/owner opnieuw ophalen
+
+      // ✅ Geen alert — nette banner + context opnieuw laden
+      flash('success', 'Naam opgeslagen.')
+      await loadContext()
     } catch (e) {
       setError(e?.message || 'Onbekende fout bij opslaan.')
     } finally {
@@ -306,7 +342,7 @@ export default function TeamTab() {
       if (!toCopy) return
       if (navigator?.clipboard?.writeText) {
         await navigator.clipboard.writeText(toCopy)
-        alert('Link gekopieerd')
+        flash('success', 'Link gekopieerd.')
       } else {
         const ta = document.createElement('textarea')
         ta.value = toCopy
@@ -314,10 +350,10 @@ export default function TeamTab() {
         ta.select()
         document.execCommand('copy')
         document.body.removeChild(ta)
-        alert('Link gekopieerd')
+        flash('success', 'Link gekopieerd.')
       }
     } catch {
-      alert('Kopiëren niet gelukt')
+      flash('error', 'Kopiëren niet gelukt.')
     }
   }
 
@@ -346,6 +382,21 @@ export default function TeamTab() {
       {error && (
         <div className="p-3 rounded bg-red-100 text-red-700 text-sm">
           {String(error)}
+        </div>
+      )}
+
+      {/* Notices */}
+      {notice && (
+        <div
+          className={`p-3 rounded text-sm ${
+            notice.type === 'success'
+              ? 'bg-green-100 text-green-800'
+              : notice.type === 'warning'
+              ? 'bg-yellow-100 text-yellow-800'
+              : 'bg-red-100 text-red-700'
+          }`}
+        >
+          {notice.text}
         </div>
       )}
 
