@@ -1,141 +1,118 @@
-// src/pages/invite/accept.js
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/router'
-import { supabase } from '../../../lib/supabaseClient'
+// src/pages/api/org/accept.js
+import { supabaseAdmin } from '../../../lib/supabaseAdminClient'
+import { getUserFromRequest } from '../../../lib/getUserFromRequest'
 
-export default function AcceptInvitePage() {
-  const router = useRouter()
-  const [status, setStatus] = useState('idle') // idle | need_login | working | success | error
-  const [msg, setMsg] = useState('')
+export default async function handler(req, res) {
+  if (req.method !== 'POST') return res.status(405).end()
 
-  // Login-link met redirect terug naar de invite
-  const loginHref = (() => {
-    if (typeof window === 'undefined') return '/login'
-    const url = new URL(window.location.href)
-    return `/login?next=${encodeURIComponent(url.pathname + url.search)}`
-  })()
+  // 1) Auth + payload
+  const { user } = await getUserFromRequest(req)
+  if (!user) return res.status(401).json({ error: 'not_authenticated' })
 
-  useEffect(() => {
-    if (!router.isReady) return
-    const token = (router.query.token || '').toString().trim()
+  const { token } = req.body || {}
+  const rawToken = String(token || '').trim()
+  if (!rawToken) return res.status(400).json({ error: 'invalid_or_used_token' })
 
-    let tm // timeout id voor cleanup
+  // 2) Invite ophalen op token
+  const { data: invite, error: invErr } = await supabaseAdmin
+    .from('organization_invites')
+    .select('id, org_id, email, role, expires_at, accepted_at')
+    .eq('token', rawToken)
+    .single()
 
-    async function run() {
-      if (!token) {
-        setStatus('error')
-        setMsg('Geen uitnodigingscode gevonden. Vraag de admin om een nieuwe link.')
-        return
+  if (invErr || !invite) {
+    return res.status(400).json({ error: 'invalid_or_used_token' })
+  }
+
+  // 3) Reeds gebruikt?
+  if (invite.accepted_at) {
+    return res.status(400).json({ error: 'invalid_or_used_token' })
+  }
+
+  // 4) Verlopen?
+  const now = new Date()
+  const expires = new Date(invite.expires_at)
+  if (Number.isNaN(expires.getTime()) || expires.getTime() < now.getTime()) {
+    return res.status(400).json({ error: 'invite_expired' })
+  }
+
+  // 5) E-mail matchen (case-insensitive)
+  //    Haal actuele e-mail van ingelogde user op uit auth.users
+  const { data: authUser, error: authErr } = await supabaseAdmin
+    .from('profiles')
+    .select('email, current_org_id')
+    .eq('id', user.id)
+    .single()
+
+  if (authErr || !authUser?.email) {
+    // Als je geen profiles.email bijhoudt, haal direct via auth API op.
+    // Maar in jouw setup staat email in profiles.
+    return res.status(400).json({ error: 'invite_email_mismatch' })
+  }
+
+  const invitedEmail = String(invite.email || '').trim().toLowerCase()
+  const sessionEmail = String(authUser.email || '').trim().toLowerCase()
+
+  if (!invitedEmail || invitedEmail !== sessionEmail) {
+    return res.status(400).json({ error: 'invite_email_mismatch' })
+  }
+
+  // 6) (Optioneel) Voorkom dat iemand met bestaande org-koppeling accepteert
+  //     — volgens je front-end wil je hiervoor error 'already_in_another_org' tonen
+  if (authUser.current_org_id && authUser.current_org_id !== invite.org_id) {
+    // Als je multi-org wilt toestaan, haal dit blok dan weg.
+    return res.status(400).json({ error: 'already_in_another_org' })
+  }
+
+  // 7) Al lid? (idempotent)
+  const { data: alreadyMember } = await supabaseAdmin
+    .from('organization_members')
+    .select('org_id, user_id')
+    .eq('org_id', invite.org_id)
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  if (!alreadyMember) {
+    // 8) Lid maken. Je triggers kunnen hier limieten afdwingen.
+    //    Als limiet wordt overschreden, geeft Postgres/trigger een fout terug.
+    const { error: addErr } = await supabaseAdmin
+      .from('organization_members')
+      .insert({
+        org_id: invite.org_id,
+        user_id: user.id,
+        role: invite.role, // rol van de invite
+      })
+
+    if (addErr) {
+      const msg = (addErr.message || '').toLowerCase()
+      // Vang een member-limiet of vergelijkbare trigger-fout af met jouw foutcode:
+      if (msg.includes('max') || msg.includes('limit') || msg.includes('enforce_max_members')) {
+        return res.status(400).json({ error: 'org_member_limit_reached' })
       }
-
-      // Is user ingelogd?
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session?.access_token) {
-        setStatus('need_login')
-        setMsg('Je moet eerst inloggen om de uitnodiging te accepteren.')
-        return
-      }
-
-      try {
-        setStatus('working')
-        setMsg('Uitnodiging wordt geaccepteerd…')
-
-        const res = await fetch('/api/org/accept', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({ token }),
-        })
-
-        // Speciaal: sessie verlopen of geen auth → direct naar login
-        if (res.status === 401) {
-          setStatus('need_login')
-          setMsg('Je sessie is verlopen. Log opnieuw in om de uitnodiging te accepteren.')
-          return
-        }
-
-        const json = await res.json().catch(() => ({}))
-
-        if (!res.ok) {
-          switch (json?.error) {
-            case 'invalid_or_used_token':
-              setMsg('Deze uitnodiging is ongeldig of al gebruikt.')
-              break
-            case 'invite_expired':
-              setMsg('Deze uitnodiging is verlopen. Vraag de admin om een nieuwe uitnodiging.')
-              break
-            case 'invite_email_mismatch':
-              setMsg('Je bent ingelogd met een ander e-mailadres dan waar de uitnodiging naartoe is gestuurd.')
-              break
-            case 'already_in_another_org':
-              setMsg('Je bent al gekoppeld aan een andere organisatie.')
-              break
-            case 'org_member_limit_reached':
-              setMsg('De organisatie heeft het maximum aantal gebruikers bereikt.')
-              break
-            default:
-              setMsg(json?.error || 'Accepteren is mislukt.')
-          }
-          setStatus('error')
-          return
-        }
-
-        setStatus('success')
-        setMsg('Uitnodiging geaccepteerd!')
-        tm = setTimeout(() => router.replace('/account#team'), 1500)
-      } catch (e) {
-        setStatus('error')
-        setMsg(e?.message || 'Er ging iets mis tijdens het accepteren.')
-      }
+      // Dubbele insert is oké (unique pk), maar die case hebben we al uitgesloten via check hierboven.
+      return res.status(400).json({ error: addErr.message || 'join_failed' })
     }
+  }
 
-    run()
-    return () => { if (tm) clearTimeout(tm) }
-  }, [router.isReady, router.query.token, router])
+  // 9) Invite markeren als geaccepteerd (ook idempotent)
+  const { error: updInvErr } = await supabaseAdmin
+    .from('organization_invites')
+    .update({ accepted_at: new Date().toISOString() })
+    .eq('id', invite.id)
 
-  return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-gray-50">
-      <div className="w-full max-w-md bg-white border rounded-xl shadow p-6 space-y-4">
-        <h1 className="text-xl font-semibold">Uitnodiging accepteren</h1>
+  if (updInvErr) {
+    // Niet kritisch voor membership, maar goed om te melden
+    // (We geven alsnog success terug, want lidmaatschap is gelukt)
+    return res.status(200).json({ ok: true, warning: 'invite_mark_failed' })
+  }
 
-        {status === 'idle' && <p className="text-gray-600">Bezig met laden…</p>}
+  // 10) current_org_id zetten als leeg
+  if (!authUser.current_org_id) {
+    await supabaseAdmin
+      .from('profiles')
+      .update({ current_org_id: invite.org_id })
+      .eq('id', user.id)
+  }
 
-        {status === 'need_login' && (
-          <>
-            <p className="text-gray-700">{msg}</p>
-            <a href={loginHref} className="inline-block px-4 py-2 rounded bg-black text-white">
-              Inloggen
-            </a>
-          </>
-        )}
-
-        {status === 'working' && <p className="text-gray-700">{msg}</p>}
-
-        {status === 'success' && (
-          <>
-            <div className="p-3 rounded bg-green-100 text-green-800">{msg}</div>
-            <a href="/account#team" className="inline-block px-4 py-2 rounded bg-black text-white">
-              Ga naar Team
-            </a>
-          </>
-        )}
-
-        {status === 'error' && (
-          <>
-            <div className="p-3 rounded bg-red-100 text-red-700">{msg}</div>
-            <div className="flex items-center gap-2">
-              <a href="/account#team" className="inline-block px-4 py-2 rounded bg-gray-800 text-white">
-                Terug naar account
-              </a>
-              <button onClick={() => location.reload()} className="px-3 py-2 border rounded">
-                Opnieuw proberen
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  )
+  return res.status(200).json({ ok: true })
 }

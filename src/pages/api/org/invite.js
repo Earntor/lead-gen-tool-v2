@@ -132,23 +132,32 @@ export default async function handler(req, res) {
   // E-mail versturen (werkt ook zonder eigen domein met onboarding@resend.dev)
   try {
     const from = process.env.EMAIL_FROM || 'LeadGen <onboarding@resend.dev>'
-    await resend.emails.send({
-      from,
-      to: normEmail,
-      subject: `Uitnodiging voor ${orgName}`,
-      html: `
-        <div style="font-family: Arial, sans-serif; line-height:1.5;">
-          <p>Je bent uitgenodigd om mee te werken in <strong>${orgName}</strong>.</p>
-          <p>
-            <a href="${inviteUrl}" style="display:inline-block;padding:10px 16px;border-radius:6px;background:#111;color:#fff;text-decoration:none">
-              Uitnodiging accepteren
-            </a>
-          </p>
-          <p>Of kopieer deze link: <a href="${inviteUrl}">${inviteUrl}</a></p>
-          <p>Deze link verloopt over ${expiryDays} dagen.</p>
-        </div>
-      `,
-    })
+await resend.emails.send({
+  from,
+  to: normEmail,
+  subject: `Uitnodiging voor ${orgName}`,
+  // ✅ Plain-text fallback voor betere deliverability
+  text: `Je bent uitgenodigd om mee te werken in ${orgName}.
+
+Accepteer je uitnodiging via:
+${inviteUrl}
+
+Let op: deze link verloopt over ${expiryDays} dagen.`,
+
+  // (ongewijzigd) HTML-versie
+  html: `
+    <div style="font-family: Arial, sans-serif; line-height:1.5;">
+      <p>Je bent uitgenodigd om mee te werken in <strong>${orgName}</strong>.</p>
+      <p>
+        <a href="${inviteUrl}" style="display:inline-block;padding:10px 16px;border-radius:6px;background:#111;color:#fff;text-decoration:none">
+          Uitnodiging accepteren
+        </a>
+      </p>
+      <p>Of kopieer deze link: <a href="${inviteUrl}">${inviteUrl}</a></p>
+      <p>Deze link verloopt over ${expiryDays} dagen.</p>
+    </div>
+  `,
+})
     return res.status(200).json({ ok: true, inviteId, inviteUrl, emailed: true })
   } catch (mailErr) {
     // E-mail faalde: invite blijft geldig; geef link terug als fallback
