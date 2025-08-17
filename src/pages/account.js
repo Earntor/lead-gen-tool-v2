@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
+import dynamic from 'next/dynamic'
 import { supabase } from '../lib/supabaseClient'
-import { formatDutchDateTime } from '../lib/formatTimestamp';
+import { formatDutchDateTime } from '../lib/formatTimestamp'
+
+// ⬅️ nieuw: TeamTab alleen client-side laden (voorkomt SSR/hydration errors)
+const TeamTab = dynamic(() => import('../components/TeamTab'), {
+  ssr: false,
+  loading: () => <p>Team laden…</p>,
+})
+
 
 
 export default function Account() {

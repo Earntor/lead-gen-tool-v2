@@ -1,105 +1,183 @@
-// components/TeamTab.jsx
-import { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabaseClient';
+import { useEffect, useState, useCallback } from 'react'
+import { supabase } from '../lib/supabaseClient'
 
 const ROLES = [
   { value: 'admin', label: 'Admin' },
   { value: 'member', label: 'Gebruiker' },
   { value: 'viewer', label: 'Viewer' },
-];
+]
 
 export default function TeamTab() {
-  const [members, setMembers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState('member');
-  const [inviteLink, setInviteLink] = useState('');
-  const [orgName, setOrgName] = useState('');
-  const [savingName, setSavingName] = useState(false);
+  const [members, setMembers] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
-  async function getToken() {
-    const { data: { session } } = await supabase.auth.getSession();
-    return session?.access_token || null;
-  }
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteRole, setInviteRole] = useState('member')
+  const [inviteLink, setInviteLink] = useState('')
 
-  async function loadMembers() {
-    setLoading(true);
-    const token = await getToken();
-    if (!token) return;
-    const res = await fetch('/api/org/members', {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const json = await res.json();
-    if (res.ok) setMembers(json.members || []);
-    setLoading(false);
-  }
+  const [orgName, setOrgName] = useState('')
+  const [savingName, setSavingName] = useState(false)
 
-  useEffect(() => { loadMembers(); }, []);
+  const getToken = useCallback(async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      return session?.access_token || null
+    } catch {
+      return null
+    }
+  }, [])
+
+  const loadMembers = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const token = await getToken()
+      if (!token) {
+        setMembers([])
+        setError('Niet ingelogd of sessie verlopen.')
+        return
+      }
+      const res = await fetch('/api/org/members', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setMembers([])
+        setError(json?.error || 'Kon leden niet laden.')
+        return
+      }
+      setMembers(Array.isArray(json.members) ? json.members : [])
+    } catch (e) {
+      setMembers([])
+      setError(e?.message || 'Onbekende fout bij laden leden.')
+    } finally {
+      setLoading(false)
+    }
+  }, [getToken])
+
+  useEffect(() => { loadMembers() }, [loadMembers])
 
   async function sendInvite(e) {
-    e.preventDefault();
-    setInviteLink('');
-    const token = await getToken();
-    if (!token) return;
-
-    const res = await fetch('/api/org/invite', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
-    });
-    const json = await res.json();
-    if (!res.ok) {
-      alert(json?.error || 'Kon uitnodiging niet versturen');
-      return;
+    e.preventDefault()
+    setInviteLink('')
+    setError(null)
+    try {
+      const token = await getToken()
+      if (!token) return setError('Niet ingelogd.')
+      const res = await fetch('/api/org/invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) return setError(json?.error || 'Uitnodigen mislukt.')
+      setInviteLink(json.inviteUrl)
+      setInviteEmail('')
+      setInviteRole('member')
+    } catch (e) {
+      setError(e?.message || 'Onbekende fout bij uitnodigen.')
     }
-    setInviteLink(json.inviteUrl);
-    setInviteEmail('');
-    setInviteRole('member');
   }
 
   async function changeRole(user_id, role) {
-    const token = await getToken();
-    const res = await fetch('/api/org/members', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ target_user_id: user_id, role }),
-    });
-    const json = await res.json();
-    if (!res.ok) return alert(json?.error || 'Rol wijzigen mislukt');
-    loadMembers();
+    setError(null)
+    try {
+      const token = await getToken()
+      if (!token) return setError('Niet ingelogd.')
+      const res = await fetch('/api/org/members', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ target_user_id: user_id, role }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) return setError(json?.error || 'Rol wijzigen mislukt.')
+      loadMembers()
+    } catch (e) {
+      setError(e?.message || 'Onbekende fout bij rol wijzigen.')
+    }
   }
 
   async function removeMember(user_id) {
-    if (!confirm('Weet je zeker dat je dit lid wilt verwijderen?')) return;
-    const token = await getToken();
-    const res = await fetch('/api/org/members', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ target_user_id: user_id }),
-    });
-    const json = await res.json();
-    if (!res.ok) return alert(json?.error || 'Verwijderen mislukt');
-    loadMembers();
+    if (!confirm('Weet je zeker dat je dit lid wilt verwijderen?')) return
+    setError(null)
+    try {
+      const token = await getToken()
+      if (!token) return setError('Niet ingelogd.')
+      const res = await fetch('/api/org/members', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ target_user_id: user_id }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) return setError(json?.error || 'Verwijderen mislukt.')
+      loadMembers()
+    } catch (e) {
+      setError(e?.message || 'Onbekende fout bij verwijderen.')
+    }
   }
 
   async function saveOrgName(e) {
-    e.preventDefault();
-    setSavingName(true);
-    const token = await getToken();
-    const res = await fetch('/api/org/update-org', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ name: orgName }),
-    });
-    const json = await res.json();
-    setSavingName(false);
-    if (!res.ok) return alert(json?.error || 'Opslaan mislukt');
-    alert('Naam opgeslagen');
+    e.preventDefault()
+    setSavingName(true)
+    setError(null)
+    try {
+      const token = await getToken()
+      if (!token) {
+        setSavingName(false)
+        return setError('Niet ingelogd.')
+      }
+      const res = await fetch('/api/org/update-org', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: orgName }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) return setError(json?.error || 'Opslaan mislukt.')
+      alert('Naam opgeslagen')
+    } catch (e) {
+      setError(e?.message || 'Onbekende fout bij opslaan.')
+    } finally {
+      setSavingName(false)
+    }
+  }
+
+  function safeSince(ts) {
+    if (!ts) return '-'
+    const d = new Date(ts)
+    return Number.isNaN(d.getTime()) ? '-' : d.toLocaleString('nl-NL')
+  }
+
+  async function copyToClipboard(text) {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+        alert('Link gekopieerd')
+      } else {
+        // Fallback
+        const ta = document.createElement('textarea')
+        ta.value = text
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+        alert('Link gekopieerd')
+      }
+    } catch {
+      alert('Kopiëren niet gelukt')
+    }
   }
 
   return (
     <div className="space-y-6">
-      {/* Org-naam wijzigen (alleen zichtbaar laten via conditionele rendering als je de rol weet) */}
+      {/* Foutmelding */}
+      {error && (
+        <div className="p-3 rounded bg-red-100 text-red-700 text-sm">
+          {String(error)}
+        </div>
+      )}
+
+      {/* Organisatienaam */}
       <form onSubmit={saveOrgName} className="p-4 border rounded-xl">
         <h3 className="font-semibold mb-2">Organisatienaam</h3>
         <div className="flex gap-2">
@@ -110,7 +188,7 @@ export default function TeamTab() {
             onChange={(e) => setOrgName(e.target.value)}
           />
           <button
-            className="px-4 py-2 rounded bg-black text-white"
+            className="px-4 py-2 rounded bg-black text-white disabled:opacity-50"
             disabled={savingName || !orgName.trim()}
           >
             {savingName ? 'Opslaan…' : 'Opslaan'}
@@ -119,15 +197,13 @@ export default function TeamTab() {
         <p className="text-sm text-gray-500 mt-1">Alleen Admin kan de naam wijzigen.</p>
       </form>
 
-      {/* Ledenlijst */}
+      {/* Leden */}
       <div className="p-4 border rounded-xl">
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-semibold">Teamleden</h3>
-          <button
-            onClick={loadMembers}
-            className="text-sm underline"
-          >Vernieuwen</button>
+          <button onClick={loadMembers} className="text-sm underline">Vernieuwen</button>
         </div>
+
         {loading ? (
           <p>Leden laden…</p>
         ) : members.length === 0 ? (
@@ -138,7 +214,7 @@ export default function TeamTab() {
               <li key={m.user_id} className="py-3 flex items-center justify-between gap-4">
                 <div>
                   <div className="font-medium">{m.full_name || m.email || m.user_id}</div>
-                  <div className="text-xs text-gray-500">Sinds: {new Date(m.since).toLocaleString('nl-NL')}</div>
+                  <div className="text-xs text-gray-500">Sinds: {safeSince(m?.since)}</div>
                 </div>
                 <div className="flex items-center gap-3">
                   <select
@@ -190,7 +266,7 @@ export default function TeamTab() {
               <input className="flex-1 border rounded px-2 py-1" value={inviteLink} readOnly />
               <button
                 type="button"
-                onClick={() => navigator.clipboard.writeText(inviteLink)}
+                onClick={() => copyToClipboard(inviteLink)}
                 className="px-3 py-1 border rounded"
               >
                 Kopieer
@@ -200,5 +276,5 @@ export default function TeamTab() {
         )}
       </form>
     </div>
-  );
+  )
 }
