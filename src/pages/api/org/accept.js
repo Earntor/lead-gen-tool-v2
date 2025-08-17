@@ -8,7 +8,7 @@ export default function AcceptInvitePage() {
   const [status, setStatus] = useState('idle') // idle | need_login | working | success | error
   const [msg, setMsg] = useState('')
 
-  // Afgeleide login-link met redirect terug naar de invite
+  // Login-link met redirect terug naar de invite
   const loginHref = (() => {
     if (typeof window === 'undefined') return '/login'
     const url = new URL(window.location.href)
@@ -48,6 +48,14 @@ export default function AcceptInvitePage() {
           },
           body: JSON.stringify({ token }),
         })
+
+        // Speciaal: sessie verlopen of geen auth → direct naar login
+        if (res.status === 401) {
+          setStatus('need_login')
+          setMsg('Je sessie is verlopen. Log opnieuw in om de uitnodiging te accepteren.')
+          return
+        }
+
         const json = await res.json().catch(() => ({}))
 
         if (!res.ok) {
@@ -97,7 +105,9 @@ export default function AcceptInvitePage() {
         {status === 'need_login' && (
           <>
             <p className="text-gray-700">{msg}</p>
-            <a href={loginHref} className="inline-block px-4 py-2 rounded bg-black text-white">Inloggen</a>
+            <a href={loginHref} className="inline-block px-4 py-2 rounded bg-black text-white">
+              Inloggen
+            </a>
           </>
         )}
 
@@ -106,7 +116,9 @@ export default function AcceptInvitePage() {
         {status === 'success' && (
           <>
             <div className="p-3 rounded bg-green-100 text-green-800">{msg}</div>
-            <a href="/account#team" className="inline-block px-4 py-2 rounded bg-black text-white">Ga naar Team</a>
+            <a href="/account#team" className="inline-block px-4 py-2 rounded bg-black text-white">
+              Ga naar Team
+            </a>
           </>
         )}
 
@@ -114,8 +126,12 @@ export default function AcceptInvitePage() {
           <>
             <div className="p-3 rounded bg-red-100 text-red-700">{msg}</div>
             <div className="flex items-center gap-2">
-              <a href="/account#team" className="inline-block px-4 py-2 rounded bg-gray-800 text-white">Terug naar account</a>
-              <button onClick={() => location.reload()} className="px-3 py-2 border rounded">Opnieuw proberen</button>
+              <a href="/account#team" className="inline-block px-4 py-2 rounded bg-gray-800 text-white">
+                Terug naar account
+              </a>
+              <button onClick={() => location.reload()} className="px-3 py-2 border rounded">
+                Opnieuw proberen
+              </button>
             </div>
           </>
         )}
