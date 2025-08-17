@@ -4,6 +4,9 @@ import { supabaseAdmin } from '../../../lib/supabaseAdminClient'
 import { getUserFromRequest } from '../../../lib/getUserFromRequest'
 import { Resend } from 'resend'
 
+// Let op: Pages API draait standaard in Node runtime (NIET Edge).
+// Zorg dat je hier GEEN `export const runtime = 'edge'` hebt staan.
+
 const resend = new Resend(process.env.RESEND_API_KEY)
 
 export default async function handler(req, res) {
@@ -16,7 +19,7 @@ export default async function handler(req, res) {
   const normEmail = String(email || '').trim().toLowerCase()
   if (!normEmail) return res.status(400).json({ error: 'email_required' })
 
-  // Huidige org
+  // Huidige org van de aanvrager
   const { data: profile, error: profErr } = await supabaseAdmin
     .from('profiles')
     .select('current_org_id')
@@ -26,7 +29,7 @@ export default async function handler(req, res) {
   const orgId = profile?.current_org_id
   if (!orgId) return res.status(400).json({ error: 'no_current_org' })
 
-  // Admin check
+  // Is de aanvrager admin binnen deze org?
   const { data: me, error: meErr } = await supabaseAdmin
     .from('organization_members')
     .select('role')
@@ -37,7 +40,7 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: 'not_org_admin' })
   }
 
-  // Als email al lid is: stop
+  // Als e-mailadres al lid is: stoppen
   const { data: profByEmail } = await supabaseAdmin
     .from('profiles')
     .select('id')
@@ -53,7 +56,7 @@ export default async function handler(req, res) {
     if (already) return res.status(409).json({ error: 'already_member' })
   }
 
-  // Org-naam
+  // Org-naam (voor in de mail)
   const { data: org } = await supabaseAdmin
     .from('organizations')
     .select('name')
@@ -61,7 +64,7 @@ export default async function handler(req, res) {
     .single()
   const orgName = org?.name || 'je organisatie'
 
-  // Robuuste base URL (prod of lokaal)
+  // Base-URL (prod of lokaal)
   const proto = req.headers['x-forwarded-proto'] || 'https'
   const host = req.headers['host']
   const base = process.env.NEXT_PUBLIC_APP_URL || `${proto}://${host}`
@@ -71,7 +74,7 @@ export default async function handler(req, res) {
     .from('organization_invites')
     .select('id, token')
     .eq('org_id', orgId)
-    .ilike('email', normEmail)       // ⬅️ case-insensitive
+    .ilike('email', normEmail)
     .is('accepted_at', null)
     .maybeSingle()
 
@@ -81,7 +84,7 @@ export default async function handler(req, res) {
   let inviteId, token
 
   if (existing) {
-    // Open invite bestaat: verlengen + rol updaten
+    // Open invite bestaat → verlengen + rol bijwerken
     token = existing.token
     const { error: updErr } = await supabaseAdmin
       .from('organization_invites')
@@ -90,13 +93,13 @@ export default async function handler(req, res) {
     if (updErr) return res.status(400).json({ error: updErr.message })
     inviteId = existing.id
   } else {
-    // Nieuwe invite maken
+    // Nieuwe invite aanmaken
     token = crypto.randomBytes(24).toString('hex')
     const { data: ins, error: insErr } = await supabaseAdmin
       .from('organization_invites')
       .insert({
         org_id: orgId,
-        email: normEmail,       // ⬅️ altijd lowercase wegschrijven
+        email: normEmail, // altijd lowercase wegschrijven
         role,
         token,
         invited_by: user.id,
@@ -107,7 +110,7 @@ export default async function handler(req, res) {
 
     if (insErr) {
       const msg = String(insErr.message || '')
-      // Fallback als unique constraint toch triggert door oude hoofdletters
+      // Fallback als unique constraint triggert (oude invites met hoofdletters)
       if (msg.includes('idx_org_invites_unique_open_email') || insErr.code === '23505') {
         const { data: again } = await supabaseAdmin
           .from('organization_invites')
@@ -129,44 +132,68 @@ export default async function handler(req, res) {
 
   const inviteUrl = `${base}/invite/accept?token=${encodeURIComponent(token)}`
 
-  // E-mail versturen (werkt ook zonder eigen domein met onboarding@resend.dev)
+  // --- MAIL VERSTUREN (Resend) ---
+  if (!process.env.RESEND_API_KEY) {
+    // Server env ontbreekt → mail kan nooit werken
+    return res.status(500).json({ ok: false, error: 'resend_key_missing', inviteId, inviteUrl })
+  }
+
+  const from = process.env.EMAIL_FROM || 'LeadGen <onboarding@resend.dev>'
+
   try {
-    const from = process.env.EMAIL_FROM || 'LeadGen <onboarding@resend.dev>'
-await resend.emails.send({
-  from,
-  to: normEmail,
-  subject: `Uitnodiging voor ${orgName}`,
-  // ✅ Plain-text fallback voor betere deliverability
-  text: `Je bent uitgenodigd om mee te werken in ${orgName}.
+    const result = await resend.emails.send({
+      from,
+      to: normEmail,
+      subject: `Uitnodiging voor ${orgName}`,
+      // Plain-text voor deliverability
+      text: `Je bent uitgenodigd om mee te werken in ${orgName}.
 
 Accepteer je uitnodiging via:
 ${inviteUrl}
 
 Let op: deze link verloopt over ${expiryDays} dagen.`,
+      // HTML-versie
+      html: `
+        <div style="font-family: Arial, sans-serif; line-height:1.5;">
+          <p>Je bent uitgenodigd om mee te werken in <strong>${orgName}</strong>.</p>
+          <p>
+            <a href="${inviteUrl}" style="display:inline-block;padding:10px 16px;border-radius:6px;background:#111;color:#fff;text-decoration:none">
+              Uitnodiging accepteren
+            </a>
+          </p>
+          <p>Of kopieer deze link: <a href="${inviteUrl}">${inviteUrl}</a></p>
+          <p>Deze link verloopt over ${expiryDays} dagen.</p>
+        </div>
+      `,
+    })
 
-  // (ongewijzigd) HTML-versie
-  html: `
-    <div style="font-family: Arial, sans-serif; line-height:1.5;">
-      <p>Je bent uitgenodigd om mee te werken in <strong>${orgName}</strong>.</p>
-      <p>
-        <a href="${inviteUrl}" style="display:inline-block;padding:10px 16px;border-radius:6px;background:#111;color:#fff;text-decoration:none">
-          Uitnodiging accepteren
-        </a>
-      </p>
-      <p>Of kopieer deze link: <a href="${inviteUrl}">${inviteUrl}</a></p>
-      <p>Deze link verloopt over ${expiryDays} dagen.</p>
-    </div>
-  `,
-})
-    return res.status(200).json({ ok: true, inviteId, inviteUrl, emailed: true })
+    // Handig voor debugging in (Vercel) logs
+    console.log('Resend sent invite', { to: normEmail, id: result?.id })
+
+    return res.status(200).json({
+      ok: true,
+      inviteId,
+      inviteUrl,
+      emailed: true,
+      messageId: result?.id || null,
+    })
   } catch (mailErr) {
-    // E-mail faalde: invite blijft geldig; geef link terug als fallback
+    // Log Resend fout voor snelle diagnose
+    console.error('Resend error', {
+      name: mailErr?.name,
+      message: mailErr?.message,
+      cause: mailErr?.cause,
+      response: mailErr?.response,
+    })
+
+    // Fallback: invite is geldig, geef de link terug zodat UI "Kopieer link" kan tonen
     return res.status(200).json({
       ok: true,
       inviteId,
       inviteUrl,
       emailed: false,
       warning: 'email_send_failed',
+      details: mailErr?.message || 'unknown_resend_error',
     })
   }
 }
