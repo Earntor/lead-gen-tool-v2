@@ -84,10 +84,11 @@ async function fetchIpApi(ip) {
 
 // --- handler ---------------------------------------------------------------
 export default async function manualEnrichRunner(req, res) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  // Sta zowel GET (query) als POST (json) toe
+  const src = req.method === 'GET' ? (req.query || {}) : (req.body || {});
+  const onlyIp = src.ip || null;
+  const limit  = Number(src.limit) || 10;
 
-  const onlyIp = req.body?.ip || null;
-  const limit  = Number(req.body?.limit) || 10;
 
   // Pak rijen die klaarstaan én ten minste een naam of domein hebben
   const query = supabaseAdmin
