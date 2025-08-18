@@ -1,5 +1,5 @@
 // src/pages/register.js
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useRouter } from 'next/router'
 import PasswordInput from '../components/PasswordInput'
@@ -14,6 +14,13 @@ export default function Register() {
   const [loading, setLoading] = useState(false)
   const router = useRouter()
   const recaptchaRef = useRef()
+
+  // 👇 Invite e-mail alvast invullen
+  useEffect(() => {
+    if (router.isReady && router.query.email) {
+      setEmail(router.query.email)
+    }
+  }, [router.isReady, router.query.email])
 
   const getPasswordStrength = (pwd) => {
     if (pwd.length < 6) return { label: 'Zwak', color: 'bg-red-500' }
@@ -43,7 +50,7 @@ export default function Register() {
       const inviteToken = router.query?.invite
       if (inviteToken) {
         try {
-          await fetch('/api/org/accept-invite', {
+          await fetch('/api/org/accept', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ token: inviteToken }),
@@ -117,6 +124,7 @@ export default function Register() {
             onChange={(e) => setEmail(e.target.value)}
             className="border border-gray-300 rounded w-full px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             required
+            readOnly={!!router.query.email} // 👈 Alleen locken als invite-email ingevuld is
           />
         </div>
 

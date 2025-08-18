@@ -31,7 +31,7 @@ export default function Login() {
     const inviteToken = router.query?.invite
     if (inviteToken) {
       try {
-        await fetch('/api/org/accept-invite', {
+        await fetch('/api/org/accept', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token: inviteToken }),

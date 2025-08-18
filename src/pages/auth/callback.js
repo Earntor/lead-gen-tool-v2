@@ -7,30 +7,34 @@ export default function AuthCallback() {
   const router = useRouter()
 
   useEffect(() => {
-    const handleCallback = async () => {
-      const { data, error } = await supabase.auth.getSession()
+    async function handleCallback() {
+      // 1) Haal de sessie op (werkt na password + na OAuth)
+      const { data: { session }, error } = await supabase.auth.getSession()
 
-      if (error) {
-        console.error('Fout bij sessie ophalen:', error.message)
+      if (error || !session) {
+        console.error('Geen geldige sessie gevonden:', error?.message)
         router.replace('/login')
         return
       }
 
-      // ✅ Invite-token accepteren indien aanwezig
+      // 2) Invite-token accepteren (alleen als die er is)
       const inviteToken = router.query?.invite
       if (inviteToken) {
         try {
-          await fetch('/api/org/accept-invite', {
+          const res = await fetch('/api/org/accept', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ token: inviteToken }),
           })
+          if (!res.ok) {
+            console.error('Invite accepteren mislukt:', await res.text())
+          }
         } catch (e) {
-          console.error('Invite accepteren mislukt:', e)
+          console.error('Invite API error:', e)
         }
       }
 
-      // Daarna redirect
+      // 3) Redirect naar next of dashboard
       const nextParam = router.query?.next
       if (nextParam && nextParam.startsWith('/')) {
         router.replace(nextParam)
@@ -39,7 +43,7 @@ export default function AuthCallback() {
       }
     }
 
-    handleCallback()
+    if (router.isReady) handleCallback()
   }, [router])
 
   return <p className="text-center mt-20">Je wordt ingelogd...</p>
