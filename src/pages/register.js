@@ -15,7 +15,7 @@ export default function Register() {
   const router = useRouter()
   const recaptchaRef = useRef()
 
-  // 👇 Invite e-mail alvast invullen
+  // Invite e-mail alvast invullen (maar veld blijft bewerkbaar)
   useEffect(() => {
     if (router.isReady && router.query.email) {
       setEmail(router.query.email)
@@ -33,7 +33,7 @@ export default function Register() {
     setLoading(true)
     setMessage('')
 
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -42,12 +42,43 @@ export default function Register() {
     })
 
     if (error) {
-  setMessage('Fout bij registreren: ' + error.message)
-} else {
-  setMessage('Registratie gelukt! Bevestig je e-mail via de link in je inbox.')
-  // 🚫 NIET redirecten en NIET invite accepteren hier
-}
+      if (
+        error.message.includes('already registered') ||
+        error.message.includes('User already registered')
+      ) {
+        setMessage(
+          'Dit e-mailadres is al geregistreerd. Probeer in te loggen of reset je wachtwoord.'
+        )
+      } else {
+        setMessage('Fout bij registreren: ' + error.message)
+      }
+      setLoading(false)
+      return
+    }
 
+    setMessage('Registratie gelukt! Bevestig je e-mail via de link in je inbox.')
+
+    // 👇 Invite-token verwerken
+    const inviteToken = router.query?.invite
+    if (inviteToken) {
+      try {
+        await fetch('/api/org/accept', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: inviteToken }),
+        })
+      } catch (e) {
+        console.error('Invite accepteren mislukt:', e)
+      }
+    }
+
+    // Daarna redirecten
+    const next = router.query?.next
+    if (next && next.startsWith('/')) {
+      router.replace(next)
+    } else {
+      router.replace('/dashboard')
+    }
 
     setLoading(false)
   }
@@ -59,13 +90,13 @@ export default function Register() {
     if (next) params.set('next', next)
     if (invite) params.set('invite', invite)
 
-    const redirectUrl = `${window.location.origin}/auth/callback${params.toString() ? '?' + params.toString() : ''}`
+    const redirectUrl = `${window.location.origin}/auth/callback${
+      params.toString() ? '?' + params.toString() : ''
+    }`
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: {
-        redirectTo: redirectUrl,
-      },
+      options: { redirectTo: redirectUrl },
     })
 
     if (error) setMessage('Fout bij Google sign-up: ' + error.message)
@@ -104,7 +135,7 @@ export default function Register() {
             onChange={(e) => setEmail(e.target.value)}
             className="border border-gray-300 rounded w-full px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             required
- />
+          />
         </div>
 
         <div>
