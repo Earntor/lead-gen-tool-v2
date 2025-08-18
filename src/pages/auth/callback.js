@@ -22,10 +22,14 @@ export default function AuthCallback() {
       if (inviteToken) {
         try {
           const res = await fetch('/api/org/accept', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: inviteToken }),
-          })
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${session.access_token}`, // ✅ belangrijk
+  },
+  body: JSON.stringify({ token: inviteToken }),
+})
+
           if (!res.ok) {
             console.error('Invite accepteren mislukt:', await res.text())
           }

@@ -42,32 +42,12 @@ export default function Register() {
     })
 
     if (error) {
-      setMessage('Fout bij registreren: ' + error.message)
-    } else {
-      setMessage('Registratie gelukt! Bevestig je e-mail.')
+  setMessage('Fout bij registreren: ' + error.message)
+} else {
+  setMessage('Registratie gelukt! Bevestig je e-mail via de link in je inbox.')
+  // 🚫 NIET redirecten en NIET invite accepteren hier
+}
 
-      // 👇 Invite-token verwerken
-      const inviteToken = router.query?.invite
-      if (inviteToken) {
-        try {
-          await fetch('/api/org/accept', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: inviteToken }),
-          })
-        } catch (e) {
-          console.error('Invite accepteren mislukt:', e)
-        }
-      }
-
-      // Daarna redirecten
-      const next = router.query?.next
-      if (next && next.startsWith('/')) {
-        router.replace(next)
-      } else {
-        router.replace('/dashboard')
-      }
-    }
 
     setLoading(false)
   }
@@ -124,8 +104,7 @@ export default function Register() {
             onChange={(e) => setEmail(e.target.value)}
             className="border border-gray-300 rounded w-full px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             required
-            readOnly={!!router.query.email} // 👈 Alleen locken als invite-email ingevuld is
-          />
+ />
         </div>
 
         <div>
