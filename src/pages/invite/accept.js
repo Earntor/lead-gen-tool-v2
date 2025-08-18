@@ -7,7 +7,7 @@ export default function AcceptInvitePage() {
   const router = useRouter()
   const { token } = router.query
 
-  const [status, setStatus] = useState('loading') // loading | need_login | error | success
+  const [status, setStatus] = useState('loading') // loading | need_register | error | success
   const [message, setMessage] = useState('Uitnodiging controleren...')
 
   useEffect(() => {
@@ -21,14 +21,15 @@ export default function AcceptInvitePage() {
         return
       }
 
-      // Is de gebruiker ingelogd?
+      // Check of gebruiker al ingelogd is
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
-        setStatus('need_login')
-        setMessage('Je moet eerst inloggen om de uitnodiging te accepteren.')
+        setStatus('need_register')
+        setMessage('Je moet eerst een account aanmaken of inloggen om de uitnodiging te accepteren.')
         const next = encodeURIComponent(window.location.pathname + window.location.search)
         setTimeout(() => {
-          router.replace(`/login?next=${next}`)
+          // Stuur naar registratiepagina i.p.v. login
+          router.replace(`/register?next=${next}`)
         }, 1000)
         return
       }
@@ -72,7 +73,7 @@ export default function AcceptInvitePage() {
       <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 12 }}>Uitnodiging accepteren</h1>
       <p style={{ marginBottom: 8 }}>{message}</p>
       {status === 'loading' && <p>Even geduld...</p>}
-      {status === 'need_login' && <p>We brengen je naar de inlogpagina…</p>}
+      {status === 'need_register' && <p>We brengen je naar de registratiepagina…</p>}
       {status === 'error' && (
         <button
           onClick={() => router.replace('/')}

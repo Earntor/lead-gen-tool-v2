@@ -1,8 +1,9 @@
+// src/pages/register.js
 import { useState, useRef } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useRouter } from 'next/router'
 import PasswordInput from '../components/PasswordInput'
-import dynamic from 'next/dynamic' // moet helemaal bovenaan!
+import dynamic from 'next/dynamic'
 const ReCAPTCHA = dynamic(() => import('react-google-recaptcha'), { ssr: false })
 import Link from 'next/link'
 
@@ -37,13 +38,50 @@ export default function Register() {
       setMessage('Fout bij registreren: ' + error.message)
     } else {
       setMessage('Registratie gelukt! Bevestig je e-mail.')
+
+      // 👇 Invite-token verwerken
+      const inviteToken = router.query?.invite
+      if (inviteToken) {
+        try {
+          await fetch('/api/org/accept-invite', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: inviteToken }),
+          })
+        } catch (e) {
+          console.error('Invite accepteren mislukt:', e)
+        }
+      }
+
+      // Daarna redirecten
+      const next = router.query?.next
+      if (next && next.startsWith('/')) {
+        router.replace(next)
+      } else {
+        router.replace('/dashboard')
+      }
     }
 
     setLoading(false)
   }
 
   const handleGoogleSignUp = async () => {
-    await supabase.auth.signInWithOAuth({ provider: 'google' })
+    const next = router.query?.next
+    const invite = router.query?.invite
+    const params = new URLSearchParams()
+    if (next) params.set('next', next)
+    if (invite) params.set('invite', invite)
+
+    const redirectUrl = `${window.location.origin}/auth/callback${params.toString() ? '?' + params.toString() : ''}`
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: redirectUrl,
+      },
+    })
+
+    if (error) setMessage('Fout bij Google sign-up: ' + error.message)
   }
 
   const strength = getPasswordStrength(password)
@@ -57,16 +95,16 @@ export default function Register() {
         <h2 className="text-2xl font-bold text-gray-800">Account aanmaken</h2>
 
         {message && (
-  <p
-    className={`text-sm text-center ${
-      message.startsWith('Registratie gelukt')
-        ? 'text-green-700'
-        : 'text-red-600'
-    }`}
-  >
-    {message}
-  </p>
-)}
+          <p
+            className={`text-sm text-center ${
+              message.startsWith('Registratie gelukt')
+                ? 'text-green-700'
+                : 'text-red-600'
+            }`}
+          >
+            {message}
+          </p>
+        )}
 
         <div>
           <label htmlFor="email" className="block text-sm text-gray-700 mb-1">
@@ -115,7 +153,7 @@ export default function Register() {
         >
           {loading ? 'Bezig...' : 'Registreren'}
         </button>
- <ReCAPTCHA
+        <ReCAPTCHA
           ref={recaptchaRef}
           sitekey={process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY}
           size="invisible"
