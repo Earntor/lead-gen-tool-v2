@@ -11,7 +11,7 @@ export default async function handler(req, res) {
   const { token } = req.body || {}
   if (!token) return res.status(400).json({ error: 'invalid_token' })
 
-  // Invite ophalen
+  // 1) Invite ophalen
   const { data: invite, error: invErr } = await supabaseAdmin
     .from('organization_invites')
     .select('*')
@@ -20,43 +20,57 @@ export default async function handler(req, res) {
 
   if (invErr || !invite) return res.status(400).json({ error: 'invalid_token' })
   if (invite.accepted_at) return res.status(400).json({ error: 'already_used' })
-
-  // Check of verlopen
   if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
     return res.status(400).json({ error: 'invite_expired' })
   }
 
-  // Email match
+   // ✅ Role validatie toevoegen
+  const allowedRoles = ['member', 'admin']
+  if (!allowedRoles.includes(invite.role)) {
+    invite.role = 'member'
+  }
+
+  // 2) Email match checken
   const { data: profile } = await supabaseAdmin
     .from('profiles')
     .select('email')
     .eq('id', user.id)
     .single()
 
-  if (!profile || profile.email.toLowerCase() !== invite.email.toLowerCase()) {
-    return res.status(400).json({ error: 'invite_email_mismatch' })
-  }
+  if (!profile?.email || profile.email.toLowerCase() !== invite.email.toLowerCase()) {
+  return res.status(400).json({ error: 'invite_email_mismatch' })
+}
 
-  // Lidmaatschap toevoegen (idempotent)
-  await supabaseAdmin
+  // 3) Lidmaatschap toevoegen (idempotent)
+  const { error: memErr } = await supabaseAdmin
     .from('organization_members')
-    .upsert({
-      org_id: invite.org_id,
-      user_id: user.id,
-      role: invite.role,
-    })
+    .upsert(
+      {
+        org_id: invite.org_id,
+        user_id: user.id,
+        role: invite.role || 'member',
+      },
+      { onConflict: 'org_id,user_id' } // 👈 voorkomt dubbele memberships
+    )
+  if (memErr) return res.status(500).json({ error: 'membership_failed' })
 
-  // Markeer invite als gebruikt
+  // 4) Invite markeren
   await supabaseAdmin
     .from('organization_invites')
     .update({ accepted_at: new Date().toISOString() })
     .eq('id', invite.id)
+    .eq('token', token)
 
-  // Zet current_org_id zodat dashboard goed laadt
+  // 5) Zet current_org_id in profiel
   await supabaseAdmin
     .from('profiles')
     .update({ current_org_id: invite.org_id })
     .eq('id', user.id)
 
-  return res.status(200).json({ ok: true })
+  // 6) Return met extra context
+  return res.status(200).json({
+    ok: true,
+    org_id: invite.org_id,
+    role: invite.role || 'member',
+  })
 }

@@ -27,6 +27,8 @@ export default function Account() {
   const [copySuccess, setCopySuccess] = useState('')
   const [trackingScript, setTrackingScript] = useState('')
   const [lastTrackingPing, setLastTrackingPing] = useState(null);
+  const [currentOrgId, setCurrentOrgId] = useState(null);
+ 
   
   
   const getTrackingStatusBadge = () => {
@@ -69,21 +71,37 @@ export default function Account() {
 
       const { data: profile } = await supabase
   .from('profiles')
-  .select('full_name, phone, preferences, last_tracking_ping')
+  .select('full_name, phone, preferences, current_org_id')
   .eq('id', user.id)
   .single()
 
+if (profile) {
+  setFullName(profile.full_name || '')
+  setPhone(profile.phone || '')
+  setPreferences(profile.preferences || {})
+  setCurrentOrgId(profile.current_org_id || null)
 
-      if (profile) {
-        setFullName(profile.full_name || '')
-        setPhone(profile.phone || '')
-         setPreferences(profile.preferences || {});
-  setLastTrackingPing(profile.last_tracking_ping || null);
-      }
+  if (profile.current_org_id) {
+    const { data: org } = await supabase
+      .from('organizations')
+      .select('last_tracking_ping')
+      .eq('id', profile.current_org_id)
+      .single()
 
-      const domain = process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin
-      const script = `<script src="${domain}tracker.js" data-project-id="${user.id}" async></script>`
-      setTrackingScript(script)
+    setLastTrackingPing(org?.last_tracking_ping || null)
+
+    const domain = (process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin).replace(/\/$/, '')
+    const script = `<script src="${domain}/tracker.js" data-project-id="${profile.current_org_id}" async></script>`
+    setTrackingScript(script)
+  }
+}
+
+
+
+if (!profile) {
+  // geen record → meteen aanmaken
+  await supabase.from('profiles').insert({ id: user.id });
+}
 
       setLoading(false)
     }
@@ -123,22 +141,26 @@ useEffect(() => {
 
 
     useEffect(() => {
-    const interval = setInterval(async () => {
-      if (!user?.id) return;
+  if (!user?.id) return;
 
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('last_tracking_ping')
-        .eq('id', user.id)
-        .single();
-
-      if (data?.last_tracking_ping) {
-        setLastTrackingPing(data.last_tracking_ping);
+  const channel = supabase
+    .channel('profile-changes')
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${user.id}` },
+      (payload) => {
+        if (payload.new?.last_tracking_ping) {
+          setLastTrackingPing(payload.new.last_tracking_ping);
+        }
       }
-    }, 1000 * 60 * 5); // Elke 5 minuten
+    )
+    .subscribe();
 
-    return () => clearInterval(interval); // Opruimen als component sluit
-  }, [user]);
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}, [user]);
+
 
 
   const handleUpdate = async () => {
@@ -418,13 +440,17 @@ useEffect(() => {
             <div className="mt-6">
               <button
                 onClick={async () => {
+                  if (!currentOrgId) {
+      setTrackingMessage({ type: 'error', text: 'Geen organisatie gekoppeld aan dit account.' });
+      return;
+    }
                   setTrackingMessage(null)
                   setTrackingMessage({ type: 'info', text: 'Bezig met valideren...' })
                   await fetch(`/api/track`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
-    projectId: user.id,
+projectId: currentOrgId,
     pageUrl: window.location.href,
     anonId: 'validation-test',
     durationSeconds: 1,
@@ -436,7 +462,7 @@ useEffect(() => {
   })
 })
 
-const res = await fetch(`/api/check-tracking?projectId=${user.id}`)
+const res = await fetch(`/api/check-tracking?projectId=${currentOrgId}`)
 const json = await res.json()
 
                   if (json.status === 'ok') {
@@ -455,14 +481,15 @@ const json = await res.json()
 
 // ✅ Nieuw: update de status direct in de UI
 const refreshed = await supabase
-  .from('profiles')
+  .from('organizations')
   .select('last_tracking_ping')
-  .eq('id', user.id)
+  .eq('id', currentOrgId)   // <-- let op: org_id, niet user.id
   .single();
 
 if (refreshed?.data?.last_tracking_ping) {
   setLastTrackingPing(refreshed.data.last_tracking_ping);
 }
+
 
                 }}
                 className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"

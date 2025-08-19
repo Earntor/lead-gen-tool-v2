@@ -50,7 +50,6 @@ const { data, error } = await supabase.auth.signUp({
   },
 })
 
-
     if (error) {
       if (
         error.message.includes('already registered') ||

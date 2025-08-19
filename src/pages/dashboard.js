@@ -186,7 +186,21 @@ const { data: sessionData } = await supabase.auth.getSession();
 const token = sessionData?.session?.access_token || null;
 setAuthToken(token);
 
-      const { data: allData } = await supabase
+      // Profiel ophalen om org_id te weten
+const { data: profile } = await supabase
+  .from("profiles")
+  .select("current_org_id")
+  .eq("id", user.id)
+  .single();
+
+if (!profile?.current_org_id) {
+  console.error("Geen current_org_id gevonden voor user:", user.id);
+  setAllLeads([]);
+  return;
+}
+
+// Leads ophalen per organisatie
+const { data: allData } = await supabase
   .from("leads")
   .select(`
     *,
@@ -199,8 +213,9 @@ setAuthToken(token);
     meta_description,
     category
   `)
-  .eq("user_id", user.id)
+  .eq("org_id", profile.current_org_id)   // ✅ org_id in plaats van user_id
   .not("company_name", "is", null);
+
 
 setAllLeads(allData || []);
 console.log("Gelezen leads:", allData);
@@ -210,44 +225,78 @@ setUniqueCategories(Array.from(categoriesSet).sort());
 
 
       const { data: labelData } = await supabase
-        .from("labels")
-        .select("*")
-        .eq("user_id", user.id);
-      setLabels(labelData || []);
+  .from("labels")
+  .select("*")
+  .eq("org_id", profile.current_org_id);   // ✅ organisatie-labels
+setLabels(labelData || []);
+
 
       setLoading(false);
 
-      const subscription = supabase
-        .channel(`leads:user:${user.id}`)
-        .on(
-  "postgres_changes",
-  { event: "INSERT", schema: "public", table: "leads" },
-  (payload) => {
-    const lead = payload.new;
+const subscription = supabase
+  .channel(`leads:org:${profile.current_org_id}`)
+  .on(
+    "postgres_changes",
+    {
+      event: "INSERT",
+      schema: "public",
+      table: "leads",
+      filter: `org_id=eq.${profile.current_org_id}`,
+    },
+    (payload) => {
+      const lead = payload.new;
 
-    const isValidVisitor =
-  lead.user_id === user.id &&
-  lead.source === "tracker" &&
-  !!lead.ip_address &&
-  !!lead.page_url &&
-  !!lead.timestamp &&
-  !lead.page_url.includes(window.location.host)
-;
+      const isValidVisitor =
+        lead.org_id === profile.current_org_id && // ✅ organisatie i.p.v. user
+        lead.source === "tracker" &&
+        !!lead.ip_address &&
+        !!lead.page_url &&
+        !!lead.timestamp &&
+        !lead.page_url.includes(window.location.host);
 
-
-    if (isValidVisitor) {
-      setAllLeads((prev) => [lead, ...prev]);
-    } else {
-      console.warn("Lead genegeerd (geen echte bezoeker):", lead);
+      if (isValidVisitor) {
+        setAllLeads((prev) => [lead, ...prev]);
+      } else {
+        console.warn("Lead genegeerd (geen echte bezoeker):", lead);
+      }
     }
-  }
-)
+  )
+  .subscribe();
+
+  const labelSubscription = supabase
+  .channel(`labels:org:${profile.current_org_id}`)
+  .on(
+    "postgres_changes",
+    {
+      event: "*", // INSERT, UPDATE, DELETE
+      schema: "public",
+      table: "labels",
+      filter: `org_id=eq.${profile.current_org_id}`,
+    },
+    (payload) => {
+      if (payload.eventType === "INSERT") {
+        setLabels((prev) => [...prev, payload.new]);
+      }
+
+      if (payload.eventType === "UPDATE") {
+        setLabels((prev) =>
+          prev.map((l) => (l.id === payload.new.id ? payload.new : l))
+        );
+      }
+
+      if (payload.eventType === "DELETE") {
+        setLabels((prev) => prev.filter((l) => l.id !== payload.old.id));
+      }
+    }
+  )
+  .subscribe();
 
 
-        .subscribe();
       return () => {
-        supabase.removeChannel(subscription);
-      };
+  supabase.removeChannel(subscription);
+  supabase.removeChannel(labelSubscription);
+};
+
     };
     getData();
   }, [router]);
@@ -319,10 +368,10 @@ useEffect(() => {
 
     const refreshLabels = async () => {
     const { data } = await supabase
-      .from("labels")
-      .select("*")
-      .eq("user_id", user.id);
-    setLabels([...data] || []);
+  .from("labels")
+  .select("*")
+  .eq("org_id", profile.current_org_id);   // ✅
+setLabels(data || []);
   };
 
   const toggleVisitor = (visitorId) => {
@@ -800,11 +849,12 @@ return (
           onClick={async () => {
             if (!newLabel.trim()) return;
             const { error } = await supabase.from("labels").insert({
-              user_id: user.id,
-              company_name: null,
-              label: newLabel.trim(),
-              color: getRandomColor(),
-            });
+  org_id: profile.current_org_id,  // ✅ organisatie in plaats van user
+  company_name: null,
+  label: newLabel.trim(),
+  color: getRandomColor(),
+});
+
             if (!error) {
               setNewLabel("");
               setEditingLabelId(null);
@@ -841,13 +891,14 @@ return (
           <span className="mr-2">{label.label}</span>
           <button
             onClick={async () => {
-              await supabase
+             await supabase
   .from("labels")
   .delete()
   .match({
     label: label.label,
-    user_id: user.id,
+    org_id: profile.current_org_id,   // ✅ check op organisatie
   });
+
 
               await refreshLabels();
             }}
@@ -1311,11 +1362,12 @@ if (leadRating >= 80) {
                     if (alreadyExists) return;
 
                     await supabase.from("labels").insert({
-                      user_id: user.id,
-                      company_name: selectedCompanyData.company_name,
-                      label: label.label,
-                      color: label.color,
-                    });
+  org_id: profile.current_org_id,  // ✅ organisatie i.p.v. user
+  company_name: selectedCompanyData.company_name,
+  label: label.label,
+  color: label.color,
+});
+
                     refreshLabels();
                     setOpenLabelMenus({});
                   }}

@@ -159,9 +159,10 @@ export default async function handler(req, res) {
     const token = auth.slice('Bearer '.length);
     try {
       tokenPayload = jwt.verify(token, INGEST_JWT_SECRET, { algorithms: ['HS256'] });
-      if (!tokenPayload?.site_id || !tokenPayload?.user_id) {
-        return res.status(401).json({ error: 'invalid token payload' });
-      }
+      if (!tokenPayload?.site_id || !tokenPayload?.org_id) {
+  return res.status(401).json({ error: 'invalid token payload' });
+}
+
     } catch {
       return res.status(401).json({ error: 'bad token' });
     }
@@ -195,16 +196,16 @@ export default async function handler(req, res) {
   } = body;
 
   // Kies effectieve user/site (body → token → header)
-  const userId = projectId || tokenPayload?.user_id || null;
+const orgId = projectId || tokenPayload?.org_id || null;
   const siteId = siteIdFromBody || tokenPayload?.site_id || siteIdHdr || null;
 
   const canonicalPageUrl = canonicalizeUrl(pageUrl);
   const isValidation = validationTest === true;
 
   // Basis validaties
-  if (!userId || !pageUrl || !siteId) {
-    return res.status(400).json({ error: 'projectId/userId, siteId and pageUrl are required' });
-  }
+ if (!orgId || !pageUrl || !siteId) {
+   return res.status(400).json({ error: 'projectId/orgId, siteId and pageUrl are required' });
+ }
   if (!isValidDomain(siteId)) {
     return res.status(200).json({ success: false, message: 'Invalid siteId - ignored' });
   }
@@ -233,7 +234,7 @@ export default async function handler(req, res) {
       const cleanedDomain = String(siteId).replace(/^www\./, '');
       await supabase.from('sites').insert({
         site_id: siteId,
-        user_id: userId,
+org_id: orgId,
         domain_name: cleanedDomain
       });
     }
@@ -293,7 +294,7 @@ if (!ipCache) {
         .from('enrichment_queue')
         .insert({
           ip_address: ipAddress,
-          user_id: userId,
+          org_id: orgId,
           site_id: siteId,
           page_url: canonicalPageUrl,
           payload: {
@@ -316,9 +317,9 @@ if (!ipCache) {
   const nowIso = new Date().toISOString();
   if (isValidation) {
     await supabase
-      .from('profiles')
-      .update({ last_tracking_ping: nowIso })
-      .eq('id', userId);
+  .from('organizations')
+  .update({ last_tracking_ping: nowIso })
+  .eq('id', orgId);
     return res.status(200).json({ success: true, validation: true });
   }
 
@@ -363,9 +364,9 @@ if (!ipCache) {
 
     if (eventType === 'load' && ageMs < 10_000) {
       await supabase
-        .from('profiles')
-        .update({ last_tracking_ping: nowIso })
-        .eq('id', userId);
+  .from('organizations')
+  .update({ last_tracking_ping: nowIso })
+  .eq('id', orgId);
       return res
         .status(200)
         .json({ success: true, deduped: true, reason: 'load duplicate' });
@@ -391,9 +392,9 @@ if (!ipCache) {
       }
 
       await supabase
-        .from('profiles')
-        .update({ last_tracking_ping: nowIso })
-        .eq('id', userId);
+  .from('organizations')
+  .update({ last_tracking_ping: nowIso })
+  .eq('id', orgId);
       return res.status(200).json({ success: true, updated: true });
     }
     // anders: laat nieuwe insert toe
@@ -417,7 +418,7 @@ if (!ipCache) {
         if (dur > prevDur) {
           await supabase.from('leads').update({ duration_seconds: dur }).eq('id', fb[0].id);
         }
-        await supabase.from('profiles').update({ last_tracking_ping: nowIso }).eq('id', userId);
+        await supabase.from('organizations').update({ last_tracking_ping: nowIso }).eq('id', orgId);
         return res.status(200).json({ success: true, updated: true, fallbackMatched: true });
       }
     }
@@ -425,7 +426,7 @@ if (!ipCache) {
 
   // Nieuwe pageview
   const insertPayload = {
-    user_id: userId,
+    org_id: orgId,
     site_id: siteId,
     page_url: canonicalPageUrl,
     ip_address: ipAddress,
@@ -469,9 +470,10 @@ if (!ipCache) {
   }
 
   await supabase
-    .from('profiles')
-    .update({ last_tracking_ping: nowIso })
-    .eq('id', userId);
+  .from('organizations')
+  .update({ last_tracking_ping: nowIso })
+  .eq('id', orgId);
+
 
 // Plan B: verwerk 1 pending enrichment job als fallback
 try {
@@ -494,7 +496,7 @@ try {
     const p = job.payload && typeof job.payload === 'object' ? job.payload : {};
     const body = {
       ip_address: job.ip_address,
-      user_id: job.user_id,
+      org_id: job.org_id,
       page_url: job.page_url,
       anon_id: p.anonId ?? null,
       referrer: p.referrer ?? null,

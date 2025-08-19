@@ -23,6 +23,12 @@ export default async function handler(req, res) {
   const normEmail = String(email || '').trim().toLowerCase()
   if (!normEmail) return res.status(400).json({ error: 'email_required' })
 
+    // ✅ Role validatie toevoegen
+const allowedRoles = ['member', 'admin']
+if (!allowedRoles.includes(role)) {
+  role = 'member'
+}
+
   // Huidige org
   const { data: profile, error: profErr } = await supabaseAdmin
     .from('profiles')

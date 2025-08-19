@@ -2,7 +2,6 @@
 import { createClient } from '@supabase/supabase-js';
 
 export default async function handler(req, res) {
-  // 0) Token uit Authorization header (Bearer <jwt>)
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
 
@@ -10,7 +9,6 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Niet ingelogd (geen token gevonden)' });
   }
 
-  // 1) Maak per request een server-side Supabase client met deze JWT
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
@@ -21,44 +19,49 @@ export default async function handler(req, res) {
     }
   );
 
-  // 2) Valideer user
+  // 1) User ophalen
   const { data: userData, error: userError } = await supabase.auth.getUser();
   const user = userData?.user || null;
-
   if (userError || !user) {
     return res.status(401).json({ error: 'Niet ingelogd' });
   }
 
-  // 3) Method router
+  // 2) Huidige org ophalen
+  const { data: profile, error: profileErr } = await supabase
+    .from('profiles')
+    .select('current_org_id')
+    .eq('id', user.id)
+    .single();
+
+  if (profileErr || !profile?.current_org_id) {
+    return res.status(400).json({ error: 'Geen organisatie gevonden' });
+  }
+  const orgId = profile.current_org_id;
+
   try {
     if (req.method === 'POST') {
-      // Upsert (insert of update) van note
       const { company_domain, note } = req.body || {};
-      if (!company_domain || typeof company_domain !== 'string') {
-        return res.status(400).json({ error: 'company_domain ontbreekt of is ongeldig' });
+      if (!company_domain) {
+        return res.status(400).json({ error: 'company_domain ontbreekt' });
       }
 
-      // We forceren updated_at hier; je kunt ook een DB-trigger gebruiken (zie stap 2 hieronder)
       const timestamp = new Date().toISOString();
 
       const { data, error } = await supabase
         .from('lead_notes')
         .upsert(
           {
-            user_id: user.id,
+            org_id: orgId,                  // ✅ organisatie
             company_domain,
             note: note ?? '',
             updated_at: timestamp,
           },
-          // Let op: onConflict verwacht een string, geen array
-          { onConflict: 'user_id,company_domain' }
+          { onConflict: 'org_id,company_domain' } // ✅ unieke org+bedrijf
         )
         .select('note, updated_at')
         .maybeSingle();
 
-      if (error) {
-        return res.status(500).json({ error: error.message });
-      }
+      if (error) return res.status(500).json({ error: error.message });
 
       return res.status(200).json({
         success: true,
@@ -68,22 +71,19 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'GET') {
-      // Haal bestaande note op
       const { company_domain } = req.query || {};
-      if (!company_domain || typeof company_domain !== 'string') {
-        return res.status(400).json({ error: 'company_domain ontbreekt of is ongeldig' });
+      if (!company_domain) {
+        return res.status(400).json({ error: 'company_domain ontbreekt' });
       }
 
       const { data, error } = await supabase
         .from('lead_notes')
         .select('note, updated_at')
-        .eq('user_id', user.id)
+        .eq('org_id', orgId)              // ✅ organisatie
         .eq('company_domain', company_domain)
         .maybeSingle();
 
-      if (error) {
-        return res.status(500).json({ error: error.message });
-      }
+      if (error) return res.status(500).json({ error: error.message });
 
       return res.status(200).json({
         note: data?.note ?? '',
@@ -92,21 +92,18 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'DELETE') {
-      // Verwijder note
       const { company_domain } = req.body || {};
-      if (!company_domain || typeof company_domain !== 'string') {
-        return res.status(400).json({ error: 'company_domain ontbreekt of is ongeldig' });
+      if (!company_domain) {
+        return res.status(400).json({ error: 'company_domain ontbreekt' });
       }
 
       const { error } = await supabase
         .from('lead_notes')
         .delete()
-        .eq('user_id', user.id)
+        .eq('org_id', orgId)              // ✅ organisatie
         .eq('company_domain', company_domain);
 
-      if (error) {
-        return res.status(500).json({ error: error.message });
-      }
+      if (error) return res.status(500).json({ error: error.message });
 
       return res.status(200).json({ success: true });
     }
