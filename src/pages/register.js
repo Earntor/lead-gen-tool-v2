@@ -33,13 +33,23 @@ export default function Register() {
     setLoading(true)
     setMessage('')
 
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-      },
-    })
+    // Bouw de redirect met invite/next params
+const params = new URLSearchParams()
+if (router.query?.invite) params.set('invite', router.query.invite)
+if (router.query?.next) params.set('next', router.query.next)
+
+const redirectUrl = `${window.location.origin}/auth/callback${
+  params.toString() ? '?' + params.toString() : ''
+}`
+
+const { data, error } = await supabase.auth.signUp({
+  email,
+  password,
+  options: {
+    emailRedirectTo: redirectUrl,
+  },
+})
+
 
     if (error) {
       if (
