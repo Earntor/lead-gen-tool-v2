@@ -219,6 +219,20 @@ export default function Register() {
             Log dan hier in
           </Link>
         </p>
+        <p className="text-sm text-center text-gray-600 mt-4">
+  Heb je al een account?{' '}
+  <Link href="/login" className="text-blue-600 hover:underline">
+    Log dan hier in
+  </Link>
+</p>
+
+<p className="text-sm text-center text-gray-600 mt-2">
+  Wachtwoord vergeten?{" "}
+  <Link href="/reset-password" className="text-blue-600 hover:underline">
+    Reset hier
+  </Link>
+</p>
+
       </form>
     </div>
   )

@@ -37,7 +37,6 @@ export default async function handler(req, res) {
   }
 
   // 5) E-mail matchen (case-insensitive)
-  //    Haal actuele e-mail van ingelogde user op uit auth.users
   const { data: authUser, error: authErr } = await supabaseAdmin
     .from('profiles')
     .select('email, current_org_id')
@@ -45,8 +44,6 @@ export default async function handler(req, res) {
     .single()
 
   if (authErr || !authUser?.email) {
-    // Als je geen profiles.email bijhoudt, haal direct via auth API op.
-    // Maar in jouw setup staat email in profiles.
     return res.status(400).json({ error: 'invite_email_mismatch' })
   }
 
@@ -57,14 +54,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'invite_email_mismatch' })
   }
 
-  // 6) (Optioneel) Voorkom dat iemand met bestaande org-koppeling accepteert
-  //     — volgens je front-end wil je hiervoor error 'already_in_another_org' tonen
-  if (authUser.current_org_id && authUser.current_org_id !== invite.org_id) {
-    // Als je multi-org wilt toestaan, haal dit blok dan weg.
-    return res.status(400).json({ error: 'already_in_another_org' })
-  }
-
-  // 7) Al lid? (idempotent)
+  // 6) Al lid? (idempotent)
   const { data: alreadyMember } = await supabaseAdmin
     .from('organization_members')
     .select('org_id, user_id')
@@ -73,46 +63,38 @@ export default async function handler(req, res) {
     .maybeSingle()
 
   if (!alreadyMember) {
-    // 8) Lid maken. Je triggers kunnen hier limieten afdwingen.
-    //    Als limiet wordt overschreden, geeft Postgres/trigger een fout terug.
     const { error: addErr } = await supabaseAdmin
       .from('organization_members')
       .insert({
         org_id: invite.org_id,
         user_id: user.id,
-        role: invite.role, // rol van de invite
+        role: invite.role,
       })
 
     if (addErr) {
       const msg = (addErr.message || '').toLowerCase()
-      // Vang een member-limiet of vergelijkbare trigger-fout af met jouw foutcode:
       if (msg.includes('max') || msg.includes('limit') || msg.includes('enforce_max_members')) {
         return res.status(400).json({ error: 'org_member_limit_reached' })
       }
-      // Dubbele insert is oké (unique pk), maar die case hebben we al uitgesloten via check hierboven.
       return res.status(400).json({ error: addErr.message || 'join_failed' })
     }
   }
 
-  // 9) Invite markeren als geaccepteerd (ook idempotent)
+  // 7) Invite markeren als geaccepteerd
   const { error: updInvErr } = await supabaseAdmin
     .from('organization_invites')
     .update({ accepted_at: new Date().toISOString() })
     .eq('id', invite.id)
 
   if (updInvErr) {
-    // Niet kritisch voor membership, maar goed om te melden
-    // (We geven alsnog success terug, want lidmaatschap is gelukt)
-    return res.status(200).json({ ok: true, warning: 'invite_mark_failed' })
+    console.warn('⚠️ Invite markeren mislukt:', updInvErr.message)
   }
 
-  // 10) current_org_id zetten als leeg
-  if (!authUser.current_org_id) {
-    await supabaseAdmin
-      .from('profiles')
-      .update({ current_org_id: invite.org_id })
-      .eq('id', user.id)
-  }
+  // 8) Belangrijk: current_org_id ALTIJD zetten naar de org van de invite
+  await supabaseAdmin
+    .from('profiles')
+    .update({ current_org_id: invite.org_id })
+    .eq('id', user.id)
 
   return res.status(200).json({ ok: true })
 }
