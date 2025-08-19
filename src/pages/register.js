@@ -58,24 +58,11 @@ export default function Register() {
 
     setMessage('Registratie gelukt! Bevestig je e-mail via de link in je inbox.')
 
-    // 👇 Invite-token verwerken
-    const inviteToken = router.query?.invite
-    if (inviteToken) {
-      try {
-        await fetch('/api/org/accept', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: inviteToken }),
-        })
-      } catch (e) {
-        console.error('Invite accepteren mislukt:', e)
-      }
-    }
-
-    // Daarna redirecten
+    // 👉 Invite-token niet hier accepteren (werkt pas als user ingelogd is).
+    // Gewoon redirecten naar de juiste pagina.
     const next = router.query?.next
     if (next && next.startsWith('/')) {
-      router.replace(next)
+      router.replace(next) // stuurt terug naar /invite/accept?token=...
     } else {
       router.replace('/dashboard')
     }
@@ -219,20 +206,12 @@ export default function Register() {
             Log dan hier in
           </Link>
         </p>
-        <p className="text-sm text-center text-gray-600 mt-4">
-  Heb je al een account?{' '}
-  <Link href="/login" className="text-blue-600 hover:underline">
-    Log dan hier in
-  </Link>
-</p>
-
-<p className="text-sm text-center text-gray-600 mt-2">
-  Wachtwoord vergeten?{" "}
-  <Link href="/reset-password" className="text-blue-600 hover:underline">
-    Reset hier
-  </Link>
-</p>
-
+        <p className="text-sm text-center text-gray-600 mt-2">
+          Wachtwoord vergeten?{" "}
+          <Link href="/reset-password" className="text-blue-600 hover:underline">
+            Reset hier
+          </Link>
+        </p>
       </form>
     </div>
   )
