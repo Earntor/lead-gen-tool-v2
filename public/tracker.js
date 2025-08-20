@@ -65,13 +65,10 @@ const startTime = Date.now();
     }
 
     // 3) Versturen met Bearer token (geen HMAC headers meer nodig)
-    async function sendSigned(bodyObj) {
-      if (!ingestToken) return; // zonder token niet posten
-      const payload = JSON.stringify(bodyObj);
-// 3) Versturen met Bearer token (geen HMAC headers meer nodig)
 async function sendSigned(bodyObj) {
   if (!ingestToken) return; // zonder token niet posten
   const payload = JSON.stringify(bodyObj);
+
   return fetch(TRACK_URL, {
     method: 'POST',
     headers: {
@@ -84,18 +81,6 @@ async function sendSigned(bodyObj) {
   }).catch(() => {});
 }
 
-return fetch(TRACK_URL, {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${ingestToken}`,
-    'X-Site-Id': siteId
-  },
-  body: payload,
-  keepalive: true
-}).catch(()=>{});
-
-    }
 
     async function sendLoad() {
   await sendSigned(basePayload({ eventType: 'load' }));

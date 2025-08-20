@@ -240,6 +240,13 @@ if (!orgId) {
   orgId = await resolveOrgIdForSite(supabase, siteId);
 }
 
+if (!orgId) {
+  return res.status(401).json({
+    error: 'org not resolved for siteId (link site to org first)'
+  });
+}
+
+
   if (!isValidDomain(siteId)) {
     return res.status(200).json({ success: false, message: 'Invalid siteId - ignored' });
   }
