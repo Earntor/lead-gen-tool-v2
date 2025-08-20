@@ -68,12 +68,22 @@ const startTime = Date.now();
     async function sendSigned(bodyObj) {
       if (!ingestToken) return; // zonder token niet posten
       const payload = JSON.stringify(bodyObj);
-if (bodyObj.eventType === 'end' && navigator.sendBeacon) {
-  // Betrouwbaar bij tab sluiten / navigeren
-  const blob = new Blob([payload], { type: 'application/json' });
-  navigator.sendBeacon(TRACK_URL, blob);
-  return;
+// 3) Versturen met Bearer token (geen HMAC headers meer nodig)
+async function sendSigned(bodyObj) {
+  if (!ingestToken) return; // zonder token niet posten
+  const payload = JSON.stringify(bodyObj);
+  return fetch(TRACK_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${ingestToken}`,
+      'X-Site-Id': siteId
+    },
+    body: payload,
+    keepalive: true
+  }).catch(() => {});
 }
+
 return fetch(TRACK_URL, {
   method: 'POST',
   headers: {

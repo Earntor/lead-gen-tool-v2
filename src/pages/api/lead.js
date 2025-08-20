@@ -87,7 +87,6 @@ async function logBlockedSignal({
     confidence: (typeof confidence === 'number' && !Number.isNaN(confidence)) ? confidence : 0.3,
     confidence_reason: (confidence_reason && confidence_reason.trim()) ? confidence_reason : CONFIDENCE_REASONS.IPAPI_BASELINE,
     ignored_at: new Date().toISOString(),
-    org_id: org_id || null,
     page_url: page_url || null,
     ignore_type
   });
@@ -761,7 +760,6 @@ confidence_reason: CONFIDENCE_REASONS.FINAL_LIKELY,
   confidence: (typeof confidence === 'number' && !Number.isNaN(confidence)) ? confidence : 0.3,
   confidence_reason: (confidence_reason && confidence_reason.trim()) ? confidence_reason: CONFIDENCE_REASONS.ISP_BASELINE,
   ignored_at: new Date().toISOString(),
-  org_id: org_id || null,
   page_url: page_url || null,
   signals: domainSignals.length > 0 ? domainSignals : null,
   ignore_type: 'isp' // ✅ nieuw
@@ -778,7 +776,6 @@ return res.status(200).json({ ignored: true, reason: 'known ISP (no valid domain
   confidence: (typeof confidence === 'number' && !Number.isNaN(confidence)) ? confidence : 0.3,
   confidence_reason: (confidence_reason && confidence_reason.trim()) ? confidence_reason : CONFIDENCE_REASONS.IPAPI_BASELINE,
   ignored_at: new Date().toISOString(),
-  org_id: org_id || null,
   page_url: page_url || null,
   signals: domainSignals.length > 0 ? domainSignals : null,
   ignore_type: 'no-domain' // ✅ nieuw
@@ -971,7 +968,6 @@ as_name: asname || null,
     confidence: finalConfidence,
     confidence_reason: confidence_reason || 'Onder minimumdrempel',
     ignored_at: new Date().toISOString(),
-    org_id: org_id || null,
     page_url: page_url || null,
     ignore_type: 'low-confidence'
   });

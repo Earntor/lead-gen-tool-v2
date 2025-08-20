@@ -303,26 +303,27 @@ if (!ipCache) {
   // ---- Queue insert i.p.v. fire-and-forget enrich ----
   try {
     const needsEnrichment =
-  (!ipCache && ipAddress && ipCache?.company_domain) ||
+  ((!ipCache) && !!ipAddress) ||
   ipCache?.company_name === 'Testbedrijf' ||
   (ipCache?.company_domain && (
     !ipCache.domain_address ||
     !ipCache.domain_city ||
     !ipCache.domain_country ||
     ipCache.confidence == null ||
-        !ipCache.confidence_reason ||
-        !ipCache.meta_description ||
-        !ipCache.phone ||
-        !ipCache.email ||
-        !ipCache.domain_lat ||
-        !ipCache.domain_lon ||
-        !ipCache.category ||
-        !ipCache.rdns_hostname ||
-        !ipCache.linkedin_url ||
-        !ipCache.facebook_url ||
-        !ipCache.instagram_url ||
-        !ipCache.twitter_url
-      ));
+    !ipCache.confidence_reason ||
+    !ipCache.meta_description ||
+    !ipCache.phone ||
+    !ipCache.email ||
+    !ipCache.domain_lat ||
+    !ipCache.domain_lon ||
+    !ipCache.category ||
+    !ipCache.rdns_hostname ||
+    !ipCache.linkedin_url ||
+    !ipCache.facebook_url ||
+    !ipCache.instagram_url ||
+    !ipCache.twitter_url
+  ));
+
 
     if (needsEnrichment) {
       const { error: qErr } = await supabase
