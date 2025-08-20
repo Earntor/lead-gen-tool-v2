@@ -67,35 +67,52 @@ function mapCacheToLead(ipCache) {
     v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v);
 
   return {
-    company_name: ipCache.company_name ?? null,
-    company_domain: ipCache.company_domain ?? null,
-    location: ipCache.location ?? null,
-    ip_street: ipCache.ip_street ?? null,
-    ip_postal_code: ipCache.ip_postal_code ?? null,
-    ip_city: ipCache.ip_city ?? null,
-    ip_country: ipCache.ip_country ?? null,
+    // Company info
+    company_name: cache.company_name ?? null,
+    company_domain: cache.company_domain ?? null,
 
-    domain_address: ipCache.domain_address ?? null,
-    domain_postal_code: ipCache.domain_postal_code ?? null,
-    domain_city: ipCache.domain_city ?? null,
-    domain_country: ipCache.domain_country ?? null,
+    // IP-gegevens
+    ip_street: cache.ip_street ?? null,
+    ip_postal_code: cache.ip_postal_code ?? null,
+    ip_city: cache.ip_city ?? null,
+    ip_country: cache.ip_country ?? null,
 
-    confidence_reason: ipCache.confidence_reason ?? null,
-    confidence: toNum(ipCache.confidence),
+    // Domein-gegevens
+    domain_address: cache.domain_address ?? null,
+    domain_postal_code: cache.domain_postal_code ?? null,
+    domain_city: cache.domain_city ?? null,
+    domain_country: cache.domain_country ?? null,
+    domain_lat: cache.domain_lat ?? null,
+    domain_lon: cache.domain_lon ?? null,
 
-    phone: ipCache.phone ?? null,
-    email: ipCache.email ?? null,
-    linkedin_url: ipCache.linkedin_url ?? null,
-    facebook_url: ipCache.facebook_url ?? null,
-    instagram_url: ipCache.instagram_url ?? null,
-    twitter_url: ipCache.twitter_url ?? null,
-    meta_description: ipCache.meta_description ?? null,
+    // Confidence
+    confidence: toNum(cache.confidence),
+    confidence_reason: cache.confidence_reason ?? null,
+    auto_confidence: cache.auto_confidence ?? null,
+    auto_confidence_reason: cache.auto_confidence_reason ?? null,
+    selected_random_match: cache.selected_random_match ?? null,
 
-    domain_lat: ipCache.domain_lat ?? null,
-    domain_lon: ipCache.domain_lon ?? null,
+    // Contact & socials
+    phone: cache.phone ?? null,
+    email: cache.email ?? null,
+    linkedin_url: cache.linkedin_url ?? null,
+    facebook_url: cache.facebook_url ?? null,
+    instagram_url: cache.instagram_url ?? null,
+    twitter_url: cache.twitter_url ?? null,
 
-    rdns_hostname: ipCache.rdns_hostname ?? null,
-    category: ipCache.category ?? null
+    // Extra
+    meta_description: cache.meta_description ?? null,
+    rdns_hostname: cache.rdns_hostname ?? null,
+    category: cache.category ?? null,
+    location: cache.location ?? null,
+
+    // KvK
+    kvk_number: cache.kvk_number ?? null,
+    kvk_domain: cache.kvk_domain ?? null,
+    kvk_street: cache.kvk_street ?? null,
+    kvk_postal_code: cache.kvk_postal_code ?? null,
+    kvk_city: cache.kvk_city ?? null,
+    kvk_country: cache.kvk_country ?? null
   };
 }
 
@@ -469,33 +486,34 @@ if (!ipCache) {
 
   // Nieuwe pageview
   const insertPayload = {
-    org_id: orgId,
-    site_id: siteId,
-    page_url: canonicalPageUrl,
-    ip_address: ipAddress,
-    source: 'tracker',
-    anon_id: anonId || null,
-    session_id: sessionId || null,
-    duration_seconds: dur,
-    confidence: confidenceScore,
-    confidence_reason: confidenceReason,
-    utm_source: utmSource || null,
-    utm_medium: utmMedium || null,
-    utm_campaign: utmCampaign || null,
-    referrer: referrer || null,
-    timestamp: nowIso,
-    ...enrichment
-  };
+  org_id: orgId,
+  site_id: siteId,
+  page_url: canonicalPageUrl,
+  ip_address: ipAddress,
+  source: 'tracker',
+  anon_id: anonId || null,
+  session_id: sessionId || null,
+  duration_seconds: dur,
+  utm_source: utmSource || null,
+  utm_medium: utmMedium || null,
+  utm_campaign: utmCampaign || null,
+  referrer: referrer || null,
+  timestamp: nowIso,
+  ...mapCacheToLead(ipCache) // ✅ dit vult ALLE enrichment velden uit je schema
+};
+
 
   const { data: inserted, error: insertErr } = await supabase
     .from('leads')
     .insert(insertPayload)
     .select('id, company_name');
 
-  if (insertErr) {
-    console.error('❌ Supabase error bij leads-insert:', insertErr.message);
-    return res.status(500).json({ error: insertErr.message });
-  }
+ if (insertErr) {
+  console.error('❌ Supabase error bij leads-insert:', insertErr.message, insertErr.details || '');
+  return res.status(500).json({ error: insertErr.message || 'insert failed' });
+}
+
+
 
   // KvK-lookup (ongewijzigd)
   try {
