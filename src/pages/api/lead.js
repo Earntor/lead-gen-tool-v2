@@ -75,7 +75,7 @@ const EXTRA_BLACKLIST_DOMAINS = [
 ];
 
 async function logBlockedSignal({
-  ip_address, domain, source, asname, reason, user_id, page_url, confidence, confidence_reason,
+  ip_address, domain, source, asname, reason, org_id, page_url, confidence, confidence_reason,
   ignore_type = 'blocked'
 }) {
   await supabaseAdmin.from('ignored_ip_log').insert({
@@ -87,7 +87,7 @@ async function logBlockedSignal({
     confidence: (typeof confidence === 'number' && !Number.isNaN(confidence)) ? confidence : 0.3,
     confidence_reason: (confidence_reason && confidence_reason.trim()) ? confidence_reason : CONFIDENCE_REASONS.IPAPI_BASELINE,
     ignored_at: new Date().toISOString(),
-    user_id: user_id || null,
+    org_id: org_id || null,
     page_url: page_url || null,
     ignore_type
   });
@@ -122,7 +122,7 @@ function stripSubdomain(domain) {
 }
 
 
-function cleanAndValidateDomain(domain, source, asname, user_id, page_url, ip_address, confidence, confidence_reason) {
+function cleanAndValidateDomain(domain, source, asname, org_id, page_url, ip_address, confidence, confidence_reason) {
   if (!domain) return null;
 
   // basis normalisatie
@@ -176,7 +176,7 @@ const isBlocked =
       source,
       asname,
       reason: 'blacklisted domain in cleanup',
-      user_id,
+      org_id,
       page_url,
       confidence: safeConfidence,
       confidence_reason: safeReason,
@@ -220,7 +220,7 @@ export default async function handler(req, res) {
 
   const {
     ip_address,
-    user_id,
+    org_id,
     page_url,
     anon_id,
     referrer,
@@ -244,7 +244,7 @@ export default async function handler(req, res) {
 
   try {
     console.log('--- API LEAD DEBUG ---');
-    console.log('Request body:', { ip_address, user_id, page_url });
+    console.log('Request body:', { ip_address, org_id, page_url });
 
     const { data: cached } = await supabaseAdmin
       .from('ipapi_cache')
@@ -373,7 +373,7 @@ const extracted = cleanAndValidateDomain(
   hostname,
   ENRICHMENT_SOURCES.RDNS,
   asname,
-  user_id,
+  org_id,
   page_url,
   ip_address,
   confidence,
@@ -458,7 +458,7 @@ try {
         certInfo.commonName,
         ENRICHMENT_SOURCES.TLS,
         asname,
-        user_id,
+        org_id,
         page_url,
         ip_address,
         confidence,
@@ -480,7 +480,7 @@ const matches = certInfo.subjectAltName.match(/DNS:([A-Za-z0-9.-]+\.[A-Za-z0-9-]
           chosen,
           ENRICHMENT_SOURCES.TLS,
           asname,
-          user_id,
+          org_id,
           page_url,
           ip_address,
           confidence,
@@ -524,7 +524,7 @@ try {
     result.extracted_domain,
     ENRICHMENT_SOURCES.HTTP_FETCH,
     asname,
-    user_id,
+    org_id,
     page_url,
     ip_address,
     confidence,
@@ -585,7 +585,7 @@ try {
           match.domain,
           ENRICHMENT_SOURCES.FAVICON,
           asname,
-          user_id,
+          org_id,
           page_url,
           ip_address,
           confidence,
@@ -653,7 +653,7 @@ try {
     result.domain,
     ENRICHMENT_SOURCES.HOST_HEADER,
     asname,
-    user_id,
+    org_id,
     page_url,
     ip_address,
     confidence,
@@ -707,7 +707,7 @@ if (!company_domain && domainSignals.length > 0) {
       likely.domain,
       ENRICHMENT_SOURCES.FINAL_LIKELY,
       asname,
-      user_id,
+      org_id,
       page_url,
       ip_address,
       likely.confidence,
@@ -761,7 +761,7 @@ confidence_reason: CONFIDENCE_REASONS.FINAL_LIKELY,
   confidence: (typeof confidence === 'number' && !Number.isNaN(confidence)) ? confidence : 0.3,
   confidence_reason: (confidence_reason && confidence_reason.trim()) ? confidence_reason: CONFIDENCE_REASONS.ISP_BASELINE,
   ignored_at: new Date().toISOString(),
-  user_id: user_id || null,
+  org_id: org_id || null,
   page_url: page_url || null,
   signals: domainSignals.length > 0 ? domainSignals : null,
   ignore_type: 'isp' // ✅ nieuw
@@ -778,7 +778,7 @@ return res.status(200).json({ ignored: true, reason: 'known ISP (no valid domain
   confidence: (typeof confidence === 'number' && !Number.isNaN(confidence)) ? confidence : 0.3,
   confidence_reason: (confidence_reason && confidence_reason.trim()) ? confidence_reason : CONFIDENCE_REASONS.IPAPI_BASELINE,
   ignored_at: new Date().toISOString(),
-  user_id: user_id || null,
+  org_id: org_id || null,
   page_url: page_url || null,
   signals: domainSignals.length > 0 ? domainSignals : null,
   ignore_type: 'no-domain' // ✅ nieuw
@@ -827,7 +827,7 @@ return res.status(200).json({ ignored: true, reason: 'known ISP (no valid domain
     company_domain,
    ENRICHMENT_SOURCES.CACHE_REUSE,
     asname,
-    user_id,
+    org_id,
     page_url,
     ip_address,
     confidence,
@@ -851,7 +851,7 @@ return res.status(200).json({ ignored: true, reason: 'known ISP (no valid domain
     domainEnrichment.domain,
     ENRICHMENT_SOURCES.GMAPS,
     asname,
-    user_id,
+    org_id,
     page_url,
     ip_address,
     confidence,
@@ -971,7 +971,7 @@ as_name: asname || null,
     confidence: finalConfidence,
     confidence_reason: confidence_reason || 'Onder minimumdrempel',
     ignored_at: new Date().toISOString(),
-    user_id: user_id || null,
+    org_id: org_id || null,
     page_url: page_url || null,
     ignore_type: 'low-confidence'
   });

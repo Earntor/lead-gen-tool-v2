@@ -17,10 +17,10 @@ function getOrCreateAnonId() {
   return anonId;
 }
 
-export async function sendLead({ user_id }) {
+export async function sendLead({ org_id }) {
   try {
-    if (!user_id) {
-      throw new Error("user_id is verplicht in sendLead");
+    if (!org_id) {
+      throw new Error("org_id is verplicht in sendLead");
     }
 
     const page_url = window.location.href;
@@ -35,7 +35,7 @@ export async function sendLead({ user_id }) {
 
     const payload = {
 
-      user_id,
+      org_id,
       page_url,
       anon_id,
       referrer,

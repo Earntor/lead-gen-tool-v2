@@ -27,11 +27,11 @@ export default async function handler(req, res) {
 
   const siteId = String((req.query.site || '')).toLowerCase().trim()
   const projectId = (req.query.projectId || '').trim()
-  if (!siteId || !projectId) {
-    return res.status(400).json({ error: 'site and projectId required' })
+  if (!siteId) {
+    return res.status(400).json({ error: 'site required' })
   }
 
-  // Basic referer/host guard: blokkeer evidente cross-site misbruik
+  // 🔐 Referer check
   const referer = req.headers.referer || ''
   try {
     const refHost = referer ? new URL(referer).hostname.toLowerCase() : null
@@ -40,9 +40,6 @@ export default async function handler(req, res) {
       refHost === '127.0.0.1' ||
       (refHost && refHost.endsWith('.localhost'))
 
-    // Toestaan als:
-    // - dev (localhost), of
-    // - referer host exact het siteId is, of een subdomein daarvan
     if (
       refHost &&
       !isLocalDev &&
@@ -52,37 +49,40 @@ export default async function handler(req, res) {
       return res.status(403).json({ error: 'referer mismatch' })
     }
   } catch {
-    // Geen geldige referer -> laten we toe (same-origin requests blijven werken)
+    // Geen geldige referer → laten we toe
   }
 
-  // Registreer site indien niet bestaand (zelfde gedrag als /api/track)
-  const { data: site, error } = await supabase
-    .from('sites')
-    .select('site_id')
-    .eq('site_id', siteId)
-    .maybeSingle()
+  // 🧠 Lookup org_id voor dit siteId
+  let orgId = null
+  try {
+    const { data: site, error } = await supabase
+      .from('sites')
+      .select('org_id')
+      .eq('site_id', siteId)
+      .maybeSingle()
 
-  if (!site && !error) {
-    const cleanedDomain = siteId.replace(/^www\./, '')
-    const { error: insErr } = await supabase.from('sites').insert({
-      site_id: siteId,
-      user_id: projectId,
-      domain_name: cleanedDomain
-    })
-    if (insErr) {
-      return res.status(500).json({ error: 'site insert failed' })
+    if (error) {
+      return res.status(500).json({ error: 'site lookup failed' })
     }
-  } else if (error) {
-    return res.status(500).json({ error: 'site lookup failed' })
+
+    if (site?.org_id) {
+      orgId = site.org_id
+    } else {
+      // ❌ Geen site gevonden → fout teruggeven (site moet eerst gekoppeld zijn)
+      return res.status(400).json({ error: 'site not linked to any org' })
+    }
+  } catch (e) {
+    return res.status(500).json({ error: 'org lookup failed' })
   }
 
-  // Maak kort-levend token (1 uur)
+  // ⏱ Token maken (1 uur geldig)
   const now = Math.floor(Date.now() / 1000)
   const token = jwt.sign(
     {
       sub: `ingest:${siteId}`,
       site_id: siteId,
-      user_id: projectId,
+      org_id: orgId,        // 👈 verplicht voor track.js
+      project_id: projectId || null, // optioneel
       iat: now,
       nbf: now - 5,
       exp: now + 3600

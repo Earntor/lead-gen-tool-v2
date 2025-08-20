@@ -8,7 +8,8 @@ const supabase = createClient(
 );
 
 // JWT ingest auth (noodrem mogelijk via env)
-const REQUIRE_TOKEN = process.env.REQUIRE_TOKEN !== 'false';
+// In productie altijd token vereisen, in development mag het leeg zijn
+const REQUIRE_TOKEN = process.env.NODE_ENV === 'production';
 const INGEST_JWT_SECRET = process.env.INGEST_JWT_SECRET;
 
 export const config = { api: { bodyParser: false } };
@@ -120,6 +121,35 @@ function firstPublicIp(xff, remoteAddr){
   return (remoteAddr || '').replace(/^::ffff:/,'') || null;
 }
 
+async function resolveOrgIdForSite(supabase, siteId) {
+  if (!siteId) return null;
+  try {
+    // 1) exacte hostmatch op sites.site_id
+    const { data: byHost } = await supabase
+      .from('sites')
+      .select('org_id')
+      .eq('site_id', siteId)
+      .maybeSingle();
+    if (byHost?.org_id) return byHost.org_id;
+
+    // 2) fallback: basisdomein match op sites.domain_name
+    // mail.schipholtaxioldenzaal.nl -> schipholtaxioldenzaal.nl
+    const base = siteId.replace(/^[^.]+\./, '');
+    if (base && base !== siteId) {
+      const { data: byBase } = await supabase
+        .from('sites')
+        .select('org_id')
+        .eq('domain_name', base)
+        .maybeSingle();
+      if (byBase?.org_id) return byBase.org_id;
+    }
+  } catch {
+    // stil falen is ok; orgId blijft null
+  }
+  return null;
+}
+
+
 /* ----------------------- Handler ----------------------- */
 
 export default async function handler(req, res) {
@@ -181,31 +211,35 @@ export default async function handler(req, res) {
   const siteIdHdr = req.headers['x-site-id'];
 
   const {
-    projectId,
-    siteId: siteIdFromBody,
-    pageUrl,
-    anonId,
-    sessionId,
-    durationSeconds,
-    utmSource,
-    utmMedium,
-    utmCampaign,
-    referrer,
-    validationTest,
-    eventType // "load" of "end"
-  } = body;
+  projectId,                // mag bestaan, maar NIET gebruiken als org_id
+  siteId: siteIdFromBody,
+  pageUrl,
+  anonId,
+  sessionId,
+  durationSeconds,
+  utmSource,
+  utmMedium,
+  utmCampaign,
+  referrer,
+  validationTest,
+  eventType // "load" of "end"
+} = body;
 
-  // Kies effectieve user/site (body → token → header)
-const orgId = projectId || tokenPayload?.org_id || null;
-  const siteId = siteIdFromBody || tokenPayload?.site_id || siteIdHdr || null;
+const siteId = siteIdFromBody || tokenPayload?.site_id || siteIdHdr || null;
+const canonicalPageUrl = canonicalizeUrl(pageUrl);
+const isValidation = validationTest === true;
 
-  const canonicalPageUrl = canonicalizeUrl(pageUrl);
-  const isValidation = validationTest === true;
+// Alleen pageUrl + siteId zijn verplicht
+if (!pageUrl || !siteId) {
+  return res.status(400).json({ error: 'siteId and pageUrl are required' });
+}
 
-  // Basis validaties
- if (!orgId || !pageUrl || !siteId) {
-   return res.status(400).json({ error: 'projectId/orgId, siteId and pageUrl are required' });
- }
+// Bepaal org_id: eerst uit token (als aanwezig), anders lookup via sites.*
+let orgId = tokenPayload?.org_id || null;
+if (!orgId) {
+  orgId = await resolveOrgIdForSite(supabase, siteId);
+}
+
   if (!isValidDomain(siteId)) {
     return res.status(200).json({ success: false, message: 'Invalid siteId - ignored' });
   }
@@ -230,14 +264,15 @@ const orgId = projectId || tokenPayload?.org_id || null;
       .eq('site_id', siteId)
       .maybeSingle();
 
-    if (!existingSite && !siteErr) {
-      const cleanedDomain = String(siteId).replace(/^www\./, '');
-      await supabase.from('sites').insert({
-        site_id: siteId,
-org_id: orgId,
-        domain_name: cleanedDomain
-      });
-    }
+   if (!existingSite && !siteErr && orgId) {
+  const cleanedDomain = String(siteId).replace(/^www\./, '');
+  await supabase.from('sites').insert({
+    site_id: siteId,
+    org_id: orgId,
+    domain_name: cleanedDomain
+  });
+}
+
   } catch (e) {
     console.warn('⚠️ sites insert check faalde:', e.message);
   }
