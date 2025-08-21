@@ -8,27 +8,38 @@ export default function Home() {
 
   useEffect(() => {
     const checkSessionAndTrackLead = async () => {
-      const { data } = await supabase.auth.getSession()
-      const session = data?.session
+      const { data: { user } } = await supabase.auth.getUser()
 
-      if (session) {
-        const user_id = session.user.id
+      if (user) {
+        // Profiel + organisatie ophalen
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("current_org_id")
+          .eq("id", user.id)
+          .single()
+
+        if (!profile?.current_org_id) {
+          console.error("Geen organisatie gevonden voor deze gebruiker")
+          setChecking(false)
+          return
+        }
+
+        const org_id = profile.current_org_id
         const page_url = window.location.pathname
 
         try {
-          const ipRes = await fetch('https://api.ipify.org?format=json')
+          const ipRes = await fetch("https://api.ipify.org?format=json")
           const ipData = await ipRes.json()
           const ip_address = ipData.ip
 
-          await fetch('/api/lead', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ user_id, ip_address, page_url }),
+          // Lead loggen met ORG i.p.v. USER
+          await fetch("/api/lead", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ org_id, ip_address, page_url }),
           })
         } catch (err) {
-          console.error('Fout bij lead tracking:', err)
+          console.error("Fout bij lead tracking:", err)
         }
 
         router.replace("/dashboard")

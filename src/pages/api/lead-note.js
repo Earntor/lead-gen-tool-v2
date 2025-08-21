@@ -12,19 +12,13 @@ export default async function handler(req, res) {
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    {
-      global: {
-        headers: { Authorization: `Bearer ${token}` },
-      },
-    }
+    { global: { headers: { Authorization: `Bearer ${token}` } } }
   );
 
   // 1) User ophalen
   const { data: userData, error: userError } = await supabase.auth.getUser();
   const user = userData?.user || null;
-  if (userError || !user) {
-    return res.status(401).json({ error: 'Niet ingelogd' });
-  }
+  if (userError || !user) return res.status(401).json({ error: 'Niet ingelogd' });
 
   // 2) Huidige org ophalen
   const { data: profile, error: profileErr } = await supabase
@@ -39,6 +33,7 @@ export default async function handler(req, res) {
   const orgId = profile.current_org_id;
 
   try {
+    // ✅ Nieuwe notitie opslaan (overschrijft oude)
     if (req.method === 'POST') {
       const { company_domain, note } = req.body || {};
       if (!company_domain) {
@@ -47,29 +42,27 @@ export default async function handler(req, res) {
 
       const timestamp = new Date().toISOString();
 
+      // Upsert: per org + domein altijd max 1 notitie
       const { data, error } = await supabase
         .from('lead_notes')
         .upsert(
           {
-            org_id: orgId,                  // ✅ organisatie
+            org_id: orgId,
             company_domain,
             note: note ?? '',
             updated_at: timestamp,
           },
-          { onConflict: 'org_id,company_domain' } // ✅ unieke org+bedrijf
+          { onConflict: 'org_id,company_domain' }
         )
         .select('note, updated_at')
-        .maybeSingle();
+        .single();
 
       if (error) return res.status(500).json({ error: error.message });
 
-      return res.status(200).json({
-        success: true,
-        note: data?.note ?? '',
-        updated_at: data?.updated_at ?? timestamp,
-      });
+      return res.status(200).json(data);
     }
 
+    // ✅ Notitie ophalen (altijd 1)
     if (req.method === 'GET') {
       const { company_domain } = req.query || {};
       if (!company_domain) {
@@ -79,18 +72,19 @@ export default async function handler(req, res) {
       const { data, error } = await supabase
         .from('lead_notes')
         .select('note, updated_at')
-        .eq('org_id', orgId)              // ✅ organisatie
+        .eq('org_id', orgId)
         .eq('company_domain', company_domain)
-        .maybeSingle();
+        .single();
 
-      if (error) return res.status(500).json({ error: error.message });
+      if (error && error.code !== 'PGRST116') {
+        // PGRST116 = geen record gevonden
+        return res.status(500).json({ error: error.message });
+      }
 
-      return res.status(200).json({
-        note: data?.note ?? '',
-        updated_at: data?.updated_at ?? null,
-      });
+      return res.status(200).json(data ?? {});
     }
 
+    // ✅ Notitie verwijderen
     if (req.method === 'DELETE') {
       const { company_domain } = req.body || {};
       if (!company_domain) {
@@ -100,7 +94,7 @@ export default async function handler(req, res) {
       const { error } = await supabase
         .from('lead_notes')
         .delete()
-        .eq('org_id', orgId)              // ✅ organisatie
+        .eq('org_id', orgId)
         .eq('company_domain', company_domain);
 
       if (error) return res.status(500).json({ error: error.message });

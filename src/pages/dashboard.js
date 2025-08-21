@@ -203,7 +203,6 @@ if (!profile?.current_org_id) {
 const { data: allData } = await supabase
   .from("leads")
   .select(`
-    *,
     phone,
     email,
     linkedin_url,

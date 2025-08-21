@@ -97,7 +97,6 @@ if (profile) {
 }
 
 
-
 if (!profile) {
   // geen record → meteen aanmaken
   await supabase.from('profiles').upsert({ id: user.id });

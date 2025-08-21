@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { supabase } from "../lib/supabaseClient";
 
 export default function LabelManager({ labels, companyName, refreshLabels }) {
   const [adding, setAdding] = useState(false);
@@ -6,22 +7,36 @@ export default function LabelManager({ labels, companyName, refreshLabels }) {
   const handleAdd = async () => {
     const newLabel = prompt("Voer labelnaam in:");
     if (!newLabel) return;
+
     setAdding(true);
+
+    const { data: { session } } = await supabase.auth.getSession();
+
     await fetch("/api/labels/add", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ companyName, label: newLabel })
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session?.access_token}`,
+      },
+      body: JSON.stringify({ companyName, label: newLabel }),
     });
+
     setAdding(false);
     refreshLabels();
   };
 
   const handleDelete = async (labelId) => {
+    const { data: { session } } = await supabase.auth.getSession();
+
     await fetch("/api/labels/delete", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ labelId })
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session?.access_token}`,
+      },
+      body: JSON.stringify({ labelId }),
     });
+
     refreshLabels();
   };
 
