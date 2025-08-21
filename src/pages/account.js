@@ -114,18 +114,19 @@ useEffect(() => {
     setGeneralMessage(null)
     setTrackingMessage(null)
 
-    if ((newHash || 'account') === 'tracking' && user?.id) {
-      supabase
-        .from('organizations')
-        .select('last_tracking_ping')
-        .eq('id', currentOrgId)   // ✅ organisatie-id gebruiken
-        .single()
-        .then(({ data }) => {
-          if (data?.last_tracking_ping) {
-            setLastTrackingPing(data.last_tracking_ping)
-          }
-        })
-    }
+   if ((newHash || 'account') === 'tracking' && user?.id && currentOrgId) {
+  supabase
+    .from('organizations')
+    .select('last_tracking_ping')
+    .eq('id', currentOrgId)
+    .single()
+    .then(({ data }) => {
+      if (data?.last_tracking_ping) {
+        setLastTrackingPing(data.last_tracking_ping)
+      }
+    })
+}
+
   }
 
   const hash = window.location.hash.replace('#', '')
@@ -140,7 +141,7 @@ useEffect(() => {
 
 
     useEffect(() => {
-  if (!user?.id) return;
+  if (!user?.id || !currentOrgId) return; // ✅ wacht tot beide bestaan
 
   const channel = supabase
     .channel('profile-changes')
@@ -159,6 +160,7 @@ useEffect(() => {
     supabase.removeChannel(channel);
   };
 }, [user, currentOrgId])
+
 
 
 
