@@ -66,53 +66,40 @@ function mapCacheToLead(ipCache) {
   const toNum = (v) =>
     v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v);
 
-  return {
-    // Company info
-    company_name: cache.company_name ?? null,
-    company_domain: cache.company_domain ?? null,
-
-    // IP-gegevens
-    ip_street: cache.ip_street ?? null,
-    ip_postal_code: cache.ip_postal_code ?? null,
-    ip_city: cache.ip_city ?? null,
-    ip_country: cache.ip_country ?? null,
-
-    // Domein-gegevens
-    domain_address: cache.domain_address ?? null,
-    domain_postal_code: cache.domain_postal_code ?? null,
-    domain_city: cache.domain_city ?? null,
-    domain_country: cache.domain_country ?? null,
-    domain_lat: cache.domain_lat ?? null,
-    domain_lon: cache.domain_lon ?? null,
-
-    // Confidence
-    confidence: toNum(cache.confidence),
-    confidence_reason: cache.confidence_reason ?? null,
-    auto_confidence: cache.auto_confidence ?? null,
-    auto_confidence_reason: cache.auto_confidence_reason ?? null,
-    selected_random_match: cache.selected_random_match ?? null,
-
-    // Contact & socials
-    phone: cache.phone ?? null,
-    email: cache.email ?? null,
-    linkedin_url: cache.linkedin_url ?? null,
-    facebook_url: cache.facebook_url ?? null,
-    instagram_url: cache.instagram_url ?? null,
-    twitter_url: cache.twitter_url ?? null,
-
-    // Extra
-    meta_description: cache.meta_description ?? null,
-    rdns_hostname: cache.rdns_hostname ?? null,
-    category: cache.category ?? null,
-    location: cache.location ?? null,
-
-    // KvK
-    kvk_number: cache.kvk_number ?? null,
-    kvk_domain: cache.kvk_domain ?? null,
-    kvk_street: cache.kvk_street ?? null,
-    kvk_postal_code: cache.kvk_postal_code ?? null,
-    kvk_city: cache.kvk_city ?? null,
-    kvk_country: cache.kvk_country ?? null
+   return {
+    company_name: ipCache.company_name ?? null,
+    company_domain: ipCache.company_domain ?? null,
+    ip_street: ipCache.ip_street ?? null,
+    ip_postal_code: ipCache.ip_postal_code ?? null,
+    ip_city: ipCache.ip_city ?? null,
+    ip_country: ipCache.ip_country ?? null,
+    domain_address: ipCache.domain_address ?? null,
+    domain_postal_code: ipCache.domain_postal_code ?? null,
+    domain_city: ipCache.domain_city ?? null,
+    domain_country: ipCache.domain_country ?? null,
+    domain_lat: ipCache.domain_lat ?? null,
+    domain_lon: ipCache.domain_lon ?? null,
+    confidence: toNum(ipCache.confidence),
+    confidence_reason: ipCache.confidence_reason ?? null,
+    auto_confidence: ipCache.auto_confidence ?? null,
+    auto_confidence_reason: ipCache.auto_confidence_reason ?? null,
+    selected_random_match: ipCache.selected_random_match ?? null,
+    phone: ipCache.phone ?? null,
+    email: ipCache.email ?? null,
+    linkedin_url: ipCache.linkedin_url ?? null,
+    facebook_url: ipCache.facebook_url ?? null,
+    instagram_url: ipCache.instagram_url ?? null,
+    twitter_url: ipCache.twitter_url ?? null,
+    meta_description: ipCache.meta_description ?? null,
+    rdns_hostname: ipCache.rdns_hostname ?? null,
+    category: ipCache.category ?? null,
+    location: ipCache.location ?? null,
+    kvk_number: ipCache.kvk_number ?? null,
+    kvk_domain: ipCache.kvk_domain ?? null,
+    kvk_street: ipCache.kvk_street ?? null,
+    kvk_postal_code: ipCache.kvk_postal_code ?? null,
+    kvk_city: ipCache.kvk_city ?? null,
+    kvk_country: ipCache.kvk_country ?? null
   };
 }
 
