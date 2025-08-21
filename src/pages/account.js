@@ -116,7 +116,7 @@ useEffect(() => {
 
     if ((newHash || 'account') === 'tracking' && user?.id) {
       supabase
-        .from('profiles')
+        .from('organizations')
         .select('last_tracking_ping')
         .eq('id', currentOrgId)   // ✅ organisatie-id gebruiken
         .single()
@@ -136,7 +136,7 @@ useEffect(() => {
 
   window.addEventListener('hashchange', onHashChange)
   return () => window.removeEventListener('hashchange', onHashChange)
-}, [user])
+}, [user, currentOrgId])
 
 
     useEffect(() => {
@@ -158,7 +158,7 @@ useEffect(() => {
   return () => {
     supabase.removeChannel(channel);
   };
-}, [user]);
+}, [user, currentOrgId])
 
 
 
