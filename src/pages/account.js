@@ -100,7 +100,7 @@ if (profile) {
 
 if (!profile) {
   // geen record → meteen aanmaken
-  await supabase.from('profiles').insert({ id: user.id });
+  await supabase.from('profiles').upsert({ id: user.id });
 }
 
       setLoading(false)
@@ -119,7 +119,7 @@ useEffect(() => {
       supabase
         .from('profiles')
         .select('last_tracking_ping')
-        .eq('id', user.id)
+        .eq('id', currentOrgId)   // ✅ organisatie-id gebruiken
         .single()
         .then(({ data }) => {
           if (data?.last_tracking_ping) {
@@ -147,7 +147,7 @@ useEffect(() => {
     .channel('profile-changes')
     .on(
       'postgres_changes',
-      { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${user.id}` },
+      { event: 'UPDATE', schema: 'public', table: 'organizations', filter: `id=eq.${currentOrgId}` },
       (payload) => {
         if (payload.new?.last_tracking_ping) {
           setLastTrackingPing(payload.new.last_tracking_ping);

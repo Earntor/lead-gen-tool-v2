@@ -360,15 +360,17 @@ if (!ipCache) {
     console.warn('⚠️ queue insert exception:', e.message);
   }
 
-  // Health ping
-  const nowIso = new Date().toISOString();
-  if (isValidation) {
-    await supabase
-  .from('organizations')
-  .update({ last_tracking_ping: nowIso })
-  .eq('id', orgId);
-    return res.status(200).json({ success: true, validation: true });
-  }
+  // Health ping / script validatie
+const nowIso = new Date().toISOString();
+if (isValidation) {
+  await supabase
+    .from('organizations')
+    .update({ last_tracking_ping: nowIso })
+    .eq('id', orgId);   // ✅ juiste key: organisaties primary key
+  return res.status(200).json({ success: true, validation: true });
+}
+
+
 
   // -------- Dedup (zoals je had) --------
   let recent = null;

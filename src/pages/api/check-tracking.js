@@ -27,10 +27,11 @@ export default async function handler(req, res) {
   }
 
   try {
+    // ⬇️ check nu in organizations
     const { data, error } = await supabase
-      .from('profiles')
+      .from('organizations')
       .select('last_tracking_ping')
-      .eq('id', projectId)
+      .eq('id', projectId) // projectId == organization.id
       .single()
 
     if (error) {
@@ -42,7 +43,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ status: 'not_found' })
     }
 
-    // ✅ Nieuw: zónder tijdslimiet — als er ooit een ping was, dan is het ok
+    // ✅ Als er ooit een ping is geweest → ok
     return res.status(200).json({ status: 'ok' })
   } catch (err) {
     console.error('❌ Server error:', err)
