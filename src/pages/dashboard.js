@@ -824,11 +824,7 @@ return (
 
          {/* ==== LABELS (globale labels zonder company_name) ==== */}
 {(() => {
-  // ✅ Veilig orgId bepalen zonder ReferenceError als 'profile' niet bestaat
-  const orgId =
-    typeof profile !== "undefined" && profile ? profile.current_org_id : null;
-
-  // ✅ Fallback kleurfunctie als getRandomColor niet in scope is
+  // Alleen een veilige kleurfunctie; geen profile/orgId hier
   const getRandomColorSafe =
     typeof getRandomColor === "function"
       ? getRandomColor
@@ -837,31 +833,33 @@ return (
           return `hsl(${hue}, 70%, 85%)`;
         };
 
+  // Opslaan via API (server bepaalt org_id o.b.v. token)
   const handleSaveNewLabel = async () => {
     if (!newLabel?.trim()) return;
 
-    if (!orgId) {
-      alert("Kan label niet opslaan: orgId ontbreekt (profiel nog niet geladen).");
-      return;
-    }
-
-    // (optioneel) auth check
-    const { data: userData, error: authErr } = await supabase.auth.getUser();
-    if (authErr || !userData?.user?.id) {
+    const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+    if (sessErr || !session?.access_token) {
       alert("Niet ingelogd");
       return;
     }
 
-    const { error } = await supabase.from("labels").insert({
-      org_id: orgId,
-      company_name: null,
-      label: newLabel.trim(),
-      color: getRandomColorSafe(),
+    const res = await fetch("/api/labels/add", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({
+        companyName: null,               // globaal label (niet gekoppeld aan bedrijf)
+        label: newLabel.trim(),
+        color: getRandomColorSafe(),
+      }),
     });
 
-    if (error) {
-      alert("Fout bij label toevoegen: " + error.message);
-      console.error(error);
+    if (!res.ok) {
+      const txt = await res.text();
+      alert("Fout bij label toevoegen: " + txt);
+      console.error(txt);
       return;
     }
 
@@ -870,24 +868,32 @@ return (
     await refreshLabels();
   };
 
+  // Verwijderen via API (geen orgId nodig client-side)
   const handleDeleteGlobalLabel = async (labelId) => {
     if (!labelId) return;
-    if (!orgId) {
-      alert("Kan niet verwijderen: orgId ontbreekt.");
+
+    const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+    if (sessErr || !session?.access_token) {
+      alert("Niet ingelogd");
       return;
     }
 
-    const { error } = await supabase
-      .from("labels")
-      .delete()
-      .eq("id", labelId)     // strikter dan matchen op tekst
-      .eq("org_id", orgId);
+    const res = await fetch("/api/labels/delete", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ labelId }),
+    });
 
-    if (error) {
-      alert("Fout bij label verwijderen: " + error.message);
-      console.error(error);
+    if (!res.ok) {
+      const txt = await res.text();
+      alert("Fout bij label verwijderen: " + txt);
+      console.error(txt);
       return;
     }
+
     await refreshLabels();
   };
 
@@ -916,9 +922,8 @@ return (
           />
           <div className="flex justify-end gap-2 mt-3">
             <button
-              onClick={handleSaveNewLabel}  // ← geen inline profile-gebruik meer
+              onClick={handleSaveNewLabel}
               className="bg-blue-600 text-white px-4 py-1.5 text-sm rounded-lg hover:bg-blue-700 transition"
-              title={!orgId ? "orgId ontbreekt" : undefined}
             >
               Opslaan
             </button>
@@ -958,6 +963,7 @@ return (
     </div>
   );
 })()}
+
 
 
       
