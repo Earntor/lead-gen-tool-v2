@@ -824,16 +824,28 @@ return (
 
          {/* ==== LABELS (globale labels zonder company_name) ==== */}
 {(() => {
-  const orgId = profile?.current_org_id || null; // ← veilig afleiden
+  // ✅ Veilig orgId bepalen zonder ReferenceError als 'profile' niet bestaat
+  const orgId =
+    typeof profile !== "undefined" && profile ? profile.current_org_id : null;
+
+  // ✅ Fallback kleurfunctie als getRandomColor niet in scope is
+  const getRandomColorSafe =
+    typeof getRandomColor === "function"
+      ? getRandomColor
+      : () => {
+          const hue = Math.floor(Math.random() * 360);
+          return `hsl(${hue}, 70%, 85%)`;
+        };
 
   const handleSaveNewLabel = async () => {
-    if (!newLabel.trim()) return;
+    if (!newLabel?.trim()) return;
+
     if (!orgId) {
       alert("Kan label niet opslaan: orgId ontbreekt (profiel nog niet geladen).");
       return;
     }
 
-    // optioneel: controlleer login
+    // (optioneel) auth check
     const { data: userData, error: authErr } = await supabase.auth.getUser();
     if (authErr || !userData?.user?.id) {
       alert("Niet ingelogd");
@@ -844,7 +856,7 @@ return (
       org_id: orgId,
       company_name: null,
       label: newLabel.trim(),
-      color: getRandomColor(), // ← jouw helper blijft werken
+      color: getRandomColorSafe(),
     });
 
     if (error) {
@@ -860,11 +872,16 @@ return (
 
   const handleDeleteGlobalLabel = async (labelId) => {
     if (!labelId) return;
+    if (!orgId) {
+      alert("Kan niet verwijderen: orgId ontbreekt.");
+      return;
+    }
+
     const { error } = await supabase
       .from("labels")
       .delete()
-      .eq("id", labelId)       // ← verwijder strikt op id
-      .eq("org_id", orgId);    // ← én scope op org
+      .eq("id", labelId)     // strikter dan matchen op tekst
+      .eq("org_id", orgId);
 
     if (error) {
       alert("Fout bij label verwijderen: " + error.message);
@@ -899,7 +916,7 @@ return (
           />
           <div className="flex justify-end gap-2 mt-3">
             <button
-              onClick={handleSaveNewLabel}   // ← NIET meer inline met profile
+              onClick={handleSaveNewLabel}  // ← geen inline profile-gebruik meer
               className="bg-blue-600 text-white px-4 py-1.5 text-sm rounded-lg hover:bg-blue-700 transition"
               title={!orgId ? "orgId ontbreekt" : undefined}
             >
@@ -929,7 +946,7 @@ return (
             >
               <span className="mr-2">{label.label}</span>
               <button
-                onClick={() => handleDeleteGlobalLabel(label.id)} // ← op id, niet op tekst
+                onClick={() => handleDeleteGlobalLabel(label.id)}
                 className="text-black/80 hover:text-black ml-1"
                 title="Verwijder label"
               >
