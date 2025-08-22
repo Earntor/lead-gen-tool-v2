@@ -1,3 +1,4 @@
+// /pages/api/labels/add.js
 import { createClient } from '@supabase/supabase-js';
 
 export default async function handler(req, res) {
@@ -13,10 +14,12 @@ export default async function handler(req, res) {
     { global: { headers: { Authorization: `Bearer ${token}` } } }
   );
 
+  // 1) Auth user
   const { data: userData } = await supabase.auth.getUser();
   const user = userData?.user;
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
+  // 2) Bepaal org
   const { data: profile, error: profileErr } = await supabase
     .from('profiles')
     .select('current_org_id')
@@ -27,19 +30,24 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Geen organisatie gevonden' });
   }
 
-  let { companyName, label, color } = req.body;
-  companyName = (companyName || '').trim();
-  label = (label || '').trim();
-  if (!companyName || !label) {
-    return res.status(400).json({ error: 'Ongeldige invoer' });
+  // 3) Body en validatie
+  let { companyName, label, color } = req.body || {};
+  const cleanLabel = (label || '').trim();
+  if (!cleanLabel) {
+    return res.status(400).json({ error: 'Label ontbreekt' });
   }
 
+  // companyName mag null zijn voor globale labels
+  const cleanCompanyName =
+    companyName == null ? null : String(companyName).trim() || null;
+
+  // 4) Insert
   const { data, error } = await supabase
     .from('labels')
     .insert({
       org_id: profile.current_org_id,
-      company_name: companyName,
-      label,
+      company_name: cleanCompanyName,  // kan null zijn
+      label: cleanLabel,
       color: color || null,
     })
     .select()
