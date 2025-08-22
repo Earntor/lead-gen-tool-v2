@@ -822,95 +822,125 @@ return (
 
 
 
-          <div className="mt-6">
-  <div className="flex items-center justify-between mb-2">
-    <h2 className="text-sm font-semibold text-gray-800 tracking-wide">
-      Labels
-    </h2>
-    <button
-      onClick={() => setEditingLabelId("new")}
-      className="flex items-center text-sm text-blue-600 hover:text-blue-800 font-medium transition-colors"
-    >
-      <span className="text-base mr-1">＋</span> Nieuw
-    </button>
-  </div>
+         {/* ==== LABELS (globale labels zonder company_name) ==== */}
+{(() => {
+  const orgId = profile?.current_org_id || null; // ← veilig afleiden
 
-  {editingLabelId === "new" && (
-    <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 shadow-inner mb-4">
-      <input
-        type="text"
-        placeholder="Labelnaam"
-        value={newLabel}
-        onChange={(e) => setNewLabel(e.target.value)}
-        className="w-full border border-gray-300 px-3 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-      />
-      <div className="flex justify-end gap-2 mt-3">
-        <button
-          onClick={async () => {
-            if (!newLabel.trim()) return;
-            const { error } = await supabase.from("labels").insert({
-  org_id: profile.current_org_id,  // ✅ organisatie in plaats van user
-  company_name: null,
-  label: newLabel.trim(),
-  color: getRandomColor(),
-});
+  const handleSaveNewLabel = async () => {
+    if (!newLabel.trim()) return;
+    if (!orgId) {
+      alert("Kan label niet opslaan: orgId ontbreekt (profiel nog niet geladen).");
+      return;
+    }
 
-            if (!error) {
-              setNewLabel("");
-              setEditingLabelId(null);
-              refreshLabels();
-            }
-          }}
-          className="bg-blue-600 text-white px-4 py-1.5 text-sm rounded-lg hover:bg-blue-700 transition"
-        >
-          Opslaan
-        </button>
+    // optioneel: controlleer login
+    const { data: userData, error: authErr } = await supabase.auth.getUser();
+    if (authErr || !userData?.user?.id) {
+      alert("Niet ingelogd");
+      return;
+    }
+
+    const { error } = await supabase.from("labels").insert({
+      org_id: orgId,
+      company_name: null,
+      label: newLabel.trim(),
+      color: getRandomColor(), // ← jouw helper blijft werken
+    });
+
+    if (error) {
+      alert("Fout bij label toevoegen: " + error.message);
+      console.error(error);
+      return;
+    }
+
+    setNewLabel("");
+    setEditingLabelId(null);
+    await refreshLabels();
+  };
+
+  const handleDeleteGlobalLabel = async (labelId) => {
+    if (!labelId) return;
+    const { error } = await supabase
+      .from("labels")
+      .delete()
+      .eq("id", labelId)       // ← verwijder strikt op id
+      .eq("org_id", orgId);    // ← én scope op org
+
+    if (error) {
+      alert("Fout bij label verwijderen: " + error.message);
+      console.error(error);
+      return;
+    }
+    await refreshLabels();
+  };
+
+  return (
+    <div className="mt-6">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-sm font-semibold text-gray-800 tracking-wide">
+          Labels
+        </h2>
         <button
-          onClick={() => {
-            setNewLabel("");
-            setEditingLabelId(null);
-          }}
-          className="border border-gray-300 px-4 py-1.5 text-sm rounded-lg hover:bg-gray-100 transition"
+          onClick={() => setEditingLabelId("new")}
+          className="flex items-center text-sm text-blue-600 hover:text-blue-800 font-medium transition-colors"
         >
-          Annuleren
+          <span className="text-base mr-1">＋</span> Nieuw
         </button>
       </div>
-    </div>
-  )}
 
-  <div className="flex flex-wrap gap-2 mt-2">
-    {labels
-      .filter((l) => !l.company_name)
-      .map((label) => (
-        <div
-  key={label.id}
-  className="flex items-center px-3 py-1.5 rounded-full shadow-sm text-xs font-medium text-black"
-  style={{ backgroundColor: label.color }}
->
-
-          <span className="mr-2">{label.label}</span>
-          <button
-            onClick={async () => {
-             await supabase
-  .from("labels")
-  .delete()
-  .match({
-    label: label.label,
-    org_id: profile.current_org_id,   // ✅ check op organisatie
-  });
-
-
-              await refreshLabels();
-            }}
-            className="text-black/80 hover:text-black ml-1"
-            title="Verwijder label"
-          >
-            ×
-          </button>
+      {editingLabelId === "new" && (
+        <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 shadow-inner mb-4">
+          <input
+            type="text"
+            placeholder="Labelnaam"
+            value={newLabel}
+            onChange={(e) => setNewLabel(e.target.value)}
+            className="w-full border border-gray-300 px-3 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <div className="flex justify-end gap-2 mt-3">
+            <button
+              onClick={handleSaveNewLabel}   // ← NIET meer inline met profile
+              className="bg-blue-600 text-white px-4 py-1.5 text-sm rounded-lg hover:bg-blue-700 transition"
+              title={!orgId ? "orgId ontbreekt" : undefined}
+            >
+              Opslaan
+            </button>
+            <button
+              onClick={() => {
+                setNewLabel("");
+                setEditingLabelId(null);
+              }}
+              className="border border-gray-300 px-4 py-1.5 text-sm rounded-lg hover:bg-gray-100 transition"
+            >
+              Annuleren
+            </button>
+          </div>
         </div>
-      ))}
-  </div>
-</div>
+      )}
+
+      <div className="flex flex-wrap gap-2 mt-2">
+        {labels
+          .filter((l) => !l.company_name)
+          .map((label) => (
+            <div
+              key={label.id}
+              className="flex items-center px-3 py-1.5 rounded-full shadow-sm text-xs font-medium text-black"
+              style={{ backgroundColor: label.color }}
+            >
+              <span className="mr-2">{label.label}</span>
+              <button
+                onClick={() => handleDeleteGlobalLabel(label.id)} // ← op id, niet op tekst
+                className="text-black/80 hover:text-black ml-1"
+                title="Verwijder label"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+      </div>
+    </div>
+  );
+})()}
 
 
       
