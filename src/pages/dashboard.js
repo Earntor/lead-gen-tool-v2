@@ -892,37 +892,72 @@ return (
 };
 
   // OPTIMISTIC delete → server → geen refresh
-  const handleDeleteGlobalLabel = async (labelId) => {
+  // ⬇️ vervang je bestaande handleDeleteGlobalLabel door deze
+const handleDeleteGlobalLabel = async (labelId) => {
   if (!labelId) return;
+
+  // 1) Zoek de volledige label-rij op (we hebben 'label' en 'org_id' nodig)
+  const toDelete = (labels || []).find(l => l.id === labelId);
+  if (!toDelete) return;
 
   // Check login
   const { data: { session }, error: sessErr } = await supabase.auth.getSession();
-  if (sessErr || !session?.access_token) { alert("Niet ingelogd"); return; }
+  if (sessErr || !session?.access_token) {
+    alert("Niet ingelogd");
+    return;
+  }
 
+  // 2) Optimistic UI: haal zowel de globale rij als alle toewijzingen weg uit state
   const backup = [...(labels || [])];
-  setLabels((prev) => (prev || []).filter((l) => l.id !== labelId));
+  const sameOrg = (l) => l.org_id === toDelete.org_id;
+  const sameLabel = (l) => l.label === toDelete.label;
+
+  setLabels(prev =>
+    (prev || []).filter(l => {
+      // verwijder: de globale zelf ...
+      if (l.id === labelId) return false;
+      // ... en álle toewijzingen met zelfde org + label (company_name != null)
+      if (sameOrg(l) && sameLabel(l) && l.company_name) return false;
+      return true;
+    })
+  );
 
   try {
-    // DIRECTE DELETE NAAR SUPABASE (géén fetch naar /api)
-    const { error } = await supabase
+    // 3) Server: verwijder eerst ALLE toewijzingen, daarna de globale definitie
+    //    (2 losse calls omdat we geen transactie hebben aan de client-kant)
+    const { error: delAssignErr } = await supabase
+      .from("labels")
+      .delete()
+      .match({ org_id: toDelete.org_id, label: toDelete.label })
+      .not("company_name", "is", null); // alleen toewijzingen
+
+    if (delAssignErr) {
+      setLabels(() => backup);
+      alert("Fout bij gekoppelde labels verwijderen: " + (delAssignErr.message || "onbekend"));
+      console.error(delAssignErr);
+      return;
+    }
+
+    const { error: delGlobalErr } = await supabase
       .from("labels")
       .delete()
       .eq("id", labelId);
 
-    if (error) {
-      setLabels(() => backup); // rollback
-      alert("Fout bij label verwijderen: " + (error.message || "onbekend"));
-      console.error(error);
+    if (delGlobalErr) {
+      setLabels(() => backup);
+      alert("Fout bij label verwijderen: " + (delGlobalErr.message || "onbekend"));
+      console.error(delGlobalErr);
       return;
     }
 
-    // Geen refresh nodig
+    // Klaar: realtime zal alles bevestigen
   } catch (e) {
-    setLabels(() => backup); // rollback
+    setLabels(() => backup);
     alert("Fout bij label verwijderen (netwerk): " + (e?.message || e));
     console.error(e);
   }
 };
+
 
   return (
     <div className="mt-6">
