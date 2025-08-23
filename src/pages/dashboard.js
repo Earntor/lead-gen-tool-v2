@@ -316,7 +316,13 @@ useEffect(() => {
             });
             if (!res.ok) return [domain, null, null];
             const json = await res.json();
-            return [domain, json?.note ?? '', json?.updated_at ?? null];
+// Nieuwe API geeft { notes: [...] }, oude gaf { note, updated_at }.
+// Dit werkt voor beide:
+const latest = Array.isArray(json?.notes) ? (json.notes[0] || null) : (json || null);
+const content = latest?.content ?? latest?.note ?? '';
+const ts = latest?.updated_at ?? null;
+return [domain, content, ts];
+
           } catch {
             return [domain, null, null];
           }
@@ -1723,8 +1729,10 @@ try {
     return;
   }
 
-  const json = await res.json();
-  const updated_at = json?.updated_at ?? null;
+const json = await res.json();
+const saved = json?.note || json; // nieuwe API: { note: {...} } – oud: top-level
+const updated_at = saved?.updated_at ?? null;
+
 
   // Update maps, niet allLeads
   setNotesByDomain(prev => ({ ...prev, [openNoteFor]: noteDraft }));
@@ -1750,7 +1758,7 @@ try {
       'Content-Type': 'application/json',
       ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
     },
-    body: JSON.stringify({ company_domain: openNoteFor }),
+body: JSON.stringify({ company_domain: openNoteFor, deleteAllForDomain: true }),
   });
 
   if (!delRes.ok) {
