@@ -120,6 +120,8 @@ const [authToken, setAuthToken] = useState(null);
 const [notesByDomain, setNotesByDomain] = useState({}); // { [domain]: "note text" }
 const fetchedDomainsRef = useRef(new Set());            // om dubbele fetches te voorkomen
 const geocodeCacheRef = useRef(new Map()); // key: adres-string → { lat, lon }
+const [profile, setProfile] = useState(null);
+
 
   useEffect(() => {
   setGlobalSearch((router.query.search || "").toLowerCase());
@@ -186,68 +188,65 @@ const { data: sessionData } = await supabase.auth.getSession();
 const token = sessionData?.session?.access_token || null;
 setAuthToken(token);
 
-      // Profiel ophalen om org_id te weten
-const { data: profile } = await supabase
+// Profiel ophalen om org_id te weten
+const { data: profileRow, error: profErr } = await supabase
   .from("profiles")
   .select("current_org_id")
   .eq("id", user.id)
   .single();
 
-if (!profile?.current_org_id) {
+if (profErr || !profileRow?.current_org_id) {
   console.error("Geen current_org_id gevonden voor user:", user.id);
+  setProfile(null);
   setAllLeads([]);
+  setLabels([]);
+  setLoading(false);
   return;
 }
+
+// ⬅️ Bewaar in state zodat 'profile' overal beschikbaar is
+setProfile(profileRow);
+
+// Gebruik dit orgId voor alle queries/subscriptions hieronder
+const orgId = profileRow.current_org_id;
 
 // Leads ophalen per organisatie
 const { data: allData } = await supabase
   .from("leads")
   .select(`
     *,
-    phone,
-    email,
-    linkedin_url,
-    facebook_url,
-    instagram_url,
-    twitter_url,
-    meta_description,
-    category
+    phone, email,
+    linkedin_url, facebook_url, instagram_url, twitter_url,
+    meta_description, category
   `)
-  .eq("org_id", profile.current_org_id)   // ✅ org_id in plaats van user_id
+  .eq("org_id", orgId)
   .not("company_name", "is", null);
-
 
 setAllLeads(allData || []);
 console.log("Gelezen leads:", allData);
 
-const categoriesSet = new Set(allData.map((l) => l.category).filter(Boolean));
+const categoriesSet = new Set((allData || []).map((l) => l.category).filter(Boolean));
 setUniqueCategories(Array.from(categoriesSet).sort());
 
-
-      const { data: labelData } = await supabase
+// Labels per organisatie
+const { data: labelData } = await supabase
   .from("labels")
   .select("*")
-  .eq("org_id", profile.current_org_id);   // ✅ organisatie-labels
+  .eq("org_id", orgId);
+
 setLabels(labelData || []);
+setLoading(false);
 
-
-      setLoading(false);
-
-const subscription = supabase
-  .channel(`leads:org:${profile.current_org_id}`)
+// Realtime leads (alleen deze org)
+const leadsCh = supabase
+  .channel(`leads:org:${orgId}`)
   .on(
     "postgres_changes",
-    {
-      event: "INSERT",
-      schema: "public",
-      table: "leads",
-      filter: `org_id=eq.${profile.current_org_id}`,
-    },
+    { event: "INSERT", schema: "public", table: "leads", filter: `org_id=eq.${orgId}` },
     (payload) => {
       const lead = payload.new;
-
       const isValidVisitor =
-        lead.org_id === profile.current_org_id && // ✅ organisatie i.p.v. user
+        lead.org_id === orgId &&
         lead.source === "tracker" &&
         !!lead.ip_address &&
         !!lead.page_url &&
@@ -256,46 +255,35 @@ const subscription = supabase
 
       if (isValidVisitor) {
         setAllLeads((prev) => [lead, ...prev]);
-      } else {
-        console.warn("Lead genegeerd (geen echte bezoeker):", lead);
       }
     }
   )
   .subscribe();
 
-  const labelSubscription = supabase
-  .channel(`labels:org:${profile.current_org_id}`)
+// Realtime labels (alleen deze org)
+const labelsCh = supabase
+  .channel(`labels:org:${orgId}`)
   .on(
     "postgres_changes",
-    {
-      event: "*", // INSERT, UPDATE, DELETE
-      schema: "public",
-      table: "labels",
-      filter: `org_id=eq.${profile.current_org_id}`,
-    },
+    { event: "*", schema: "public", table: "labels", filter: `org_id=eq.${orgId}` },
     (payload) => {
       if (payload.eventType === "INSERT") {
-        setLabels((prev) => [...prev, payload.new]);
-      }
-
-      if (payload.eventType === "UPDATE") {
-        setLabels((prev) =>
-          prev.map((l) => (l.id === payload.new.id ? payload.new : l))
-        );
-      }
-
-      if (payload.eventType === "DELETE") {
-        setLabels((prev) => prev.filter((l) => l.id !== payload.old.id));
+        setLabels((prev = []) => [...prev, payload.new]);
+      } else if (payload.eventType === "UPDATE") {
+        setLabels((prev = []) => prev.map((l) => (l.id === payload.new.id ? payload.new : l)));
+      } else if (payload.eventType === "DELETE") {
+        setLabels((prev = []) => prev.filter((l) => l.id !== payload.old.id));
       }
     }
   )
   .subscribe();
 
-
-      return () => {
-  supabase.removeChannel(subscription);
-  supabase.removeChannel(labelSubscription);
+// Cleanup
+return () => {
+  supabase.removeChannel(leadsCh);
+  supabase.removeChannel(labelsCh);
 };
+
 
     };
     getData();
@@ -367,12 +355,14 @@ useEffect(() => {
 
 
     const refreshLabels = async () => {
-    const { data } = await supabase
-  .from("labels")
-  .select("*")
-  .eq("org_id", profile.current_org_id);   // ✅
-setLabels(data || []);
-  };
+  if (!profile?.current_org_id) return;
+  const { data } = await supabase
+    .from("labels")
+    .select("*")
+    .eq("org_id", profile.current_org_id);
+  setLabels(data || []);
+};
+
 
   const toggleVisitor = (visitorId) => {
     setOpenVisitors((prev) => {
@@ -823,7 +813,10 @@ return (
 
 
    {(() => {
-  // Veilige kleurfunctie (fallback)
+  // ✅ labels zijn organisatie‑gebonden
+  const orgId = profile?.current_org_id ?? null;
+
+  // Veilige kleurfunctie
   const getRandomColorSafe =
     typeof getRandomColor === "function"
       ? getRandomColor
@@ -832,9 +825,13 @@ return (
           return `hsl(${hue}, 70%, 85%)`;
         };
 
-  // OPTIMISTIC: meteen toevoegen in UI, daarna pas server
+  // OPTIMISTIC add → server → temp vervangen → géén refresh
   const handleSaveNewLabel = async () => {
     if (!newLabel?.trim()) return;
+    if (!orgId) {
+      alert("Geen actieve organisatie.");
+      return;
+    }
 
     const {
       data: { session },
@@ -845,11 +842,10 @@ return (
       return;
     }
 
-    // 1) Optimistic toevoegen
     const optimistic = {
       id: `temp-${Date.now()}`,
-      org_id: profile?.current_org_id || null, // direct meenemen in UI
-      company_name: null, // globaal label
+      org_id: orgId,           // belangrijk voor UI-filter
+      company_name: null,      // globaal label
       label: newLabel.trim(),
       color: getRandomColorSafe(),
       inserted_at: new Date().toISOString(),
@@ -857,7 +853,6 @@ return (
     setLabels((prev) => [optimistic, ...(prev || [])]);
 
     try {
-      // 2) Server call
       const res = await fetch("/api/labels/add", {
         method: "POST",
         headers: {
@@ -865,7 +860,7 @@ return (
           Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
-          companyName: null, // globaal label
+          companyName: null,       // globaal label
           label: optimistic.label,
           color: optimistic.color,
         }),
@@ -873,36 +868,32 @@ return (
 
       if (!res.ok) {
         const txt = await res.text();
-        // 3) Rollback bij fout
+        // rollback
         setLabels((prev) => (prev || []).filter((l) => l.id !== optimistic.id));
         alert("Fout bij label toevoegen: " + txt);
         console.error(txt);
         return;
       }
 
-      // 4) Vervang temp door echte server‑row
-      const saved = await res.json();
+      const saved = await res.json(); // row mét org_id terug
       setLabels((prev) => {
         const rest = (prev || []).filter((l) => l.id !== optimistic.id);
-        // Dedupe voor het geval er tegelijk een refresh of realtime binnenkomt
         const withoutDup = rest.filter((l) => l.id !== saved.id);
         return [saved, ...withoutDup];
       });
 
       setNewLabel("");
       setEditingLabelId(null);
-
-      // ⚠️ Géén refresh hier: voorkomt replica-lag die je nieuwe label wegpoetst
-      // await refreshLabels?.();
+      // ❌ GEEN refresh hier (replica-lag)
     } catch (e) {
-      // Rollback bij netwerkfout
+      // rollback
       setLabels((prev) => (prev || []).filter((l) => l.id !== optimistic.id));
       alert("Fout bij label toevoegen (netwerk): " + e.message);
       console.error(e);
     }
   };
 
-  // OPTIMISTIC delete (eerst uit UI, dan server; rollback bij fout)
+  // OPTIMISTIC delete → server → geen refresh
   const handleDeleteGlobalLabel = async (labelId) => {
     if (!labelId) return;
 
@@ -930,17 +921,14 @@ return (
 
       if (!res.ok) {
         const txt = await res.text();
-        // rollback
-        setLabels(() => backup);
+        setLabels(() => backup); // rollback
         alert("Fout bij label verwijderen: " + txt);
         console.error(txt);
         return;
       }
-
-      // Geen refresh nodig: UI is al up-to-date door de optimistische update
-      // await refreshLabels?.();
+      // geen refresh nodig
     } catch (e) {
-      setLabels(() => backup);
+      setLabels(() => backup); // rollback
       alert("Fout bij label verwijderen (netwerk): " + e.message);
       console.error(e);
     }
@@ -949,12 +937,12 @@ return (
   return (
     <div className="mt-6">
       <div className="flex items-center justify-between mb-2">
-        <h2 className="text-sm font-semibold text-gray-800 tracking-wide">
-          Labels
-        </h2>
+        <h2 className="text-sm font-semibold text-gray-800 tracking-wide">Labels</h2>
         <button
           onClick={() => setEditingLabelId("new")}
           className="flex items-center text-sm text-blue-600 hover:text-blue-800 font-medium transition-colors"
+          disabled={!orgId}
+          title={!orgId ? "Wachten op organisatie…" : "Nieuw label"}
         >
           <span className="text-base mr-1">＋</span> Nieuw
         </button>
@@ -973,14 +961,12 @@ return (
             <button
               onClick={handleSaveNewLabel}
               className="bg-blue-600 text-white px-4 py-1.5 text-sm rounded-lg hover:bg-blue-700 transition"
+              disabled={!orgId}
             >
               Opslaan
             </button>
             <button
-              onClick={() => {
-                setNewLabel("");
-                setEditingLabelId(null);
-              }}
+              onClick={() => { setNewLabel(""); setEditingLabelId(null); }}
               className="border border-gray-300 px-4 py-1.5 text-sm rounded-lg hover:bg-gray-100 transition"
             >
               Annuleren
@@ -991,7 +977,8 @@ return (
 
       <div className="flex flex-wrap gap-2 mt-2">
         {(labels || [])
-          .filter((l) => !l.company_name) // alleen globale labels
+          .filter((l) => l.org_id === orgId) // ⬅️ extra zekerheid: alleen labels van deze org
+          .filter((l) => !l.company_name)    // alleen globale labels
           .map((label) => (
             <div
               key={label.id}
@@ -1012,6 +999,7 @@ return (
     </div>
   );
 })()}
+
 
 
 
