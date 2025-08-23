@@ -822,9 +822,8 @@ return (
 
 
 
-         {/* ==== LABELS (globale labels zonder company_name) ==== */}
-{(() => {
-  // Alleen een veilige kleurfunctie; geen profile/orgId hier
+   {(() => {
+  // Veilige kleurfunctie (fallback)
   const getRandomColorSafe =
     typeof getRandomColor === "function"
       ? getRandomColor
@@ -833,7 +832,7 @@ return (
           return `hsl(${hue}, 70%, 85%)`;
         };
 
-  // Opslaan via API (server bepaalt org_id o.b.v. token)
+  // OPTIMISTIC: meteen toevoegen in UI, daarna pas server
   const handleSaveNewLabel = async () => {
     if (!newLabel?.trim()) return;
 
@@ -843,6 +842,18 @@ return (
       return;
     }
 
+    // 1) Optimistic toevoegen
+    const optimistic = {
+      id: `temp-${Date.now()}`,
+      org_id: profile?.current_org_id || null, // geen blokkade als profielen nog laden
+      company_name: null,                       // globaal label
+      label: newLabel.trim(),
+      color: getRandomColorSafe(),
+      inserted_at: new Date().toISOString(),
+    };
+    setLabels((prev) => [optimistic, ...(prev || [])]);
+
+    // 2) Server call
     const res = await fetch("/api/labels/add", {
       method: "POST",
       headers: {
@@ -850,25 +861,34 @@ return (
         Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({
-        companyName: null,               // globaal label (niet gekoppeld aan bedrijf)
+        companyName: null,               // globaal label
         label: newLabel.trim(),
-        color: getRandomColorSafe(),
+        color: optimistic.color,
       }),
     });
 
     if (!res.ok) {
       const txt = await res.text();
+      // 3) Rollback bij fout
+      setLabels((prev) => (prev || []).filter((l) => l.id !== optimistic.id));
       alert("Fout bij label toevoegen: " + txt);
       console.error(txt);
       return;
     }
 
+    // 4) Vervang temp door echte server‑row
+    const saved = await res.json();
+    setLabels((prev) => {
+      const rest = (prev || []).filter((l) => l.id !== optimistic.id);
+      return [saved, ...rest];
+    });
+
     setNewLabel("");
     setEditingLabelId(null);
-    await refreshLabels();
+    await refreshLabels?.(); // zodat server de bron blijft
   };
 
-  // Verwijderen via API (geen orgId nodig client-side)
+  // OPTIMISTIC delete (eerst uit UI, dan server; rollback bij fout)
   const handleDeleteGlobalLabel = async (labelId) => {
     if (!labelId) return;
 
@@ -877,6 +897,9 @@ return (
       alert("Niet ingelogd");
       return;
     }
+
+    const backup = [...labels];
+    setLabels((prev) => (prev || []).filter((l) => l.id !== labelId));
 
     const res = await fetch("/api/labels/delete", {
       method: "POST",
@@ -889,12 +912,14 @@ return (
 
     if (!res.ok) {
       const txt = await res.text();
+      // rollback
+      setLabels(() => backup);
       alert("Fout bij label verwijderen: " + txt);
       console.error(txt);
       return;
     }
 
-    await refreshLabels();
+    await refreshLabels?.();
   };
 
   return (
@@ -942,7 +967,7 @@ return (
 
       <div className="flex flex-wrap gap-2 mt-2">
         {labels
-          .filter((l) => !l.company_name)
+          .filter((l) => !l.company_name) // alleen globale labels
           .map((label) => (
             <div
               key={label.id}
@@ -963,6 +988,7 @@ return (
     </div>
   );
 })()}
+
 
 
 
