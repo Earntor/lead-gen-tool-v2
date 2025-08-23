@@ -832,21 +832,32 @@ return (
           return `hsl(${hue}, 70%, 85%)`;
         };
 
-  // HARDSAVE: wacht op server, voeg dan direct de echte row toe
+  // OPTIMISTIC: meteen toevoegen in UI, daarna pas server
   const handleSaveNewLabel = async () => {
-    const name = (newLabel || "").trim();
-    if (!name) return;
+    if (!newLabel?.trim()) return;
 
-    // Auth ophalen
-    const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+    const {
+      data: { session },
+      error: sessErr,
+    } = await supabase.auth.getSession();
     if (sessErr || !session?.access_token) {
       alert("Niet ingelogd");
       return;
     }
 
-    // Server call
-    let saved;
+    // 1) Optimistic toevoegen
+    const optimistic = {
+      id: `temp-${Date.now()}`,
+      org_id: profile?.current_org_id || null, // geen blokkade als profielen nog laden
+      company_name: null, // globaal label
+      label: newLabel.trim(),
+      color: getRandomColorSafe(),
+      inserted_at: new Date().toISOString(),
+    };
+    setLabels((prev) => [optimistic, ...(prev || [])]);
+
     try {
+      // 2) Server call
       const res = await fetch("/api/labels/add", {
         method: "POST",
         headers: {
@@ -855,50 +866,55 @@ return (
         },
         body: JSON.stringify({
           companyName: null, // globaal label
-          label: name,
-          color: getRandomColorSafe(),
+          label: optimistic.label,
+          color: optimistic.color,
         }),
       });
 
-      const ct = res.headers.get("content-type") || "";
       if (!res.ok) {
-        const errTxt = ct.includes("application/json") ? JSON.stringify(await res.json()) : await res.text();
-        console.error("Label add error:", res.status, errTxt);
-        alert("Fout bij label toevoegen: " + errTxt);
+        const txt = await res.text();
+        // 3) Rollback bij fout
+        setLabels((prev) => (prev || []).filter((l) => l.id !== optimistic.id));
+        alert("Fout bij label toevoegen: " + txt);
+        console.error(txt);
         return;
       }
-      saved = await res.json();
+
+      // 4) Vervang temp door echte server‑row
+      const saved = await res.json();
+      setLabels((prev) => {
+        const rest = (prev || []).filter((l) => l.id !== optimistic.id);
+        return [saved, ...rest];
+      });
+
+      setNewLabel("");
+      setEditingLabelId(null);
+
+      // Belangrijk: GEEN refreshLabels hier (replica-lag kan je nieuwe label anders wegpoetsen)
+      // await refreshLabels?.();
     } catch (e) {
-      console.error("Label add network error:", e);
-      alert("Netwerkfout bij label toevoegen.");
-      return;
+      // Rollback bij netwerkfout
+      setLabels((prev) => (prev || []).filter((l) => l.id !== optimistic.id));
+      alert("Fout bij label toevoegen (netwerk): " + e.message);
+      console.error(e);
     }
-
-    // UI direct bijwerken met server-row (dedupe + sort)
-    setLabels((prev = []) => {
-      const filtered = prev.filter((l) => l.id !== saved.id);
-      const next = [saved, ...filtered];
-      // sorteren op inserted_at desc (server heeft inserted_at)
-      next.sort((a, b) => new Date(b.inserted_at || 0) - new Date(a.inserted_at || 0));
-      return next;
-    });
-
-    setNewLabel("");
-    setEditingLabelId(null);
-
-    // Optional: nog even server als bron forceren (mag blijven staan)
-    await refreshLabels?.();
   };
 
-  // Delete (realtime: eerst server, daarna state updaten)
+  // OPTIMISTIC delete (eerst uit UI, dan server; rollback bij fout)
   const handleDeleteGlobalLabel = async (labelId) => {
     if (!labelId) return;
 
-    const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+    const {
+      data: { session },
+      error: sessErr,
+    } = await supabase.auth.getSession();
     if (sessErr || !session?.access_token) {
       alert("Niet ingelogd");
       return;
     }
+
+    const backup = [...(labels || [])];
+    setLabels((prev) => (prev || []).filter((l) => l.id !== labelId));
 
     try {
       const res = await fetch("/api/labels/delete", {
@@ -910,24 +926,22 @@ return (
         body: JSON.stringify({ labelId }),
       });
 
-      const ct = res.headers.get("content-type") || "";
       if (!res.ok) {
-        const errTxt = ct.includes("application/json") ? JSON.stringify(await res.json()) : await res.text();
-        console.error("Label delete error:", res.status, errTxt);
-        alert("Fout bij label verwijderen: " + errTxt);
+        const txt = await res.text();
+        // rollback
+        setLabels(() => backup);
+        alert("Fout bij label verwijderen: " + txt);
+        console.error(txt);
         return;
       }
+
+      // Geen refresh nodig: UI is al up-to-date door de optimistische update
+      // await refreshLabels?.();
     } catch (e) {
-      console.error("Label delete network error:", e);
-      alert("Netwerkfout bij label verwijderen.");
-      return;
+      setLabels(() => backup);
+      alert("Fout bij label verwijderen (netwerk): " + e.message);
+      console.error(e);
     }
-
-    // UI bijwerken: label uit state halen
-    setLabels((prev = []) => prev.filter((l) => l.id !== labelId));
-
-    // Optional: nog een refresh voor zekerheid
-    await refreshLabels?.();
   };
 
   return (
@@ -974,7 +988,7 @@ return (
       )}
 
       <div className="flex flex-wrap gap-2 mt-2">
-        {labels
+        {(labels || [])
           .filter((l) => !l.company_name) // alleen globale labels
           .map((label) => (
             <div
@@ -996,6 +1010,8 @@ return (
     </div>
   );
 })()}
+
+
 
 
 
