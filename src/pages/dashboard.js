@@ -832,63 +832,65 @@ return (
           return `hsl(${hue}, 70%, 85%)`;
         };
 
-  // OPTIMISTIC: meteen toevoegen in UI, daarna pas server
+  // HARDSAVE: wacht op server, voeg dan direct de echte row toe
   const handleSaveNewLabel = async () => {
-    if (!newLabel?.trim()) return;
+    const name = (newLabel || "").trim();
+    if (!name) return;
 
+    // Auth ophalen
     const { data: { session }, error: sessErr } = await supabase.auth.getSession();
     if (sessErr || !session?.access_token) {
       alert("Niet ingelogd");
       return;
     }
 
-    // 1) Optimistic toevoegen
-    const optimistic = {
-      id: `temp-${Date.now()}`,
-      org_id: profile?.current_org_id || null, // geen blokkade als profielen nog laden
-      company_name: null,                       // globaal label
-      label: newLabel.trim(),
-      color: getRandomColorSafe(),
-      inserted_at: new Date().toISOString(),
-    };
-    setLabels((prev) => [optimistic, ...(prev || [])]);
+    // Server call
+    let saved;
+    try {
+      const res = await fetch("/api/labels/add", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          companyName: null, // globaal label
+          label: name,
+          color: getRandomColorSafe(),
+        }),
+      });
 
-    // 2) Server call
-    const res = await fetch("/api/labels/add", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({
-        companyName: null,               // globaal label
-        label: newLabel.trim(),
-        color: optimistic.color,
-      }),
-    });
-
-    if (!res.ok) {
-      const txt = await res.text();
-      // 3) Rollback bij fout
-      setLabels((prev) => (prev || []).filter((l) => l.id !== optimistic.id));
-      alert("Fout bij label toevoegen: " + txt);
-      console.error(txt);
+      const ct = res.headers.get("content-type") || "";
+      if (!res.ok) {
+        const errTxt = ct.includes("application/json") ? JSON.stringify(await res.json()) : await res.text();
+        console.error("Label add error:", res.status, errTxt);
+        alert("Fout bij label toevoegen: " + errTxt);
+        return;
+      }
+      saved = await res.json();
+    } catch (e) {
+      console.error("Label add network error:", e);
+      alert("Netwerkfout bij label toevoegen.");
       return;
     }
 
-    // 4) Vervang temp door echte server‑row
-    const saved = await res.json();
-    setLabels((prev) => {
-      const rest = (prev || []).filter((l) => l.id !== optimistic.id);
-      return [saved, ...rest];
+    // UI direct bijwerken met server-row (dedupe + sort)
+    setLabels((prev = []) => {
+      const filtered = prev.filter((l) => l.id !== saved.id);
+      const next = [saved, ...filtered];
+      // sorteren op inserted_at desc (server heeft inserted_at)
+      next.sort((a, b) => new Date(b.inserted_at || 0) - new Date(a.inserted_at || 0));
+      return next;
     });
 
     setNewLabel("");
     setEditingLabelId(null);
-    await refreshLabels?.(); // zodat server de bron blijft
+
+    // Optional: nog even server als bron forceren (mag blijven staan)
+    await refreshLabels?.();
   };
 
-  // OPTIMISTIC delete (eerst uit UI, dan server; rollback bij fout)
+  // Delete (realtime: eerst server, daarna state updaten)
   const handleDeleteGlobalLabel = async (labelId) => {
     if (!labelId) return;
 
@@ -898,27 +900,33 @@ return (
       return;
     }
 
-    const backup = [...labels];
-    setLabels((prev) => (prev || []).filter((l) => l.id !== labelId));
+    try {
+      const res = await fetch("/api/labels/delete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ labelId }),
+      });
 
-    const res = await fetch("/api/labels/delete", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({ labelId }),
-    });
-
-    if (!res.ok) {
-      const txt = await res.text();
-      // rollback
-      setLabels(() => backup);
-      alert("Fout bij label verwijderen: " + txt);
-      console.error(txt);
+      const ct = res.headers.get("content-type") || "";
+      if (!res.ok) {
+        const errTxt = ct.includes("application/json") ? JSON.stringify(await res.json()) : await res.text();
+        console.error("Label delete error:", res.status, errTxt);
+        alert("Fout bij label verwijderen: " + errTxt);
+        return;
+      }
+    } catch (e) {
+      console.error("Label delete network error:", e);
+      alert("Netwerkfout bij label verwijderen.");
       return;
     }
 
+    // UI bijwerken: label uit state halen
+    setLabels((prev = []) => prev.filter((l) => l.id !== labelId));
+
+    // Optional: nog een refresh voor zekerheid
     await refreshLabels?.();
   };
 
@@ -988,7 +996,6 @@ return (
     </div>
   );
 })()}
-
 
 
 
