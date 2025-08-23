@@ -827,112 +827,102 @@ return (
 
   // OPTIMISTIC add → server → temp vervangen → géén refresh
   const handleSaveNewLabel = async () => {
-    if (!newLabel?.trim()) return;
-    if (!orgId) {
-      alert("Geen actieve organisatie.");
-      return;
-    }
+  if (!newLabel?.trim()) return;
 
-    const {
-      data: { session },
-      error: sessErr,
-    } = await supabase.auth.getSession();
-    if (sessErr || !session?.access_token) {
-      alert("Niet ingelogd");
-      return;
-    }
+  // Zorg dat er een org actief is
+  const orgId = profile?.current_org_id ?? null;
+  if (!orgId) { alert("Geen actieve organisatie."); return; }
 
-    const optimistic = {
-      id: `temp-${Date.now()}`,
-      org_id: orgId,           // belangrijk voor UI-filter
-      company_name: null,      // globaal label
-      label: newLabel.trim(),
-      color: getRandomColorSafe(),
-      inserted_at: new Date().toISOString(),
-    };
-    setLabels((prev) => [optimistic, ...(prev || [])]);
+  // Check login
+  const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+  if (sessErr || !session?.access_token) { alert("Niet ingelogd"); return; }
 
-    try {
-      const res = await fetch("/api/labels/add", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          companyName: null,       // globaal label
-          label: optimistic.label,
-          color: optimistic.color,
-        }),
-      });
-
-      if (!res.ok) {
-        const txt = await res.text();
-        // rollback
-        setLabels((prev) => (prev || []).filter((l) => l.id !== optimistic.id));
-        alert("Fout bij label toevoegen: " + txt);
-        console.error(txt);
-        return;
-      }
-
-      const saved = await res.json(); // row mét org_id terug
-      setLabels((prev) => {
-        const rest = (prev || []).filter((l) => l.id !== optimistic.id);
-        const withoutDup = rest.filter((l) => l.id !== saved.id);
-        return [saved, ...withoutDup];
-      });
-
-      setNewLabel("");
-      setEditingLabelId(null);
-      // ❌ GEEN refresh hier (replica-lag)
-    } catch (e) {
-      // rollback
-      setLabels((prev) => (prev || []).filter((l) => l.id !== optimistic.id));
-      alert("Fout bij label toevoegen (netwerk): " + e.message);
-      console.error(e);
-    }
+  // 1) Optimistic toevoegen
+  const optimistic = {
+    id: `temp-${Date.now()}`,
+    org_id: orgId,
+    company_name: null,                 // globaal label
+    label: newLabel.trim(),
+    color: typeof getRandomColor === "function" ? getRandomColor() : (() => {
+      const hue = Math.floor(Math.random() * 360);
+      return `hsl(${hue}, 70%, 85%)`;
+    })(),
+    inserted_at: new Date().toISOString(),
   };
+  setLabels((prev) => [optimistic, ...(prev || [])]);
+
+  try {
+    // 2) DIRECTE INSERT NAAR SUPABASE (géén fetch naar /api)
+    const { data: saved, error } = await supabase
+      .from("labels")
+      .insert({
+        org_id: orgId,
+        company_name: null,
+        label: optimistic.label,
+        color: optimistic.color,
+      })
+      .select("*")
+      .single();
+
+    if (error) {
+      // Rollback
+      setLabels((prev) => (prev || []).filter((l) => l.id !== optimistic.id));
+      alert("Fout bij label toevoegen: " + (error.message || "onbekend"));
+      console.error(error);
+      return;
+    }
+
+    // 3) Vervang temp door server-row
+    setLabels((prev) => {
+      const rest = (prev || []).filter((l) => l.id !== optimistic.id);
+      const withoutDup = rest.filter((l) => l.id !== saved.id);
+      return [saved, ...withoutDup];
+    });
+
+    setNewLabel("");
+    setEditingLabelId(null);
+
+    // ⚠️ GEEN refreshLabels hier (replica-lag)
+  } catch (e) {
+    // Rollback bij netwerkfout
+    setLabels((prev) => (prev || []).filter((l) => l.id !== optimistic.id));
+    alert("Fout bij label toevoegen (netwerk): " + (e?.message || e));
+    console.error(e);
+  }
+};
 
   // OPTIMISTIC delete → server → geen refresh
   const handleDeleteGlobalLabel = async (labelId) => {
-    if (!labelId) return;
+  if (!labelId) return;
 
-    const {
-      data: { session },
-      error: sessErr,
-    } = await supabase.auth.getSession();
-    if (sessErr || !session?.access_token) {
-      alert("Niet ingelogd");
+  // Check login
+  const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+  if (sessErr || !session?.access_token) { alert("Niet ingelogd"); return; }
+
+  const backup = [...(labels || [])];
+  setLabels((prev) => (prev || []).filter((l) => l.id !== labelId));
+
+  try {
+    // DIRECTE DELETE NAAR SUPABASE (géén fetch naar /api)
+    const { error } = await supabase
+      .from("labels")
+      .delete()
+      .eq("id", labelId);
+
+    if (error) {
+      setLabels(() => backup); // rollback
+      alert("Fout bij label verwijderen: " + (error.message || "onbekend"));
+      console.error(error);
       return;
     }
 
-    const backup = [...(labels || [])];
-    setLabels((prev) => (prev || []).filter((l) => l.id !== labelId));
-
-    try {
-      const res = await fetch("/api/labels/delete", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ labelId }),
-      });
-
-      if (!res.ok) {
-        const txt = await res.text();
-        setLabels(() => backup); // rollback
-        alert("Fout bij label verwijderen: " + txt);
-        console.error(txt);
-        return;
-      }
-      // geen refresh nodig
-    } catch (e) {
-      setLabels(() => backup); // rollback
-      alert("Fout bij label verwijderen (netwerk): " + e.message);
-      console.error(e);
-    }
-  };
+    // Geen refresh nodig
+  } catch (e) {
+    setLabels(() => backup); // rollback
+    alert("Fout bij label verwijderen (netwerk): " + (e?.message || e));
+    console.error(e);
+  }
+};
 
   return (
     <div className="mt-6">
