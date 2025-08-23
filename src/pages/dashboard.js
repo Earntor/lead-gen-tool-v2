@@ -848,7 +848,7 @@ return (
     // 1) Optimistic toevoegen
     const optimistic = {
       id: `temp-${Date.now()}`,
-      org_id: profile?.current_org_id || null, // geen blokkade als profielen nog laden
+      org_id: profile?.current_org_id || null, // direct meenemen in UI
       company_name: null, // globaal label
       label: newLabel.trim(),
       color: getRandomColorSafe(),
@@ -884,13 +884,15 @@ return (
       const saved = await res.json();
       setLabels((prev) => {
         const rest = (prev || []).filter((l) => l.id !== optimistic.id);
-        return [saved, ...rest];
+        // Dedupe voor het geval er tegelijk een refresh of realtime binnenkomt
+        const withoutDup = rest.filter((l) => l.id !== saved.id);
+        return [saved, ...withoutDup];
       });
 
       setNewLabel("");
       setEditingLabelId(null);
 
-      // Belangrijk: GEEN refreshLabels hier (replica-lag kan je nieuwe label anders wegpoetsen)
+      // ⚠️ Géén refresh hier: voorkomt replica-lag die je nieuwe label wegpoetst
       // await refreshLabels?.();
     } catch (e) {
       // Rollback bij netwerkfout
@@ -1010,6 +1012,7 @@ return (
     </div>
   );
 })()}
+
 
 
 
