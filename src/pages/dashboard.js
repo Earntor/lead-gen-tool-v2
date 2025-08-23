@@ -892,47 +892,22 @@ return (
 };
 
   // OPTIMISTIC delete → server → geen refresh
-  const handleDeleteGlobalLabel = async (labelObj) => {
-  if (!labelObj) return;
+  const handleDeleteGlobalLabel = async (labelId) => {
+  if (!labelId) return;
 
-  const orgId = profile?.current_org_id ?? null;
-  if (!orgId) { alert("Geen actieve organisatie."); return; }
+  // Check login
+  const { data: { session }, error: sessErr } = await supabase.auth.getSession();
+  if (sessErr || !session?.access_token) { alert("Niet ingelogd"); return; }
 
-  // Alleen cascade als dit een *globaal* label is
-  if (labelObj.company_name !== null) {
-    // Voor de zekerheid: als iemand hier per-ongeluk een company-label langs stuurt,
-    // verwijderen we alleen die ene rij op id.
-    const backup = [...(labels || [])];
-    setLabels((prev) => (prev || []).filter((l) => l.id !== labelObj.id));
-    try {
-      const { error } = await supabase.from("labels").delete().eq("id", labelObj.id);
-      if (error) {
-        setLabels(() => backup);
-        alert("Fout bij label verwijderen: " + (error.message || "onbekend"));
-        console.error(error);
-      }
-    } catch (e) {
-      setLabels(() => backup);
-      alert("Fout bij label verwijderen (netwerk): " + (e?.message || e));
-      console.error(e);
-    }
-    return;
-  }
-
-  // ▼ Dit is een GLOBAAL label → cascade: verwijder ALLE rijen in deze org met dezelfde label-naam
   const backup = [...(labels || [])];
-
-  // Optimistisch alle chips met die naam in deze org uit state halen (global + company-koppelingen)
-  setLabels((prev) =>
-    (prev || []).filter((l) => !(l.org_id === orgId && l.label === labelObj.label))
-  );
+  setLabels((prev) => (prev || []).filter((l) => l.id !== labelId));
 
   try {
+    // DIRECTE DELETE NAAR SUPABASE (géén fetch naar /api)
     const { error } = await supabase
       .from("labels")
       .delete()
-      .eq("org_id", orgId)
-      .eq("label", labelObj.label);   // verwijdert global + alle company-rijen met die naam
+      .eq("id", labelId);
 
     if (error) {
       setLabels(() => backup); // rollback
@@ -940,7 +915,8 @@ return (
       console.error(error);
       return;
     }
-    // Geen refresh nodig; realtime events vullen de rest in (en state is al goed)
+
+    // Geen refresh nodig
   } catch (e) {
     setLabels(() => backup); // rollback
     alert("Fout bij label verwijderen (netwerk): " + (e?.message || e));
@@ -1001,7 +977,7 @@ return (
             >
               <span className="mr-2">{label.label}</span>
               <button
-                onClick={() => handleDeleteGlobalLabel(label)}
+                onClick={() => handleDeleteGlobalLabel(label.id)}
                 className="text-black/80 hover:text-black ml-1"
                 title="Verwijder label"
               >
