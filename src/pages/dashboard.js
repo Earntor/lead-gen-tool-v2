@@ -898,34 +898,54 @@ return (
   }
 };
 
-  // OPTIMISTIC delete → server → geen refresh
-  // ⬇️ vervang je bestaande handleDeleteGlobalLabel door deze
+// Cataloguslabel verwijderen (links): optimistic + API cascade
 const handleDeleteGlobalLabel = async (labelId) => {
   if (!labelId) return;
 
-  // Optimistic UI: haal alvast uit state
+  // 1) Vind de catalogusrij in state
+  const row = (labels || []).find(l => l.id === labelId);
+  if (!row) return;
+
+  const orgId = profile?.current_org_id ?? null;
+  if (!orgId) { alert("Geen actieve organisatie."); return; }
+
+  // 2) Alle rijen met dezelfde org + label (dus ook toegewezen aan bedrijven)
+  const affectedIds = (labels || [])
+    .filter(l => l.org_id === orgId && l.label === row.label)
+    .map(l => l.id);
+
+  // 3) Optimistic: haal ze alvast uit de UI
   const backup = [...(labels || [])];
-  setLabels(prev => (prev || []).filter(l => l.id !== labelId));
+  setLabels(prev => (prev || []).filter(l => !affectedIds.includes(l.id)));
 
   try {
-    // Eén delete. DB-trigger verwijdert automatisch alle toewijzingen.
-    const { error } = await supabase
-      .from("labels")
-      .delete()
-      .eq("id", labelId);
+    // 4) Server: roep de cascade-API aan
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) throw new Error("Niet ingelogd");
 
-    if (error) {
-      setLabels(() => backup); // rollback
-      alert("Fout bij label verwijderen: " + (error.message || "onbekend"));
-      console.error(error);
+    const res = await fetch('/api/labels/delete', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ labelId, cascade: true }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error || `Serverfout ${res.status}`);
     }
+
+    // 5) Klaar: realtime events houden state verder synchroon
   } catch (e) {
+    // Rollback bij fout
     setLabels(() => backup);
-    alert("Netwerkfout bij label verwijderen: " + (e?.message || e));
+    alert("Fout bij label verwijderen: " + (e?.message || e));
     console.error(e);
   }
 };
-
 
 
   return (
