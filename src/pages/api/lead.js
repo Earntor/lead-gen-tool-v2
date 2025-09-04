@@ -230,12 +230,33 @@ export default async function handler(req, res) {
     site_id
   } = req.body;
 
+// Queue-status bijwerken voor alle pending jobs van deze bezoeker (ip+site)
+const markQueue = async (status, reason) => {
+  try {
+    await supabaseAdmin
+      .from('enrichment_queue')
+      .update({
+        status,
+        updated_at: new Date().toISOString(),
+        error_text: reason || null
+      })
+      .eq('ip_address', ip_address)
+      .eq('site_id', site_id)
+      .eq('status', 'pending');
+  } catch (e) {
+    console.warn('⚠️ queue status update faalde:', e.message);
+  }
+};
+
+
   try {
   const url = new URL(page_url);
   if (url.hostname.endsWith("vercel.app")) {
-    console.log("⛔️ dashboard-bezoek gedetecteerd, wordt niet opgeslagen:", page_url);
-    return res.status(200).json({ ignored: true, reason: "dashboard visit" });
-  }
+  console.log("⛔️ dashboard-bezoek gedetecteerd, wordt niet opgeslagen:", page_url);
+  await markQueue('skipped', 'skipped: dashboard visit');
+  return res.status(200).json({ ignored: true, reason: "dashboard visit" });
+}
+
 } catch (e) {
   console.warn("⚠️ Ongeldige page_url ontvangen, maar enrichment gaat door:", page_url);
   // ⚠️ Geen return hier – laat de enrichment gewoon doorlopen
@@ -715,9 +736,11 @@ if (!company_domain && domainSignals.length > 0) {
     );
 
     if (!validatedLikely) {
-      console.log(`⛔ Domein uit signals geblokkeerd door cleanAndValidateDomain: ${likely.domain}`);
-      return res.status(200).json({ ignored: true, reason: 'blocked by cleanAndValidateDomain' });
-    }
+  console.log(`⛔ Domein uit signals geblokkeerd door cleanAndValidateDomain: ${likely.domain}`);
+  await markQueue('skipped', 'skipped: blocked by cleanAndValidateDomain');
+  return res.status(200).json({ ignored: true, reason: 'blocked by cleanAndValidateDomain' });
+}
+
 
     company_domain = validatedLikely;
     enrichment_source = likely.enrichment_source || ENRICHMENT_SOURCES.FINAL_LIKELY;
@@ -766,6 +789,7 @@ confidence_reason: CONFIDENCE_REASONS.FINAL_LIKELY,
   ignore_type: 'isp' // ✅ nieuw
 });
 
+await markQueue('skipped', 'skipped: known ISP (no valid domain)');
 return res.status(200).json({ ignored: true, reason: 'known ISP (no valid domain)' });
     }
 
@@ -782,7 +806,8 @@ return res.status(200).json({ ignored: true, reason: 'known ISP (no valid domain
   ignore_type: 'no-domain' // ✅ nieuw
 });
 
-      return res.status(200).json({ ignored: true, reason: 'no domain found' });
+await markQueue('skipped', 'skipped: no domain found');
+return res.status(200).json({ ignored: true, reason: 'no domain found' });
     }
 
     // 🧠 Check op bestaande enrichment in ip_enrichment_cache
@@ -972,7 +997,8 @@ as_name: asname || null,
     page_url: page_url || null,
     ignore_type: 'low-confidence'
   });
-  return res.status(200).json({ ignored: true, reason: 'low confidence no domain' });
+  await markQueue('skipped', 'skipped: low confidence no domain');
+return res.status(200).json({ ignored: true, reason: 'low confidence no domain' });
 }
 
 // Coördinaten alleen als beide bestaan (voor DOMAIN coords)
@@ -1068,6 +1094,9 @@ if (!cached) {
   // Deze endpoint verzorgt alleen enrichment + cache.
   // track.js schrijft de pageview en triggert KvK.
 
+
+  // Markeer alle pending jobs voor deze bezoeker als done
+await markQueue('done', 'auto-done via live enrichment');
   return res.status(200).json({
     success: true,
     mode: 'enrichment_only',
@@ -1077,7 +1106,9 @@ if (!cached) {
   });
 
   } catch (err) {
-    console.error('Server error:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
+  console.error('Server error:', err);
+  // Label eventuele pending jobs als error
+  await markQueue('error', `lead.js error: ${err?.message || 'unknown'}`);
+  res.status(500).json({ error: 'Internal server error' });
+}
 }
