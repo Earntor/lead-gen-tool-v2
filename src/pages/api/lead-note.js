@@ -1,19 +1,18 @@
 // pages/api/lead-note.js
 import { createClient } from '@supabase/supabase-js';
 
-// ⚠️ We gebruiken de SERVICE ROLE key (server-side only) om RLS-lussen te voorkomen
+// Server-side client met SERVICE ROLE (RLS omzeilen voor eenvoud/controle hier)
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY,
   { auth: { persistSession: false } }
 );
 
-// Haal ingelogde user uit Bearer token (van de client)
+// Haal ingelogde user uit Bearer token
 async function getUserFromAuthHeader(req) {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
   if (!token) return null;
-
   const { data, error } = await supabaseAdmin.auth.getUser(token);
   if (error) return null;
   return data?.user ?? null;
@@ -26,7 +25,6 @@ async function getOrgIdForUser(userId) {
     .select('current_org_id')
     .eq('id', userId)
     .single();
-
   if (error || !data?.current_org_id) return null;
   return data.current_org_id;
 }
@@ -40,9 +38,8 @@ export default async function handler(req, res) {
     if (!orgId) return res.status(400).json({ error: 'no_org' });
 
     // ---------------- GET ----------------
-    // Twee varianten:
     // - /api/lead-note?domains=a.com,b.com  -> { notesByDomain: { "a.com": [...], "b.com": [...] } }
-    // - /api/lead-note?company_domain=a.com -> { notes: [...] }   (compat met oude code)
+    // - /api/lead-note?company_domain=a.com -> { notes: [...] }
     if (req.method === 'GET') {
       const rawDomains = (req.query.domains || '').toString().trim();
       const singleDomain = (req.query.company_domain || '').toString().trim().toLowerCase();
@@ -53,14 +50,13 @@ export default async function handler(req, res) {
           .map(s => s.trim().toLowerCase())
           .filter(Boolean);
 
-        let query = supabaseAdmin
+        const { data, error } = await supabaseAdmin
           .from('lead_notes')
-          .select('id, company_domain, content, created_by, created_at, updated_at')
+          .select('id, company_domain, note, created_at, updated_at')
           .eq('org_id', orgId)
           .in('company_domain', domains)
           .order('updated_at', { ascending: false });
 
-        const { data, error } = await query;
         if (error) throw error;
 
         const notesByDomain = {};
@@ -69,14 +65,13 @@ export default async function handler(req, res) {
           if (!notesByDomain[d]) notesByDomain[d] = [];
           notesByDomain[d].push(n);
         }
-
         return res.status(200).json({ notesByDomain });
       }
 
       if (singleDomain) {
         const { data, error } = await supabaseAdmin
           .from('lead_notes')
-          .select('id, company_domain, content, created_by, created_at, updated_at')
+          .select('id, company_domain, note, created_at, updated_at')
           .eq('org_id', orgId)
           .eq('company_domain', singleDomain)
           .order('updated_at', { ascending: false });
@@ -85,10 +80,10 @@ export default async function handler(req, res) {
         return res.status(200).json({ notes: data || [] });
       }
 
-      // Geen filter mee? Beperk output
+      // Zonder filter: redelijke limiet
       const { data, error } = await supabaseAdmin
         .from('lead_notes')
-        .select('id, company_domain, content, created_by, created_at, updated_at')
+        .select('id, company_domain, note, created_at, updated_at')
         .eq('org_id', orgId)
         .order('updated_at', { ascending: false })
         .limit(1000);
@@ -101,29 +96,27 @@ export default async function handler(req, res) {
         if (!notesByDomain[d]) notesByDomain[d] = [];
         notesByDomain[d].push(n);
       }
-
       return res.status(200).json({ notesByDomain });
     }
 
     // ---------------- POST ----------------
-    // Aanmaken of updaten
+    // Upsert per (org_id, company_domain)
     // Body: { id?, company_domain, content? | note? }
     if (req.method === 'POST') {
       const body = req.body || {};
       const id = body.id ?? null;
       const domain = String(body.company_domain || '').trim().toLowerCase();
-      // Compat: accepteer zowel `content` als oude `note`
-      const cleanContent = String(body.content ?? body.note ?? '').trim();
+      const cleanNote = String(body.note ?? body.content ?? '').trim(); // accepteer beide
 
-      if (!domain || !cleanContent) {
-        return res.status(400).json({ error: 'company_domain_and_content_required' });
+      if (!domain || !cleanNote) {
+        return res.status(400).json({ error: 'company_domain_and_note_required' });
       }
 
       if (id) {
-        // Update bestaande note
+        // Gerichte update op id (veiligst)
         const { data, error } = await supabaseAdmin
           .from('lead_notes')
-          .update({ content: cleanContent })
+          .update({ note: cleanNote, updated_at: new Date().toISOString() })
           .eq('id', id)
           .eq('org_id', orgId)
           .select()
@@ -133,15 +126,18 @@ export default async function handler(req, res) {
         return res.status(200).json({ note: data });
       }
 
-      // Nieuwe note
+      // UPSERT op (org_id, company_domain)
       const { data, error } = await supabaseAdmin
         .from('lead_notes')
-        .insert([{
-          org_id: orgId,
-          company_domain: domain,
-          content: cleanContent,
-          created_by: user.id
-        }])
+        .upsert(
+          {
+            org_id: orgId,
+            company_domain: domain,
+            note: cleanNote,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'org_id,company_domain' } // unieke index bestaat al
+        )
         .select()
         .single();
 
@@ -150,8 +146,7 @@ export default async function handler(req, res) {
     }
 
     // ---------------- DELETE ----------------
-    // Bij voorkeur verwijderen op id (veiligst)
-    // Body: { id }  (optioneel: { company_domain, deleteAllForDomain: true } om alles voor een domein te wissen)
+    // Body: { id }  of  { company_domain, deleteAllForDomain: true }
     if (req.method === 'DELETE') {
       const body = req.body || {};
       const id = body.id ?? null;
@@ -162,7 +157,6 @@ export default async function handler(req, res) {
           .delete()
           .eq('id', id)
           .eq('org_id', orgId);
-
         if (error) throw error;
         return res.status(200).json({ ok: true });
       }
@@ -176,7 +170,6 @@ export default async function handler(req, res) {
           .delete()
           .eq('org_id', orgId)
           .eq('company_domain', domain);
-
         if (error) throw error;
         return res.status(200).json({ ok: true });
       }
