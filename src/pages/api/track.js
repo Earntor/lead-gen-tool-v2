@@ -338,28 +338,41 @@ if (!ipCache) {
       !ipCache.twitter_url
     ));
 
-  if (needsEnrichment) {
-    const { error: qErr } = await supabase
-      .from('enrichment_queue')
-      .insert({
-        ip_address: ipAddress,
-        org_id: orgId,                 // ✅ bestaat nu in de tabel
-        site_id: siteId,
-        page_url: canonicalPageUrl,
-        status: 'pending',             // ✅ expliciet
-        attempts: 0,
-        payload: {
-          anonId: anonId || null,
-          referrer: referrer || null,
-          utmSource: utmSource || null,
-          utmMedium: utmMedium || null,
-          utmCampaign: utmCampaign || null,
-          durationSeconds: normalizeDuration(durationSeconds)
-        }
-      });
+const shouldQueueThisEvent = (eventType || 'load') === 'load';
 
-    if (qErr) console.warn('⚠️ queue insert faalde:', qErr.message);
+if (shouldQueueThisEvent && needsEnrichment) {
+  const { error: qErr } = await supabase
+    .from('enrichment_queue')
+    .insert({
+      ip_address: ipAddress,
+      org_id:     orgId,
+      site_id:    siteId,
+      page_url:   canonicalPageUrl,
+      status:     'pending',
+      attempts:   0,
+      payload: {
+        anonId:           anonId || null,
+        referrer:         referrer || null,
+        utmSource:        utmSource || null,
+        utmMedium:        utmMedium || null,
+        utmCampaign:      utmCampaign || null,
+        durationSeconds:  normalizeDuration(durationSeconds)
+      }
+    });
+
+  // ✅ Fix C: duplicate (23505) negeren, andere fouten wél loggen
+  if (qErr) {
+    const isDuplicate =
+      qErr.code === '23505' ||
+      /duplicate key value/i.test(qErr.message || '') ||
+      /unique constraint/i.test(qErr.message || '');
+    if (!isDuplicate) {
+      console.warn('⚠️ queue insert faalde:', qErr.message, qErr.code, qErr.details);
+    }
   }
+}
+
+
 } catch (e) {
   console.warn('⚠️ queue insert exception:', e.message);
 }
