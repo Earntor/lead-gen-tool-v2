@@ -159,6 +159,15 @@ async function resolveOrgIdForSite(supabase, siteId) {
 
 /* ----------------------- Handler ----------------------- */
 
+// --- Queue cooldowns (in minuten) ---
+// pending  : nooit opnieuw starten (er draait al iets)
+// running  : korte rem (optioneel)
+// done     : 12 uur rust
+// skipped  : 12 uur rust
+// error    : 1 uur rust
+const COOLDOWN_MINUTES = { pending: Infinity, running: 5, done: 720, skipped: 720, error: 60 };
+
+
 export default async function handler(req, res) {
   // CORS (voeg Authorization toe)
   if (req.method === 'OPTIONS') {
@@ -340,7 +349,40 @@ if (!ipCache) {
 
 const shouldQueueThisEvent = (eventType || 'load') === 'load';
 
-if (shouldQueueThisEvent && needsEnrichment) {
+  // --- Cooldown lookup: pak laatste job voor (ip, site) ---
+  let skipBecauseRecent = false;
+  try {
+    const { data: lastJob } = await supabase
+      .from('enrichment_queue')
+      .select('id, status, created_at, updated_at, error_text')
+      .eq('ip_address', ipAddress)
+      .eq('site_id', siteId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (lastJob) {
+      if (lastJob.status === 'pending') {
+        // er staat al een job klaar → niet opnieuw queuen
+        skipBecauseRecent = true;
+      } else {
+        const t = new Date(lastJob.updated_at || lastJob.created_at).getTime();
+        const minutesAgo = (Date.now() - t) / 60000;
+        const cooldown = COOLDOWN_MINUTES[lastJob.status] ?? 0;
+        if (minutesAgo < cooldown) {
+          skipBecauseRecent = true;
+          console.log(
+            `⏱️ Cooldown actief voor ${siteId}/${ipAddress}: status=${lastJob.status}, ${minutesAgo.toFixed(1)}m geleden (< ${cooldown}m)`
+          );
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('⚠️ cooldown lookup faalde:', e.message);
+  }
+
+
+if (shouldQueueThisEvent && needsEnrichment && !skipBecauseRecent) {
   const { error: qErr } = await supabase
     .from('enrichment_queue')
     .insert({
@@ -543,30 +585,31 @@ if (isValidation) {
 
   // 🔔 DIRECTE ENRICHMENT-KICK (niet wachten op Plan B)
 {
-  const BASE_URL =
-    process.env.NEXT_PUBLIC_TRACKING_DOMAIN
-    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+  if ((eventType || 'load') === 'load') {
+    const BASE_URL =
+      process.env.NEXT_PUBLIC_TRACKING_DOMAIN
+      || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
 
-  fetch(`${BASE_URL}/api/lead`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      ip_address:        ipAddress,
-      org_id:            orgId,
-      page_url:          canonicalPageUrl,
-      anon_id:           anonId || null,
-      referrer:          referrer || null,
-      utm_source:        utmSource || null,
-      utm_medium:        utmMedium || null,
-      utm_campaign:      utmCampaign || null,
-      duration_seconds:  normalizeDuration(durationSeconds),
-      site_id:           siteId
-    })
-  }).catch((e) => {
-    console.warn('⚠️ directe enrichment-kick (fire-and-forget) faalde:', e?.message || e);
-  });
+    fetch(`${BASE_URL}/api/lead`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ip_address:        ipAddress,
+        org_id:            orgId,
+        page_url:          canonicalPageUrl,
+        anon_id:           anonId || null,
+        referrer:          referrer || null,
+        utm_source:        utmSource || null,
+        utm_medium:        utmMedium || null,
+        utm_campaign:      utmCampaign || null,
+        duration_seconds:  normalizeDuration(durationSeconds),
+        site_id:           siteId
+      })
+    }).catch((e) => {
+      console.warn('⚠️ directe enrichment-kick (fire-and-forget) faalde:', e?.message || e);
+    });
+  }
 }
-
 
 
 // Plan B: verwerk 1 pending enrichment job als fallback
