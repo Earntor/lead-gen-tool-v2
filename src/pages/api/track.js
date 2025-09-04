@@ -54,11 +54,14 @@ function canonicalizeUrl(input) {
     const u = new URL(input, 'https://fallback.nl');
     let p = u.pathname || '/';
     if (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
+    // ⚠️ voorkom fallback-origin in DB
+    if (u.origin === 'https://fallback.nl') return p || '/';
     return `${u.origin}${p}`;
   } catch {
     return input;
   }
 }
+
 
 // ipapi_cache -> leads kolommen
 function mapCacheToLead(ipCache) {
@@ -313,52 +316,53 @@ if (!ipCache) {
 
   // ---- Queue insert i.p.v. fire-and-forget enrich ----
   try {
-    const needsEnrichment =
-  ((!ipCache) && !!ipAddress) ||
-  ipCache?.company_name === 'Testbedrijf' ||
-  (ipCache?.company_domain && (
-    !ipCache.domain_address ||
-    !ipCache.domain_city ||
-    !ipCache.domain_country ||
-    ipCache.confidence == null ||
-    !ipCache.confidence_reason ||
-    !ipCache.meta_description ||
-    !ipCache.phone ||
-    !ipCache.email ||
-    !ipCache.domain_lat ||
-    !ipCache.domain_lon ||
-    !ipCache.category ||
-    !ipCache.rdns_hostname ||
-    !ipCache.linkedin_url ||
-    !ipCache.facebook_url ||
-    !ipCache.instagram_url ||
-    !ipCache.twitter_url
-  ));
+  const needsEnrichment =
+    (!!ipAddress && !ipCache) ||                                  // 1) nieuw IP
+    (!!ipAddress && !!ipCache && !ipCache.company_domain) ||      // 2) cache bestaat maar nog geen domein
+    (ipCache?.company_domain && (                                 // 3) domein bekend maar profiel incompleet
+      !ipCache.domain_address ||
+      !ipCache.domain_city ||
+      !ipCache.domain_country ||
+      ipCache.confidence == null ||
+      !ipCache.confidence_reason ||
+      !ipCache.meta_description ||
+      !ipCache.phone ||
+      !ipCache.email ||
+      !ipCache.domain_lat ||
+      !ipCache.domain_lon ||
+      !ipCache.category ||
+      !ipCache.rdns_hostname ||
+      !ipCache.linkedin_url ||
+      !ipCache.facebook_url ||
+      !ipCache.instagram_url ||
+      !ipCache.twitter_url
+    ));
 
+  if (needsEnrichment) {
+    const { error: qErr } = await supabase
+      .from('enrichment_queue')
+      .insert({
+        ip_address: ipAddress,
+        org_id: orgId,                 // ✅ bestaat nu in de tabel
+        site_id: siteId,
+        page_url: canonicalPageUrl,
+        status: 'pending',             // ✅ expliciet
+        attempts: 0,
+        payload: {
+          anonId: anonId || null,
+          referrer: referrer || null,
+          utmSource: utmSource || null,
+          utmMedium: utmMedium || null,
+          utmCampaign: utmCampaign || null,
+          durationSeconds: normalizeDuration(durationSeconds)
+        }
+      });
 
-    if (needsEnrichment) {
-      const { error: qErr } = await supabase
-        .from('enrichment_queue')
-        .insert({
-          ip_address: ipAddress,
-          org_id: orgId,
-          site_id: siteId,
-          page_url: canonicalPageUrl,
-          payload: {
-            anonId: anonId || null,
-            referrer: referrer || null,
-            utmSource: utmSource || null,
-            utmMedium: utmMedium || null,
-            utmCampaign: utmCampaign || null,
-            durationSeconds: normalizeDuration(durationSeconds)
-          }
-        });
-
-      if (qErr) console.warn('⚠️ queue insert faalde:', qErr.message);
-    }
-  } catch (e) {
-    console.warn('⚠️ queue insert exception:', e.message);
+    if (qErr) console.warn('⚠️ queue insert faalde:', qErr.message);
   }
+} catch (e) {
+  console.warn('⚠️ queue insert exception:', e.message);
+}
 
   // Health ping / script validatie
 const nowIso = new Date().toISOString();
@@ -524,6 +528,33 @@ if (isValidation) {
   .update({ last_tracking_ping: nowIso })
   .eq('id', orgId);
 
+  // 🔔 DIRECTE ENRICHMENT-KICK (niet wachten op Plan B)
+{
+  const BASE_URL =
+    process.env.NEXT_PUBLIC_TRACKING_DOMAIN
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+
+  fetch(`${BASE_URL}/api/lead`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ip_address:        ipAddress,
+      org_id:            orgId,
+      page_url:          canonicalPageUrl,
+      anon_id:           anonId || null,
+      referrer:          referrer || null,
+      utm_source:        utmSource || null,
+      utm_medium:        utmMedium || null,
+      utm_campaign:      utmCampaign || null,
+      duration_seconds:  normalizeDuration(durationSeconds),
+      site_id:           siteId
+    })
+  }).catch((e) => {
+    console.warn('⚠️ directe enrichment-kick (fire-and-forget) faalde:', e?.message || e);
+  });
+}
+
+
 
 // Plan B: verwerk 1 pending enrichment job als fallback
 try {
@@ -531,7 +562,7 @@ try {
     .from('enrichment_queue')
     .select('*')
     .eq('status', 'pending')
-    .lt('created_at', new Date(Date.now() - 10 * 60 * 1000).toISOString()) // ouder dan 10 min
+    .lt('created_at', new Date(Date.now() - 60 * 1000).toISOString())
     .order('created_at', { ascending: true })
     .limit(1)
     .maybeSingle();

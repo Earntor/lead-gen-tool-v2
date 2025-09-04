@@ -231,15 +231,16 @@ export default async function handler(req, res) {
   } = req.body;
 
   try {
-    const url = new URL(page_url);
-    if (url.hostname.endsWith("vercel.app")) {
-      console.log("⛔️ dashboard-bezoek gedetecteerd, wordt niet opgeslagen:", page_url);
-      return res.status(200).json({ ignored: true, reason: "dashboard visit" });
-    }
-  } catch (e) {
-    console.warn("⚠️ Ongeldige page_url ontvangen, genegeerd:", page_url);
-    return res.status(200).json({ ignored: true, reason: "invalid page_url" });
+  const url = new URL(page_url);
+  if (url.hostname.endsWith("vercel.app")) {
+    console.log("⛔️ dashboard-bezoek gedetecteerd, wordt niet opgeslagen:", page_url);
+    return res.status(200).json({ ignored: true, reason: "dashboard visit" });
   }
+} catch (e) {
+  console.warn("⚠️ Ongeldige page_url ontvangen, maar enrichment gaat door:", page_url);
+  // ⚠️ Geen return hier – laat de enrichment gewoon doorlopen
+}
+
 
   try {
     console.log('--- API LEAD DEBUG ---');
