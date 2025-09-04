@@ -312,53 +312,84 @@ if (!ipCache) {
     enrichment.confidence_reason === undefined ? null : enrichment.confidence_reason;
 
   // ---- Queue insert i.p.v. fire-and-forget enrich ----
+  // ---- Queue insert i.p.v. fire-and-forget enrich ----
+try {
+  // Re-enrich ook bij cache zónder domein (dit miste) + simpele TTL
+  const STALE_HOURS = 24;
+  const isStale =
+    !!ipCache &&
+    !!ipCache.last_updated &&
+    (Date.now() - new Date(ipCache.last_updated).getTime() > STALE_HOURS * 60 * 60 * 1000);
+
+  const needsEnrichment =
+    !!ipAddress && (
+      !ipCache                                 // geen cache → enrichen
+      || !ipCache.company_domain               // wél cache maar geen domein → enrichen (bugfix)
+      || ipCache.company_name === 'Testbedrijf'
+      || (ipCache.company_domain && (          // domein bekend maar profiel incompleet → enrichen
+          !ipCache.domain_address ||
+          !ipCache.domain_city ||
+          !ipCache.domain_country ||
+          ipCache.confidence == null ||
+          !ipCache.confidence_reason ||
+          !ipCache.meta_description ||
+          !ipCache.phone ||
+          !ipCache.email ||
+          !ipCache.domain_lat ||
+          !ipCache.domain_lon ||
+          !ipCache.category ||
+          !ipCache.rdns_hostname ||
+          !ipCache.linkedin_url ||
+          !ipCache.facebook_url ||
+          !ipCache.instagram_url ||
+          !ipCache.twitter_url
+        ))
+      || isStale                               // TTL: elke 24u herproberen
+    );
+
+  // ✅ Guard: voorkom dubbele jobs voor hetzelfde IP binnen 30 min
+  let hasRecentJob = false;
   try {
-    const needsEnrichment =
-  ((!ipCache) && !!ipAddress) ||
-  ipCache?.company_name === 'Testbedrijf' ||
-  (ipCache?.company_domain && (
-    !ipCache.domain_address ||
-    !ipCache.domain_city ||
-    !ipCache.domain_country ||
-    ipCache.confidence == null ||
-    !ipCache.confidence_reason ||
-    !ipCache.meta_description ||
-    !ipCache.phone ||
-    !ipCache.email ||
-    !ipCache.domain_lat ||
-    !ipCache.domain_lon ||
-    !ipCache.category ||
-    !ipCache.rdns_hostname ||
-    !ipCache.linkedin_url ||
-    !ipCache.facebook_url ||
-    !ipCache.instagram_url ||
-    !ipCache.twitter_url
-  ));
+    const { data: existingJob } = await supabase
+      .from('enrichment_queue')
+      .select('id, status, created_at')
+      .in('status', ['pending', 'running'])
+      .eq('ip_address', ipAddress)
+      .gte('created_at', new Date(Date.now() - 30 * 60 * 1000).toISOString())
+      .limit(1)
+      .maybeSingle();
 
-
-    if (needsEnrichment) {
-      const { error: qErr } = await supabase
-        .from('enrichment_queue')
-        .insert({
-          ip_address: ipAddress,
-          org_id: orgId,
-          site_id: siteId,
-          page_url: canonicalPageUrl,
-          payload: {
-            anonId: anonId || null,
-            referrer: referrer || null,
-            utmSource: utmSource || null,
-            utmMedium: utmMedium || null,
-            utmCampaign: utmCampaign || null,
-            durationSeconds: normalizeDuration(durationSeconds)
-          }
-        });
-
-      if (qErr) console.warn('⚠️ queue insert faalde:', qErr.message);
-    }
-  } catch (e) {
-    console.warn('⚠️ queue insert exception:', e.message);
+    hasRecentJob = !!existingJob;
+  } catch {
+    // bij twijfel niet blokkeren
   }
+
+  if (needsEnrichment && !hasRecentJob) {
+    const { error: qErr } = await supabase
+      .from('enrichment_queue')
+      .insert({
+        ip_address: ipAddress,
+        org_id: orgId,
+        site_id: siteId,
+        page_url: canonicalPageUrl,
+        payload: {
+          anonId: anonId || null,
+          referrer: referrer || null,
+          utmSource: utmSource || null,
+          utmMedium: utmMedium || null,
+          utmCampaign: utmCampaign || null,
+          durationSeconds: normalizeDuration(durationSeconds)
+        }
+      });
+
+    if (qErr) {
+      console.warn('⚠️ queue insert faalde:', qErr.message, qErr.details || '');
+    }
+  }
+} catch (e) {
+  console.warn('⚠️ queue insert exception:', e.message);
+}
+
 
   // Health ping / script validatie
 const nowIso = new Date().toISOString();
