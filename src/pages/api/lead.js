@@ -478,57 +478,50 @@ domainSignals.push(signal);
       });
     }
 
-    // 🔐 Stap 3 – TLS-certificaatinspectie → SIGNAL
+// 🔐 Stap 3 – TLS-certificaatinspectie → SIGNAL (audit-proof)
 try {
   const certInfo = await getTlsCertificateFromIp(ip_address);
-  if (certInfo && (certInfo.commonName || certInfo.subjectAltName)) {
-    let extracted = null;
+  let extracted = null;
 
+  if (certInfo && (certInfo.commonName || certInfo.subjectAltName)) {
+    // 1) Probeer CN
     if (certInfo.commonName?.includes('.')) {
       extracted = cleanAndValidateDomain(
         certInfo.commonName,
         ENRICHMENT_SOURCES.TLS,
-        asname,
-        org_id,
-        page_url,
-        ip_address,
-        confidence,
-        confidence_reason
+        asname, org_id, page_url, ip_address,
+        confidence, confidence_reason
       );
     }
 
+    // 2) Anders: pak kortste SAN
     if (!extracted && certInfo.subjectAltName) {
-const matches = certInfo.subjectAltName.match(/DNS:([A-Za-z0-9.-]+\.[A-Za-z0-9-]{2,})/g);
+      const matches = certInfo.subjectAltName.match(/DNS:([A-Za-z0-9.-]+\.[A-Za-z0-9-]{2,})/g);
       if (matches && matches.length > 0) {
         const cleaned = matches
           .map(m => stripSubdomain(m.replace('DNS:', '').trim()))
           .filter(Boolean);
-
         const uniqueDomains = [...new Set(cleaned)];
         const chosen = uniqueDomains.sort((a, b) => a.length - b.length)[0];
 
         extracted = cleanAndValidateDomain(
           chosen,
           ENRICHMENT_SOURCES.TLS,
-          asname,
-          org_id,
-          page_url,
-          ip_address,
-          confidence,
-          confidence_reason
+          asname, org_id, page_url, ip_address,
+          confidence, confidence_reason
         );
       }
     }
 
     if (extracted) {
+      // ✅ Succes: signal + log used=true
       const signal = await logDomainSignal({
         ip_address,
         domain: extracted,
         source: ENRICHMENT_SOURCES.TLS,
         confidence: 0.75,
-        confidence_reason: CONFIDENCE_REASONS.TLS 
+        confidence_reason: CONFIDENCE_REASONS.TLS
       });
-
       if (signal) domainSignals.push(signal);
 
       await supabaseAdmin.from('tls_log').insert({
@@ -541,11 +534,47 @@ const matches = certInfo.subjectAltName.match(/DNS:([A-Za-z0-9.-]+\.[A-Za-z0-9-]
         confidence_reason: CONFIDENCE_REASONS.TLS,
         enrichment_source: ENRICHMENT_SOURCES.TLS
       });
+    } else {
+      // ❌ Geen domein uit TLS te halen
+      await supabaseAdmin.from('tls_log').insert({
+        ip_address,
+        common_name: certInfo?.commonName || null,
+        subject_alt_name: certInfo?.subjectAltName || null,
+        extracted_domain: null,
+        used: false,
+        confidence: null,
+        confidence_reason: 'no domain extracted from TLS',
+        enrichment_source: ENRICHMENT_SOURCES.TLS
+      });
     }
+  } else {
+    // ❌ Geen certificate info beschikbaar
+    await supabaseAdmin.from('tls_log').insert({
+      ip_address,
+      common_name: null,
+      subject_alt_name: null,
+      extracted_domain: null,
+      used: false,
+      confidence: null,
+      confidence_reason: 'no TLS certificate info',
+      enrichment_source: ENRICHMENT_SOURCES.TLS
+    });
   }
 } catch (e) {
   console.warn('⚠️ TLS-certificaat ophalen mislukt:', e.message);
+  // ❌ Exception: log altijd een rij met used=false
+  await supabaseAdmin.from('tls_log').insert({
+    ip_address,
+    common_name: null,
+    subject_alt_name: null,
+    extracted_domain: null,
+    used: false,
+    confidence: null,
+    confidence_reason: 'tls fetch error',
+    enrichment_source: ENRICHMENT_SOURCES.TLS
+  });
 }
+
 
     // 🌐 Stap 6 – HTTP fetch naar IP → SIGNAL
 try {
@@ -600,6 +629,7 @@ try {
 
 
    // 🖼️ Stap 7 – favicon hash matching → SIGNAL
+// 🖼️ Stap 7 – favicon hash matching → SIGNAL
 try {
   const hash = await getFaviconHash(ip_address);
   if (hash) {
@@ -625,14 +655,33 @@ try {
       : null;
 
     if (matchedDomain) {
+      // -------- 3A: last_seen bij match updaten in map --------
+      {
+        const upsertRes = await supabaseAdmin
+          .from('favicon_hash_map')
+          .upsert(
+            {
+              hash,
+              domain: matchedDomain,
+              confidence: match?.confidence ?? 0.8,
+              source: 'favicon_hash',
+              last_seen: new Date().toISOString()
+            },
+            { onConflict: 'hash' }
+          );
+        if (upsertRes.error) {
+          console.warn('⚠️ favicon_hash_map upsert (match) error:', upsertRes.error.message, upsertRes.error.details || '');
+        }
+      }
+      // --------------------------------------------------------
+
       const signal = await logDomainSignal({
         ip_address,
         domain: matchedDomain,
         source: ENRICHMENT_SOURCES.FAVICON,
-        confidence: match.confidence || 0.8,
-confidence_reason: CONFIDENCE_REASONS.FAVICON
+        confidence: match?.confidence || 0.8,
+        confidence_reason: CONFIDENCE_REASONS.FAVICON
       });
-
       if (signal) domainSignals.push(signal);
 
       logInserts.push(
@@ -641,12 +690,31 @@ confidence_reason: CONFIDENCE_REASONS.FAVICON
           favicon_hash: hash,
           matched_domain: matchedDomain,
           used: true,
-          confidence: match.confidence || 0.8,
-confidence_reason: CONFIDENCE_REASONS.FAVICON,
-          enrichment_source: ENRICHMENT_SOURCES.FAVICON
+          confidence: match?.confidence || 0.8,
+          confidence_reason: CONFIDENCE_REASONS.FAVICON
         })
       );
     } else {
+      // -------- 3B (optioneel): onbekende hash als 'observed' registreren --------
+      {
+        const upsertRes = await supabaseAdmin
+          .from('favicon_hash_map')
+          .upsert(
+            {
+              hash,
+              domain: null,
+              confidence: 0.5,                 // neutrale default
+              source: 'observed',              // aangeeft dat er nog geen mapping is
+              last_seen: new Date().toISOString()
+            },
+            { onConflict: 'hash' }
+          );
+        if (upsertRes.error) {
+          console.warn('⚠️ favicon_hash_map upsert (observed) error:', upsertRes.error.message, upsertRes.error.details || '');
+        }
+      }
+      // ---------------------------------------------------------------------------
+
       logInserts.push(
         supabaseAdmin.from('favicon_hash_log').insert({
           ip_address,
@@ -654,17 +722,23 @@ confidence_reason: CONFIDENCE_REASONS.FAVICON,
           matched_domain: null,
           used: false,
           confidence: null,
-          confidence_reason: 'Geen match in favicon_hash_map',
-          enrichment_source: ENRICHMENT_SOURCES.FAVICON
+          confidence_reason: 'Geen match in favicon_hash_map'
         })
       );
     }
 
-    await Promise.all(logInserts);
+    // Logging inserts uitvoeren + errors tonen
+    const results = await Promise.all(logInserts);
+    for (const r of results) {
+      if (r?.error) {
+        console.warn('⚠️ favicon_hash_log insert error:', r.error.message, r.error.details || '');
+      }
+    }
   }
 } catch (err) {
   console.warn('⚠️ Favicon match faalde:', err.message);
 }
+
 
 
     // 🧪 Stap 8 – Host header probing → SIGNAL
@@ -702,15 +776,27 @@ try {
     if (signal) domainSignals.push(signal);
   }
 
-  await supabaseAdmin.from('host_header_log').insert({
+  // ✨ Log naar host_probe_log i.p.v. host_header_log
+if (Array.isArray(result?.trials) && result.trials.length > 0) {
+  // Als probeHostHeader per domein trials teruggeeft, log elke poging apart
+  const rows = result.trials.map(t => ({
     ip_address,
-    tried_domains: domainsToTry,
-    matched_domain: cleanedDomain || null,
-    used: !!cleanedDomain,
-    confidence: result.confidence || 0.6,
-    confidence_reason: result.reason || CONFIDENCE_REASONS.HOST_HEADER,
-    enrichment_source: ENRICHMENT_SOURCES.HOST_HEADER
+    tested_domain: t.domain || null,
+    status_code: (typeof t.status === 'number') ? t.status : null,
+    content_snippet: (t.snippet || t.reason || null)?.slice(0, 500) || null,
+    success: !!t.ok
+  }));
+  await supabaseAdmin.from('host_probe_log').insert(rows);
+} else {
+  // Fallback: 1 samenvattende rij
+  await supabaseAdmin.from('host_probe_log').insert({
+    ip_address,
+    tested_domain: cleanedDomain || (Array.isArray(domainsToTry) ? domainsToTry[0] : null),
+    status_code: (typeof result?.status_code === 'number') ? result.status_code : null,
+    content_snippet: (result?.html_snippet || result?.snippet || result?.reason || null)?.slice(0, 500) || null,
+    success: !!cleanedDomain
   });
+}
 }
 
   }
@@ -766,7 +852,8 @@ if (!company_domain && domainSignals.length > 0) {
       enrichment_source,
       confidence,
       confidence_reason,
-      logged_at: new Date().toISOString()
+      site_id: site_id || null,
+page_url: page_url || null,
     });
   } else {
     console.log('❌ Geen domein gekozen op basis van gecombineerde signalen');
@@ -778,7 +865,8 @@ if (!company_domain && domainSignals.length > 0) {
       enrichment_source: ENRICHMENT_SOURCES.FINAL_LIKELY,
       confidence: null,
 confidence_reason: CONFIDENCE_REASONS.FINAL_LIKELY,
-      logged_at: new Date().toISOString()
+site_id: site_id || null,
+page_url: page_url || null,
     });
   }
 }
