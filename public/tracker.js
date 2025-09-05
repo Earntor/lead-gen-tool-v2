@@ -28,7 +28,8 @@
     const utmMedium = utm.get('utm_medium') || null;
     const utmCampaign = utm.get('utm_campaign') || null;
 
-const startTime = Date.now();
+    // ⬇️ Belangrijk: gebruik dezelfde klok voor start én eind
+    const startPerf = performance.now();
     let ended = false;
     let ingestToken = null;
 
@@ -37,7 +38,7 @@ const startTime = Date.now();
       try {
         const r = await fetch(
           `${TOKEN_URL}?site=${encodeURIComponent(siteId)}&projectId=${encodeURIComponent(projectId || '')}`,
-          { method: 'GET', cache: 'no-store', credentials: 'omit' }
+          { method: 'GET', cache: 'no-store', credentials: 'omit', keepalive: true }
         );
         if (!r.ok) return;
         const j = await r.json();
@@ -64,41 +65,51 @@ const startTime = Date.now();
       };
     }
 
-    // 3) Versturen met Bearer token (geen HMAC headers meer nodig)
-async function sendSigned(bodyObj) {
-  if (!ingestToken) return; // zonder token niet posten
-  const payload = JSON.stringify(bodyObj);
-
-  return fetch(TRACK_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${ingestToken}`,
-      'X-Site-Id': siteId
-    },
-    body: payload,
-    keepalive: true
-  }).catch(() => {});
-}
-
+    // 3) Versturen met Bearer token
+    async function sendSigned(bodyObj) {
+      if (!ingestToken) return; // zonder token niet posten
+      const payload = JSON.stringify(bodyObj);
+      return fetch(TRACK_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${ingestToken}`,
+          'X-Site-Id': siteId
+        },
+        body: payload,
+        keepalive: true
+      }).catch(() => {});
+    }
 
     async function sendLoad() {
-  await sendSigned(basePayload({ eventType: 'load' }));
-}
-
+      await sendSigned(basePayload({ eventType: 'load' }));
+    }
 
     async function sendEndOnce(reason) {
       if (ended) return;
       ended = true;
-      const seconds = Math.max(0, Math.round((performance.now() - startTime) / 1000));
-      await sendSigned(basePayload({ durationSeconds: seconds, eventType: 'end', endReason: reason }));
+
+      // Zelfde klok gebruiken (performance.now)
+      const seconds = Math.max(0, Math.round((performance.now() - startPerf) / 1000));
+
+      // Token kan verlopen zijn → haal zo nodig opnieuw op
+      if (!ingestToken) {
+        await getToken().catch(() => {});
+      }
+
+      await sendSigned(
+        basePayload({ durationSeconds: seconds, eventType: 'end', endReason: reason })
+      );
     }
 
     // Start: eerst token, dan 'load'
     (async () => {
       await getToken();
-      if (document.readyState === 'complete' || document.readyState === 'interactive') sendLoad();
-      else window.addEventListener('DOMContentLoaded', () => { sendLoad(); }, { once: true });
+      if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        sendLoad();
+      } else {
+        window.addEventListener('DOMContentLoaded', () => { sendLoad(); }, { once: true });
+      }
     })();
 
     // Einde: duur sturen (één keer)

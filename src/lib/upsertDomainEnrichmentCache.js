@@ -1,82 +1,91 @@
+// upsertIpEnrichmentCache.js
 import { supabaseAdmin } from './supabaseAdminClient.js';
 
-export async function upsertDomainEnrichmentCache(domain, enrichment) {
-  if (!domain) return;
+// Laat undefined weg zodat we bestaande waarden niet met null overschrijven
+const prune = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
 
-  try {
-    const { data: existing, error: fetchError } = await supabaseAdmin
-      .from('domain_enrichment_cache')
-      .select('*')
-      .eq('company_domain', domain)
-      .single();
+export async function upsertIpEnrichmentCache(ip, enrichment = {}) {
+  if (!ip) return;
 
-    if (fetchError && fetchError.code !== 'PGRST116') {
-      console.error('❌ Fout bij ophalen domain_enrichment_cache:', fetchError.message);
-      return;
-    }
+  // Haal bestaande rij op; geen error als hij niet bestaat
+  const { data: existing, error: fetchError } = await supabaseAdmin
+    .from('ip_enrichment_cache')
+    .select('*')
+    .eq('ip', ip)
+    .maybeSingle();
 
-    const now = new Date().toISOString();
+  if (fetchError) {
+    console.error('❌ Ophalen ip_enrichment_cache:', fetchError.message);
+    return;
+  }
 
-    const insertData = {
-      company_domain: domain,
-      company_name: enrichment.company_name || null,
-      domain_address: enrichment.domain_address || null,
-      domain_postal_code: enrichment.domain_postal_code || null,
-      domain_city: enrichment.domain_city || null,
-      domain_country: enrichment.domain_country || null,
-      domain_lat: enrichment.domain_lat || null,
-      domain_lon: enrichment.domain_lon || null,
-      category: enrichment.category || null,
-      confidence: enrichment.confidence || null,
-      confidence_reason: enrichment.confidence_reason || null,
-      phone: enrichment.phone || null,
-      email: enrichment.email || null,
-      linkedin_url: enrichment.linkedin_url || null,
-      facebook_url: enrichment.facebook_url || null,
-      instagram_url: enrichment.instagram_url || null,
-      twitter_url: enrichment.twitter_url || null,
-      meta_description: enrichment.meta_description || null,
-      enriched_at: now,
-      auto_confidence: enrichment.confidence || null,
-      auto_confidence_reason: enrichment.confidence_reason || null
-    };
+  const now = new Date().toISOString();
 
-    const isImproved =
-      !existing ||
-      (!existing.phone && insertData.phone) ||
-      (!existing.email && insertData.email) ||
-      (!existing.domain_lat && insertData.domain_lat) ||
-      (!existing.linkedin_url && insertData.linkedin_url) ||
-      (!existing.category && insertData.category) ||
-      (insertData.confidence > (existing.confidence || 0));
+  // Confidence samenstellen (nieuwe waardes hebben voorrang)
+  const confNew = typeof enrichment.confidence === 'number' ? enrichment.confidence : undefined;
+  const autoConfNew =
+    typeof enrichment.auto_confidence === 'number' ? enrichment.auto_confidence : confNew;
 
-    if (isImproved) {
-      if (existing) {
-        const { error: updateError } = await supabaseAdmin
-          .from('domain_enrichment_cache')
-          .update({ ...insertData, enriched_at: now })
-          .eq('company_domain', domain);
+  // Alleen velden meesturen die we daadwerkelijk hebben
+  const payload = prune({
+    ip,
+    lat: enrichment.lat ?? undefined,
+    lon: enrichment.lon ?? undefined,
+    radius: enrichment.radius ?? undefined,
+    geohash: enrichment.geohash ?? undefined,
+    maps_result: enrichment.maps_result ?? undefined,
+    confidence: confNew ?? undefined,
+    confidence_reason: enrichment.confidence_reason ?? enrichment.auto_confidence_reason ?? undefined,
+    phone: enrichment.phone ?? undefined,
+    email: enrichment.email ?? undefined,
+    linkedin_url: enrichment.linkedin_url ?? undefined,
+    facebook_url: enrichment.facebook_url ?? undefined,
+    instagram_url: enrichment.instagram_url ?? undefined,
+    twitter_url: enrichment.twitter_url ?? undefined,
+    meta_description: enrichment.meta_description ?? undefined,
+    auto_confidence: autoConfNew ?? undefined,
+    auto_confidence_reason: enrichment.auto_confidence_reason ?? enrichment.confidence_reason ?? undefined,
+    enriched_at: now
+  });
 
-        if (updateError) {
-          console.error('❌ Fout bij bijwerken van domain_enrichment_cache:', updateError.message);
-        } else {
-          console.log('🆙 Domeincache bijgewerkt:', domain);
-        }
-      } else {
-        const { error: insertError } = await supabaseAdmin
-          .from('domain_enrichment_cache')
-          .insert(insertData);
+  const betterNumber = (a, b) =>
+    (typeof a === 'number' ? a : -1) > (typeof b === 'number' ? b : -1);
 
-        if (insertError) {
-          console.error('❌ Fout bij invoegen in domain_enrichment_cache:', insertError.message);
-        } else {
-          console.log('✅ Domeincache nieuw aangemaakt:', domain);
-        }
-      }
+  // Alleen updaten als het echt een verbetering is
+  const improved =
+    !existing ||
+    (!existing.phone && payload.phone) ||
+    (!existing.email && payload.email) ||
+    (!existing.lat && payload.lat) ||
+    (!existing.lon && payload.lon) ||
+    (!existing.linkedin_url && payload.linkedin_url) ||
+    (!existing.meta_description && payload.meta_description) ||
+    betterNumber(payload.confidence, existing.confidence) ||
+    betterNumber(payload.auto_confidence, existing.auto_confidence);
+
+  if (!improved) {
+    console.log('⚠️ Geen verbetering → ip-cache ongewijzigd:', ip);
+    return;
+  }
+
+  if (existing) {
+    const { error: updErr } = await supabaseAdmin
+      .from('ip_enrichment_cache')
+      .update(payload)
+      .eq('ip', ip);
+    if (updErr) {
+      console.error('❌ Bijwerken ip_enrichment_cache:', updErr.message);
     } else {
-      console.log('⚠️ Geen verbetering → domeincache blijft ongewijzigd:', domain);
+      console.log('🆙 IP-cache bijgewerkt:', ip);
     }
-  } catch (e) {
-    console.error('❌ Fout in upsertDomainEnrichmentCache():', e.message);
+  } else {
+    const { error: insErr } = await supabaseAdmin
+      .from('ip_enrichment_cache')
+      .insert(payload);
+    if (insErr) {
+      console.error('❌ Invoegen ip_enrichment_cache:', insErr.message);
+    } else {
+      console.log('✅ IP-cache nieuw aangemaakt:', ip);
+    }
   }
 }
