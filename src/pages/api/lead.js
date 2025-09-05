@@ -76,21 +76,31 @@ const EXTRA_BLACKLIST_DOMAINS = [
 
 async function logBlockedSignal({
   ip_address, domain, source, asname, reason, org_id, page_url, confidence, confidence_reason,
-  ignore_type = 'blocked'
+  ignore_type = 'blocked' // toegestaan: 'blocked','isp-info','isp','no-domain','low-confidence'
 }) {
-  await supabaseAdmin.from('ignored_ip_log').insert({
+  const payload = {
     ip_address,
     as_name: asname || null,
-    blocked_domain: domain || null,
-    blocked_source: source || null,
     reason: reason || 'blacklisted in step',
-    confidence: (typeof confidence === 'number' && !Number.isNaN(confidence)) ? confidence : 0.3,
-    confidence_reason: (confidence_reason && confidence_reason.trim()) ? confidence_reason : CONFIDENCE_REASONS.IPAPI_BASELINE,
-    ignored_at: new Date().toISOString(),
     page_url: page_url || null,
-    ignore_type
-  });
+    ignored_at: new Date().toISOString(),
+    ignore_type,
+    // Alles wat geen losse kolom heeft bewaren we in JSONB 'signals'
+    signals: {
+      blocked_domain: domain || null,
+      blocked_source: source || null,
+      org_id: org_id || null,
+      confidence: (typeof confidence === 'number' && !Number.isNaN(confidence)) ? confidence : null,
+      confidence_reason: (confidence_reason && confidence_reason.trim()) ? confidence_reason : null
+    }
+  };
+
+  const { error } = await supabaseAdmin.from('ignored_ip_log').insert(payload);
+  if (error) {
+    console.error('❌ ignored_ip_log insert (blocked) faalde:', error.message, error.details || '');
+  }
 }
+
 
 
 // Kleine helpers
@@ -987,16 +997,22 @@ const MIN_CONFIDENCE = 0.5;
 if ((!company_domain || company_domain.trim() === '') 
     && (typeof finalConfidence === 'number' && finalConfidence < MIN_CONFIDENCE)) {
   console.log(`⛔ Geen domein én confidence (${finalConfidence}) lager dan drempel (${MIN_CONFIDENCE}) → niet in cache`);
-  await supabaseAdmin.from('ignored_ip_log').insert({
+  {
+  const { error } = await supabaseAdmin.from('ignored_ip_log').insert({
     ip_address,
-as_name: asname || null,
+    as_name: asname || null,
     reason: 'low confidence enrichment (no domain)',
-    confidence: finalConfidence,
-    confidence_reason: confidence_reason || 'Onder minimumdrempel',
-    ignored_at: new Date().toISOString(),
     page_url: page_url || null,
-    ignore_type: 'low-confidence'
+    ignored_at: new Date().toISOString(),
+    ignore_type: 'low-confidence',
+    signals: {
+      org_id: org_id || null,
+      final_confidence: (typeof finalConfidence === 'number' && !Number.isNaN(finalConfidence)) ? finalConfidence : null,
+      confidence_reason: confidence_reason || null
+    }
   });
+  if (error) console.error('❌ ignored_ip_log insert (low-confidence) faalde:', error.message, error.details || '');
+}
   await markQueue('skipped', 'skipped: low confidence no domain');
 return res.status(200).json({ ignored: true, reason: 'low confidence no domain' });
 }
