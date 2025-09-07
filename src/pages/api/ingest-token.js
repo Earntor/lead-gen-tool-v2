@@ -9,17 +9,38 @@ const supabase = createClient(
 
 const INGEST_JWT_SECRET = process.env.INGEST_JWT_SECRET
 
+// ---- Bot UA helper (conservatief) ----
+const BOT_UA = [
+  'bot','spider','crawl','slurp','bingpreview',
+  'googlebot','applebot','baiduspider','yandex','duckduckbot',
+  'vercel-screenshot-bot','vercel-favicon-bot'
+]
+function isBotUA(ua) {
+  if (!ua) return false
+  const s = ua.toLowerCase()
+  return BOT_UA.some(k => s.includes(k))
+}
+
 export default async function handler(req, res) {
-  // CORS + preflight
+  // CORS + anti-index headers (veilig)
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, nosnippet, noarchive')
+
   if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Origin', '*')
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Site-Id')
     return res.status(200).end()
   }
-  res.setHeader('Access-Control-Allow-Origin', '*')
 
-  if (req.method !== 'GET') return res.status(405).end()
+  // 🛡️ Vroege bot-cutoff (scheelt Edge-requests/compute)
+  const ua = req.headers['user-agent'] || ''
+  if (isBotUA(ua)) {
+    return res.status(204).end()
+  }
+
+  if (req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method not allowed' })
+  }
 
   if (!INGEST_JWT_SECRET) {
     return res.status(500).json({ error: 'missing INGEST_JWT_SECRET' })
@@ -31,7 +52,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'site required' })
   }
 
-  // 🔐 Referer check
+  // 🔐 Referer check (host moet overeenkomen met siteId of subdomein daarvan)
   const referer = req.headers.referer || ''
   try {
     const refHost = referer ? new URL(referer).hostname.toLowerCase() : null
@@ -71,7 +92,7 @@ export default async function handler(req, res) {
       // ❌ Geen site gevonden → fout teruggeven (site moet eerst gekoppeld zijn)
       return res.status(400).json({ error: 'site not linked to any org' })
     }
-  } catch (e) {
+  } catch {
     return res.status(500).json({ error: 'org lookup failed' })
   }
 
@@ -81,7 +102,7 @@ export default async function handler(req, res) {
     {
       sub: `ingest:${siteId}`,
       site_id: siteId,
-      org_id: orgId,        // 👈 verplicht voor track.js
+      org_id: orgId,              // 👈 verplicht voor track.js
       project_id: projectId || null, // optioneel
       iat: now,
       nbf: now - 5,

@@ -1,6 +1,27 @@
 {
   "headers": [
     {
+      "source": "/api/track",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow, nosnippet, noarchive" },
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
+    },
+    {
+      "source": "/api/ingest-token",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow, nosnippet, noarchive" },
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
+    },
+    {
+      "source": "/tracker.js",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow, nosnippet, noarchive" },
+        { "key": "Cache-Control", "value": "public, max-age=3600, stale-while-revalidate=86400" }
+      ]
+    },
+    {
       "source": "/(.*)",
       "headers": [
         {
@@ -11,9 +32,9 @@
     }
   ],
   "crons": [
-  {
-    "path": "/api/worker-enrich",
-    "schedule": "0 0 * * *"
-  }
-]
+    {
+      "path": "/api/worker-enrich",
+      "schedule": "0 0 * * *"
+    }
+  ]
 }

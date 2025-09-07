@@ -1,12 +1,17 @@
 (function () {
   try {
-    // Basis-URL = waar dit script vandaan komt
     const ORIGIN = new URL((document.currentScript && document.currentScript.src) || window.location.href).origin;
     const TRACK_URL = ORIGIN + '/api/track';
     const TOKEN_URL = ORIGIN + '/api/ingest-token';
 
     // Niet tracken op je eigen dashboard
     if (window.location.hostname.endsWith('vercel.app')) return;
+
+    // 🛡️ Extra: respecteer DNT + simpele bot-check
+    const ua = navigator.userAgent || '';
+    const dnt = (navigator.doNotTrack === '1' || window.doNotTrack === '1');
+    const BOT_HINTS = /(bot|spider|crawl|slurp|bing|google|apple|duckduck|baidu|yandex|vercel)/i;
+    if (dnt || BOT_HINTS.test(ua)) return;
 
     const scriptTag = document.currentScript;
     const projectId = scriptTag?.getAttribute('data-project-id') || null;
@@ -28,13 +33,39 @@
     const utmMedium = utm.get('utm_medium') || null;
     const utmCampaign = utm.get('utm_campaign') || null;
 
-    // ⬇️ Belangrijk: gebruik dezelfde klok voor start én eind
+    // Zelfde klok voor start én eind
     const startPerf = performance.now();
     let ended = false;
     let ingestToken = null;
 
-    // 1) Kort-levend token ophalen (server tekent JWT)
+    // --- Token cache (1 uur) ---
+    const TOKEN_CACHE_KEY = 'ingestTokenCache';
+    const ONE_HOUR_MS = 60 * 60 * 1000;
+
+    function getCachedToken() {
+      try {
+        const raw = localStorage.getItem(TOKEN_CACHE_KEY);
+        if (!raw) return null;
+        const { token, exp } = JSON.parse(raw);
+        if (!token || !exp || Date.now() > exp) return null;
+        return token;
+      } catch { return null; }
+    }
+
+    function setCachedToken(token) {
+      try {
+        const exp = Date.now() + ONE_HOUR_MS; // 1 uur geldig
+        localStorage.setItem(TOKEN_CACHE_KEY, JSON.stringify({ token, exp }));
+      } catch {}
+    }
+
+    function clearCachedToken() {
+      try { localStorage.removeItem(TOKEN_CACHE_KEY); } catch {}
+    }
+
     async function getToken() {
+      const cached = getCachedToken();
+      if (cached) { ingestToken = cached; return; }
       try {
         const r = await fetch(
           `${TOKEN_URL}?site=${encodeURIComponent(siteId)}&projectId=${encodeURIComponent(projectId || '')}`,
@@ -42,11 +73,14 @@
         );
         if (!r.ok) return;
         const j = await r.json();
-        ingestToken = j.token || null;
+        if (j?.token) {
+          ingestToken = j.token;
+          setCachedToken(j.token);
+        }
       } catch { /* stil */ }
     }
 
-    // 2) Payload helper
+    // Payload helper
     function basePayload(extra = {}) {
       return {
         projectId,
@@ -58,18 +92,19 @@
         utmSource,
         utmMedium,
         utmCampaign,
-        userAgent: navigator.userAgent || null,
-        dnt: navigator.doNotTrack || null,
+        userAgent: ua,
+        dnt: dnt ? '1' : '0',
         chUa: (navigator.userAgentData && navigator.userAgentData.brands) ? navigator.userAgentData.brands : null,
         ...extra
       };
     }
 
-    // 3) Versturen met Bearer token
+    // Post met Bearer, bij 401 één keer token verversen + retry
     async function sendSigned(bodyObj) {
-      if (!ingestToken) return; // zonder token niet posten
+      if (!ingestToken) return;
       const payload = JSON.stringify(bodyObj);
-      return fetch(TRACK_URL, {
+
+      const doPost = async () => fetch(TRACK_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -78,7 +113,20 @@
         },
         body: payload,
         keepalive: true
-      }).catch(() => {});
+      });
+
+      try {
+        let res = await doPost();
+        if (res && res.status === 401) {
+          // token verlopen → cache leeg, opnieuw halen en één retry
+          clearCachedToken();
+          ingestToken = null;
+          await getToken();
+          if (ingestToken) {
+            res = await doPost();
+          }
+        }
+      } catch { /* stil */ }
     }
 
     async function sendLoad() {
@@ -88,21 +136,11 @@
     async function sendEndOnce(reason) {
       if (ended) return;
       ended = true;
-
-      // Zelfde klok gebruiken (performance.now)
       const seconds = Math.max(0, Math.round((performance.now() - startPerf) / 1000));
-
-      // Token kan verlopen zijn → haal zo nodig opnieuw op
-      if (!ingestToken) {
-        await getToken().catch(() => {});
-      }
-
-      await sendSigned(
-        basePayload({ durationSeconds: seconds, eventType: 'end', endReason: reason })
-      );
+      if (!ingestToken) await getToken().catch(() => {});
+      await sendSigned(basePayload({ durationSeconds: seconds, eventType: 'end', endReason: reason }));
     }
 
-    // Start: eerst token, dan 'load'
     (async () => {
       await getToken();
       if (document.readyState === 'complete' || document.readyState === 'interactive') {
@@ -112,7 +150,6 @@
       }
     })();
 
-    // Einde: duur sturen (één keer)
     window.addEventListener('pagehide', () => { sendEndOnce('pagehide'); });
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') sendEndOnce('visibilitychange');
