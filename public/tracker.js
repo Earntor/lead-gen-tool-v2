@@ -10,7 +10,7 @@
     // 🛡️ Extra: respecteer DNT + simpele bot-check
     const ua = navigator.userAgent || '';
     const dnt = (navigator.doNotTrack === '1' || window.doNotTrack === '1');
-    const BOT_HINTS = /(bot|spider|crawl|slurp|bing|google|apple|duckduck|baidu|yandex|vercel)/i;
+    const BOT_HINTS = /(bot|spider|crawl|slurp|bingbot|bingpreview|googlebot|applebot|baiduspider|yandexbot|duckduckbot|vercel-(screenshot|favicon)-bot|dataproviderbot)/i;
     if (dnt || BOT_HINTS.test(ua)) return;
 
     const scriptTag = document.currentScript;
@@ -36,6 +36,7 @@
     // Zelfde klok voor start én eind
     const startPerf = performance.now();
     let ended = false;
+    let lastEndAt = 0; // race-guard tegen dubbel eind-event
     let ingestToken = null;
 
     // --- Token cache (1 uur) ---
@@ -134,7 +135,11 @@
     }
 
     async function sendEndOnce(reason) {
+      const now = Date.now();
       if (ended) return;
+      if (now - lastEndAt < 1000) return; // extra guard tegen dubbele end binnen 1s
+      lastEndAt = now;
+
       ended = true;
       const seconds = Math.max(0, Math.round((performance.now() - startPerf) / 1000));
       if (!ingestToken) await getToken().catch(() => {});
