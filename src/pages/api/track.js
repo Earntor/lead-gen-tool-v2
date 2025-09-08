@@ -284,6 +284,98 @@ if (!orgId) {
     return res.status(200).json({ success: true, skipped: true, reason: 'internal page' });
   }
 
+  // ⚡ BEACON FAST-PATH: minimal work + 204 meteen terug
+if (isBeacon) {
+  // 1) IP bepalen (snel)
+  const ipAddress = firstPublicIp(
+    req.headers['x-forwarded-for'],
+    req.socket?.remoteAddress || req.connection?.remoteAddress
+  );
+  if (!ipAddress) {
+    // beacon moet nooit blokken; geef gewoon 204 terug
+    res.status(204).end();
+    return;
+  }
+
+  // 2) Duur normaliseren
+  const dur = normalizeDuration(durationSeconds);
+
+  // 3) Minimal dedup/insert/update (geen enrichment, geen KvK, geen queue)
+  try {
+    const nowIso = new Date().toISOString();
+
+    if (body.eventType === 'end') {
+      // Update alleen de meest recente row voor deze sessie+pagina als de duur groter is
+      const { data: recent, error: recentErr } = await supabase
+        .from('leads')
+        .select('id, duration_seconds')
+        .eq('org_id', orgId)
+        .eq('site_id', siteId)
+        .eq('session_id', sessionId)
+        .eq('page_url', canonicalPageUrl)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (!recentErr && recent && recent.length > 0) {
+        const prevDur = Number(recent[0].duration_seconds ?? 0);
+        if (dur > prevDur) {
+          await supabase.from('leads').update({ duration_seconds: dur }).eq('id', recent[0].id);
+        }
+      }
+      await supabase.from('organizations').update({ last_tracking_ping: nowIso }).eq('id', orgId);
+      res.status(204).end();
+      return;
+    }
+
+    // eventType: 'load' (of onbekend) → snelle insert als er nog niets is
+    // (kleine dedup op session_id + page_url <10s)
+    let skipInsert = false;
+    {
+      const tenSecAgo = new Date(Date.now() - 10_000).toISOString();
+      const { data: recent, error: recentErr } = await supabase
+        .from('leads')
+        .select('id')
+        .eq('org_id', orgId)
+        .eq('site_id', siteId)
+        .eq('session_id', sessionId)
+        .eq('page_url', canonicalPageUrl)
+        .gte('created_at', tenSecAgo)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (!recentErr && recent && recent.length > 0) skipInsert = true;
+    }
+
+    if (!skipInsert) {
+      await supabase.from('leads').insert({
+        org_id: orgId,
+        site_id: siteId,
+        page_url: canonicalPageUrl,
+        ip_address: ipAddress,
+        source: 'tracker',
+        anon_id: anonId || null,
+        session_id: sessionId || null,
+        duration_seconds: dur,
+        utm_source: utmSource || null,
+        utm_medium: utmMedium || null,
+        utm_campaign: utmCampaign || null,
+        referrer: referrer || null,
+        timestamp: nowIso
+        // let op: GEEN enrichment-velden hier (scheelt tijd)
+      });
+    }
+
+    await supabase.from('organizations').update({ last_tracking_ping: nowIso }).eq('id', orgId);
+  } catch (e) {
+    // fouten negeren voor beacon; nooit blokkeren
+  }
+
+  // 4) Altijd supersnel antwoorden
+  res.status(204).end();
+  return;
+}
+
+
   // IP bepalen
   const ipAddress = firstPublicIp(
     req.headers['x-forwarded-for'],

@@ -6,7 +6,7 @@ const nextConfig = {
   },
   async headers() {
     return [
-      // 1) tracker.js nooit uit cache halen (altijd de nieuwste versie laden)
+      // 1) Zorg dat tracker.js nooit uit cache komt (altijd de nieuwste)
       {
         source: "/tracker.js",
         headers: [
@@ -14,7 +14,7 @@ const nextConfig = {
         ],
       },
 
-      // 2) API-calls ook nooit cachen (optioneel, maar handig voor debugging)
+      // (optioneel, maar mag): voorkom caching op de ingest/token en track API
       {
         source: "/api/:path*",
         headers: [
@@ -22,7 +22,7 @@ const nextConfig = {
         ],
       },
 
-      // 3) Jouw bestaande CSP voor alle routes
+      // 2) JOUW bestaande CSP voor alle routes
       {
         source: "/(.*)",
         headers: [
