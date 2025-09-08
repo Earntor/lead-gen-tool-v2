@@ -110,10 +110,10 @@ async function sendSigned(bodyObj) {
   // 'text/plain' + geen custom headers => géén CORS preflight
   try {
     await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: payload,
-      keepalive: true,
+  method: 'POST',
+  headers: { 'Content-Type': 'text/plain' }, // ✅ niet application/json
+   body: payload,
+  keepalive: true
       // let op: géén Authorization header en géén X-Site-Id
       // géén mode:'no-cors' nodig; dit is een "simple request"
     });
@@ -135,8 +135,14 @@ function sendBeaconSigned(bodyObj) {
 
 
     async function sendLoad() {
-      await sendSigned(basePayload({ eventType: 'load' }));
-    }
+  if (!ingestToken) { try { await getToken(); } catch {} }
+  // eerst beacon (overleeft navigatie), daarna fetch als fallback
+  const ok = sendBeaconSigned({ eventType: 'load' });
+  if (!ok) {
+    await sendSigned({ eventType: 'load' });
+  }
+}
+
 
     async function sendEndOnce(reason) {
   const now = Date.now();
@@ -158,7 +164,7 @@ function sendBeaconSigned(bodyObj) {
   // 3) Fallback: fetch met keepalive (voor oudere browsers of als beacon faalt)
   if (!ok) {
     try {
-      await sendSigned(basePayload({ durationSeconds: seconds, eventType: 'end', endReason: reason }));
+await sendSigned({ durationSeconds: seconds, eventType: 'end', endReason: reason });
     } catch {}
   }
 }
