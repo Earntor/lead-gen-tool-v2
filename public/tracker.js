@@ -3,7 +3,6 @@
     const ORIGIN = new URL((document.currentScript && document.currentScript.src) || window.location.href).origin;
     const TRACK_URL = ORIGIN + '/api/track';
     const TOKEN_URL = ORIGIN + '/api/ingest-token';
-    
 
     // Niet tracken op je eigen dashboard
     if (window.location.hostname.endsWith('vercel.app')) return;
@@ -101,74 +100,51 @@
       };
     }
 
-   // Preflight-vrije POST: JWT in query, geen custom headers, text/plain body
-async function sendSigned(bodyObj) {
-  if (!ingestToken) return;
-  const url = `${TRACK_URL}?beacon=1&jwt=${encodeURIComponent(ingestToken)}&site=${encodeURIComponent(siteId)}`;
-  const payload = JSON.stringify(basePayload(bodyObj));
+    // Post met Bearer, bij 401 één keer token verversen + retry
+    async function sendSigned(bodyObj) {
+      if (!ingestToken) return;
+      const payload = JSON.stringify(bodyObj);
 
-  // 'text/plain' + geen custom headers => géén CORS preflight
-  try {
-    await fetch(url, {
-  method: 'POST',
-  headers: { 'Content-Type': 'text/plain' }, // ✅ niet application/json
-   body: payload,
-  keepalive: true
-      // let op: géén Authorization header en géén X-Site-Id
-      // géén mode:'no-cors' nodig; dit is een "simple request"
-    });
-  } catch { /* stil */ }
-}
+      const doPost = async () => fetch(TRACK_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${ingestToken}`,
+          'X-Site-Id': siteId
+        },
+        body: payload,
+        keepalive: true
+      });
 
-
-    // Beveiligde beacon: JWT als query-param, body als tekst (JSON-string)
-function sendBeaconSigned(bodyObj) {
-  try {
-    if (!ingestToken) return false;
-    const url = `${TRACK_URL}?beacon=1&jwt=${encodeURIComponent(ingestToken)}&site=${encodeURIComponent(siteId)}`;
-    const payload = JSON.stringify(basePayload(bodyObj));
-    return navigator.sendBeacon(url, payload);
-  } catch {
-    return false;
-  }
-}
-
+      try {
+        let res = await doPost();
+        if (res && res.status === 401) {
+          // token verlopen → cache leeg, opnieuw halen en één retry
+          clearCachedToken();
+          ingestToken = null;
+          await getToken();
+          if (ingestToken) {
+            res = await doPost();
+          }
+        }
+      } catch { /* stil */ }
+    }
 
     async function sendLoad() {
-  if (!ingestToken) { try { await getToken(); } catch {} }
-  // eerst beacon (overleeft navigatie), daarna fetch als fallback
-  const ok = sendBeaconSigned({ eventType: 'load' });
-  if (!ok) {
-    await sendSigned({ eventType: 'load' });
-  }
-}
-
+      await sendSigned(basePayload({ eventType: 'load' }));
+    }
 
     async function sendEndOnce(reason) {
-  const now = Date.now();
-  if (ended) return;
-  if (now - lastEndAt < 1000) return; // dubbele end binnen 1s voorkomen
-  lastEndAt = now;
-  ended = true;
+      const now = Date.now();
+      if (ended) return;
+      if (now - lastEndAt < 1000) return; // extra guard tegen dubbele end binnen 1s
+      lastEndAt = now;
 
-  const seconds = Math.max(0, Math.round((performance.now() - startPerf) / 1000));
-
-  // 1) Zorg dat we een token hebben (meestal al aanwezig)
-  if (!ingestToken) {
-    try { await getToken(); } catch {}
-  }
-
-  // 2) Probeer eerst beacon (overleeft navigatie/unload)
-  const ok = sendBeaconSigned({ durationSeconds: seconds, eventType: 'end', endReason: reason });
-
-  // 3) Fallback: fetch met keepalive (voor oudere browsers of als beacon faalt)
-  if (!ok) {
-    try {
-await sendSigned({ durationSeconds: seconds, eventType: 'end', endReason: reason });
-    } catch {}
-  }
-}
-
+      ended = true;
+      const seconds = Math.max(0, Math.round((performance.now() - startPerf) / 1000));
+      if (!ingestToken) await getToken().catch(() => {});
+      await sendSigned(basePayload({ durationSeconds: seconds, eventType: 'end', endReason: reason }));
+    }
 
     (async () => {
       await getToken();
@@ -179,12 +155,10 @@ await sendSigned({ durationSeconds: seconds, eventType: 'end', endReason: reason
       }
     })();
 
-    window.addEventListener('pagehide', () => { sendEndOnce('pagehide'); }, { once: true });
-window.addEventListener('beforeunload', () => { sendEndOnce('beforeunload'); }, { once: true });
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') sendEndOnce('visibilitychange');
-}, { passive: true });
-
+    window.addEventListener('pagehide', () => { sendEndOnce('pagehide'); });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') sendEndOnce('visibilitychange');
+    });
 
   } catch (err) {
     console.warn('Tracking script error:', err);
