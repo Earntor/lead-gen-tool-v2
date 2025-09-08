@@ -78,16 +78,6 @@ function DetailSkeleton() {
   );
 }
 
-// Kleine helper: promise met timeout/fallback, zodat UI niet blijft wachten
-function withTimeout(promise, ms = 8000) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error('timeout')), ms);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
-
-
 
 export default function Dashboard() {
   const router = useRouter();
@@ -182,149 +172,122 @@ const [profile, setProfile] = useState(null);
   }, [allLeads, labels]);
 
   useEffect(() => {
-  let cancelled = false;
-  const run = async () => {
-    // 1) Sessie + user ophalen
-    const { data: userData } = await supabase.auth.getUser();
-    const user = userData?.user || null;
-    if (!user) {
-      if (!cancelled) router.replace('/login');
-      return;
-    }
-    if (!cancelled) setUser(user);
-
-    // 2) Sessie-token (voor API calls elders)
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData?.session?.access_token || null;
-    if (!cancelled) setAuthToken(token);
-
-    // 3) Profiel (org) + alvast in parallel starten
-    const profileP = supabase
-      .from('profiles')
-      .select('current_org_id')
-      .eq('id', user.id)
-      .single();
-
-    let profileRow = null;
-    try {
-      const { data: pr } = await withTimeout(profileP, 4000);
-      profileRow = pr || null;
-    } catch {
-      profileRow = null;
-    }
-
-    if (!profileRow?.current_org_id) {
-      console.error('Geen current_org_id voor user:', user.id);
-      if (!cancelled) {
-        setProfile(null);
-        setAllLeads([]);
-        setLabels([]);
-        setLoading(false); // laat UI niet hangen
+    const getData = async () => {
+      const {
+        data: { user },
+        error,
+      } = await supabase.auth.getUser();
+      if (!user || error) {
+        router.replace("/login");
+        return;
       }
-      return;
+      setUser(user);
+
+const { data: sessionData } = await supabase.auth.getSession();
+const token = sessionData?.session?.access_token || null;
+setAuthToken(token);
+
+// Profiel ophalen om org_id te weten
+const { data: profileRow, error: profErr } = await supabase
+  .from("profiles")
+  .select("current_org_id")
+  .eq("id", user.id)
+  .single();
+
+if (profErr || !profileRow?.current_org_id) {
+  console.error("Geen current_org_id gevonden voor user:", user.id);
+  setProfile(null);
+  setAllLeads([]);
+  setLabels([]);
+  setLoading(false);
+  return;
+}
+
+// ⬅️ Bewaar in state zodat 'profile' overal beschikbaar is
+setProfile(profileRow);
+
+// Gebruik dit orgId voor alle queries/subscriptions hieronder
+const orgId = profileRow.current_org_id;
+
+// Leads ophalen per organisatie
+const { data: allData } = await supabase
+  .from("leads")
+  .select(`
+    *,
+    phone, email,
+    linkedin_url, facebook_url, instagram_url, twitter_url,
+    meta_description, category
+  `)
+  .eq("org_id", orgId)
+  .not("company_name", "is", null);
+
+setAllLeads(allData || []);
+console.log("Gelezen leads:", allData);
+
+const categoriesSet = new Set((allData || []).map((l) => l.category).filter(Boolean));
+setUniqueCategories(Array.from(categoriesSet).sort());
+
+// Labels per organisatie
+const { data: labelData } = await supabase
+  .from("labels")
+  .select("*")
+  .eq("org_id", orgId);
+
+setLabels(labelData || []);
+setLoading(false);
+
+// Realtime leads (alleen deze org)
+const leadsCh = supabase
+  .channel(`leads:org:${orgId}`)
+  .on(
+    "postgres_changes",
+    { event: "INSERT", schema: "public", table: "leads", filter: `org_id=eq.${orgId}` },
+    (payload) => {
+      const lead = payload.new;
+      const isValidVisitor =
+        lead.org_id === orgId &&
+        lead.source === "tracker" &&
+        !!lead.ip_address &&
+        !!lead.page_url &&
+        !!lead.timestamp &&
+        !lead.page_url.includes(window.location.host);
+
+      if (isValidVisitor) {
+        setAllLeads((prev) => [lead, ...prev]);
+      }
     }
+  )
+  .subscribe();
 
-    if (!cancelled) setProfile(profileRow);
-    const orgId = profileRow.current_org_id;
+// Realtime labels (alleen deze org)
+const labelsCh = supabase
+  .channel(`labels:org:${orgId}`)
+  .on(
+    "postgres_changes",
+    { event: "*", schema: "public", table: "labels", filter: `org_id=eq.${orgId}` },
+    (payload) => {
+      if (payload.eventType === "INSERT") {
+  setLabels(prev => [...(prev || []), payload.new]);
+} else if (payload.eventType === "UPDATE") {
+  setLabels(prev => (prev || []).map(l => (l.id === payload.new.id ? payload.new : l)));
+} else if (payload.eventType === "DELETE") {
+  setLabels(prev => (prev || []).filter(l => l.id !== payload.old.id));
+}
 
-    // 4) Data-parallel: LEADS (kritiek) + LABELS (mag later)
-    const leadsQ = supabase
-      .from('leads')
-      .select(`
-        *,
-        phone, email,
-        linkedin_url, facebook_url, instagram_url, twitter_url,
-        meta_description, category
-      `)
-      .eq('org_id', orgId)
-      .not('company_name', 'is', null)
-      .order('timestamp', { ascending: false })  // nieuwste eerst
-      .limit(500);                               // init sneller maken
+    }
+  )
+  .subscribe();
 
-    const labelsQ = supabase
-      .from('labels')
-      .select('*')
-      .eq('org_id', orgId);
+// Cleanup
+return () => {
+  supabase.removeChannel(leadsCh);
+  supabase.removeChannel(labelsCh);
+};
 
-    // Start beide zonder te wachten
-    const leadsP  = withTimeout(leadsQ, 8000).then(({ data }) => data || []).catch(() => []);
-    const labelsP = withTimeout(labelsQ, 8000).then(({ data }) => data || []).catch(() => []);
 
-    // 4a) Wacht *alleen* op LEADS om UI te tonen
-    const leads = await leadsP;
-
-    if (cancelled) return;
-
-    setAllLeads(leads || []);
-    const categoriesSet = new Set((leads || []).map(l => l.category).filter(Boolean));
-    setUniqueCategories(Array.from(categoriesSet).sort());
-
-    // 🚀 Belangrijk: zet loading NU al uit → dashboard komt in beeld
-    setLoading(false);
-
-    // 4b) Labels vullen zodra binnen (niet blocking)
-    labelsP.then((lbls) => {
-      if (cancelled) return;
-      setLabels(lbls || []);
-    });
-
-    // 5) Realtime subscriptions (blokkeert niet)
-    const leadsCh = supabase
-      .channel(`leads:org:${orgId}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'leads', filter: `org_id=eq.${orgId}` },
-        (payload) => {
-          const lead = payload.new;
-          const isValidVisitor =
-            lead.org_id === orgId &&
-            lead.source === 'tracker' &&
-            !!lead.ip_address &&
-            !!lead.page_url &&
-            !!lead.timestamp &&
-            !lead.page_url.includes(window.location.host);
-
-          if (isValidVisitor) {
-            setAllLeads(prev => [lead, ...prev]);
-          }
-        }
-      )
-      .subscribe();
-
-    const labelsCh = supabase
-      .channel(`labels:org:${orgId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'labels', filter: `org_id=eq.${orgId}` },
-        (payload) => {
-          if (cancelled) return;
-          if (payload.eventType === 'INSERT') {
-            setLabels(prev => [...(prev || []), payload.new]);
-          } else if (payload.eventType === 'UPDATE') {
-            setLabels(prev => (prev || []).map(l => (l.id === payload.new.id ? payload.new : l)));
-          } else if (payload.eventType === 'DELETE') {
-            setLabels(prev => (prev || []).filter(l => l.id !== payload.old.id));
-          }
-        }
-      )
-      .subscribe();
-
-    // 6) Cleanup vanuit run (als effect opnieuw draait)
-    return () => {
-      supabase.removeChannel(leadsCh);
-      supabase.removeChannel(labelsCh);
     };
-  };
-
-  const unsub = run();
-  return () => {
-    // markeer als geannuleerd om setState na unmount te voorkomen
-    cancelled = true;
-    // realtime cleanup (als run al ver was)
-    if (typeof unsub === 'function') try { unsub(); } catch {}
-  };
-}, [router]);
-
+    getData();
+  }, [router]);
 
   // ⬇️ NIEUWE useEffect: notities ophalen zodra we een token én leads hebben
 // Notities ophalen: alleen voor domeinen die we nog niet gehaald hebben.

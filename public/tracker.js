@@ -3,6 +3,7 @@
     const ORIGIN = new URL((document.currentScript && document.currentScript.src) || window.location.href).origin;
     const TRACK_URL = ORIGIN + '/api/track';
     const TOKEN_URL = ORIGIN + '/api/ingest-token';
+    
 
     // Niet tracken op je eigen dashboard
     if (window.location.hostname.endsWith('vercel.app')) return;
@@ -130,21 +131,48 @@
       } catch { /* stil */ }
     }
 
+    // Beveiligde beacon: JWT als query-param, body als tekst (JSON-string)
+function sendBeaconSigned(bodyObj) {
+  try {
+    if (!ingestToken) return false;
+    const url = `${TRACK_URL}?beacon=1&jwt=${encodeURIComponent(ingestToken)}&site=${encodeURIComponent(siteId)}`;
+    const payload = JSON.stringify(basePayload(bodyObj));
+    return navigator.sendBeacon(url, payload);
+  } catch {
+    return false;
+  }
+}
+
+
     async function sendLoad() {
       await sendSigned(basePayload({ eventType: 'load' }));
     }
 
     async function sendEndOnce(reason) {
-      const now = Date.now();
-      if (ended) return;
-      if (now - lastEndAt < 1000) return; // extra guard tegen dubbele end binnen 1s
-      lastEndAt = now;
+  const now = Date.now();
+  if (ended) return;
+  if (now - lastEndAt < 1000) return; // dubbele end binnen 1s voorkomen
+  lastEndAt = now;
+  ended = true;
 
-      ended = true;
-      const seconds = Math.max(0, Math.round((performance.now() - startPerf) / 1000));
-      if (!ingestToken) await getToken().catch(() => {});
+  const seconds = Math.max(0, Math.round((performance.now() - startPerf) / 1000));
+
+  // 1) Zorg dat we een token hebben (meestal al aanwezig)
+  if (!ingestToken) {
+    try { await getToken(); } catch {}
+  }
+
+  // 2) Probeer eerst beacon (overleeft navigatie/unload)
+  const ok = sendBeaconSigned({ durationSeconds: seconds, eventType: 'end', endReason: reason });
+
+  // 3) Fallback: fetch met keepalive (voor oudere browsers of als beacon faalt)
+  if (!ok) {
+    try {
       await sendSigned(basePayload({ durationSeconds: seconds, eventType: 'end', endReason: reason }));
-    }
+    } catch {}
+  }
+}
+
 
     (async () => {
       await getToken();
@@ -155,10 +183,12 @@
       }
     })();
 
-    window.addEventListener('pagehide', () => { sendEndOnce('pagehide'); });
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') sendEndOnce('visibilitychange');
-    });
+    window.addEventListener('pagehide', () => { sendEndOnce('pagehide'); }, { once: true });
+window.addEventListener('beforeunload', () => { sendEndOnce('beforeunload'); }, { once: true });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') sendEndOnce('visibilitychange');
+}, { passive: true });
+
 
   } catch (err) {
     console.warn('Tracking script error:', err);

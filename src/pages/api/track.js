@@ -169,6 +169,7 @@ const COOLDOWN_MINUTES = { pending: Infinity, running: 5, done: 720, skipped: 72
 
 
 export default async function handler(req, res) {
+  const isBeacon = req.query?.beacon === '1';
   // CORS (voeg Authorization toe)
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -196,23 +197,35 @@ export default async function handler(req, res) {
   }
 
   // Bearer-token (JWT) i.p.v. HMAC
-  let tokenPayload = null;
-  if (REQUIRE_TOKEN) {
+  // Bearer-token (JWT) i.p.v. HMAC
+let tokenPayload = null;
+
+if (REQUIRE_TOKEN) {
+  let token = null;
+
+  if (isBeacon) {
+    // ✅ Beacon: JWT uit query (tracker stuurt ?jwt=...)
+    token = (req.query?.jwt && String(req.query.jwt)) || null;
+  } else {
+    // ✅ Normaal: JWT uit Authorization-header
     const auth = req.headers['authorization'] || '';
-    if (!auth.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'missing bearer token' });
+    if (auth.startsWith('Bearer ')) token = auth.slice('Bearer '.length);
+  }
+
+  if (!token) {
+    return res.status(401).json({ error: 'missing token' });
+  }
+
+  try {
+    tokenPayload = jwt.verify(token, INGEST_JWT_SECRET, { algorithms: ['HS256'] });
+    if (!tokenPayload?.site_id || !tokenPayload?.org_id) {
+      return res.status(401).json({ error: 'invalid token payload' });
     }
-    const token = auth.slice('Bearer '.length);
-    try {
-      tokenPayload = jwt.verify(token, INGEST_JWT_SECRET, { algorithms: ['HS256'] });
-      if (!tokenPayload?.site_id || !tokenPayload?.org_id) {
-  return res.status(401).json({ error: 'invalid token payload' });
+  } catch {
+    return res.status(401).json({ error: 'bad token' });
+  }
 }
 
-    } catch {
-      return res.status(401).json({ error: 'bad token' });
-    }
-  }
 
   // JSON parsen
   let body = {};
