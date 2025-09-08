@@ -101,35 +101,25 @@
       };
     }
 
-    // Post met Bearer, bij 401 één keer token verversen + retry
-    async function sendSigned(bodyObj) {
-      if (!ingestToken) return;
-      const payload = JSON.stringify(bodyObj);
+   // Preflight-vrije POST: JWT in query, geen custom headers, text/plain body
+async function sendSigned(bodyObj) {
+  if (!ingestToken) return;
+  const url = `${TRACK_URL}?beacon=1&jwt=${encodeURIComponent(ingestToken)}&site=${encodeURIComponent(siteId)}`;
+  const payload = JSON.stringify(basePayload(bodyObj));
 
-      const doPost = async () => fetch(TRACK_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${ingestToken}`,
-          'X-Site-Id': siteId
-        },
-        body: payload,
-        keepalive: true
-      });
+  // 'text/plain' + geen custom headers => géén CORS preflight
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: payload,
+      keepalive: true,
+      // let op: géén Authorization header en géén X-Site-Id
+      // géén mode:'no-cors' nodig; dit is een "simple request"
+    });
+  } catch { /* stil */ }
+}
 
-      try {
-        let res = await doPost();
-        if (res && res.status === 401) {
-          // token verlopen → cache leeg, opnieuw halen en één retry
-          clearCachedToken();
-          ingestToken = null;
-          await getToken();
-          if (ingestToken) {
-            res = await doPost();
-          }
-        }
-      } catch { /* stil */ }
-    }
 
     // Beveiligde beacon: JWT als query-param, body als tekst (JSON-string)
 function sendBeaconSigned(bodyObj) {

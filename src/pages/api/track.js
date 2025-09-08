@@ -254,7 +254,8 @@ if (REQUIRE_TOKEN) {
   eventType // "load" of "end"
 } = body;
 
-const siteId = siteIdFromBody || tokenPayload?.site_id || siteIdHdr || null;
+const siteIdQuery = (typeof req.query?.site === 'string' && req.query.site) || null;
+const siteId = siteIdFromBody || tokenPayload?.site_id || siteIdHdr || siteIdQuery || null;
 const canonicalPageUrl = canonicalizeUrl(pageUrl);
 const isValidation = validationTest === true;
 
