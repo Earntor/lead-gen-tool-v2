@@ -78,7 +78,7 @@ export default function TeamTab() {
         return
       }
 
-      // 2) mijn rol (kan soms leeg/traag zijn; vangen we later ook via ledenlijst)
+      // 2) mijn rol
       const { data: myMember } = await supabase
         .from('organization_members')
         .select('role')
@@ -87,7 +87,7 @@ export default function TeamTab() {
         .maybeSingle()
       setMeRole(myMember?.role || null)
 
-      // 3) org naam + owner (zorg dat je een SELECT-policy hebt voor members)
+      // 3) org naam + owner
       const { data: org } = await supabase
         .from('organizations')
         .select('name, owner_user_id')
@@ -320,7 +320,6 @@ export default function TeamTab() {
       const json = await res.json().catch(() => ({}))
       if (!res.ok) return setError(json?.error || 'Opslaan mislukt.')
 
-      // ✅ Geen alert — nette banner + context opnieuw laden
       flash('success', 'Naam opgeslagen.')
       await loadContext()
     } catch (e) {
@@ -362,138 +361,197 @@ export default function TeamTab() {
     process.env.NEXT_PUBLIC_APP_URL ||
     ''
 
+  // Kleine icon helpers (geen extra libs)
+  const IconSearch = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-4.35-4.35M10 18a8 8 0 100-16 8 8 0 000 16z" />
+    </svg>
+  )
+  const IconRefresh = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v6h6M20 20v-6h-6M5 19A9 9 0 1119 5" />
+    </svg>
+  )
+
   return (
     <div className="space-y-6">
-      {/* Context + Seats */}
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-gray-600">
-          {meRole ? <>Jouw rol: <span className="font-medium">{meRole}</span></> : 'Rol laden…'}
-          {ownerId && (
-            <span className="ml-2 text-xs text-gray-500">• Owner: {ownerId.slice(0, 8)}…</span>
-          )}
+      {/* Page header */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight">Team & organisatie</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            Beheer je team, rollen en uitnodigingen.
+          </p>
         </div>
-        <div className="text-sm text-gray-600">
-          Seats: <span className="font-medium">{members.length}/{SEAT_LIMIT}</span>
+        <div className="flex items-center gap-2 text-xs">
+          {/* Owner bovenaan is bewust NIET zichtbaar (modern, minimal) */}
+          <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 bg-white">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            Jouw rol:&nbsp;<b className="lowercase">{meRole || 'laden…'}</b>
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 bg-white">
+            Seats&nbsp;<b>{members.length}/{SEAT_LIMIT}</b>
+          </span>
         </div>
       </div>
-      {!orgId && <div className="text-sm text-red-600">Geen organisatie gekoppeld</div>}
 
-      {/* Foutmelding */}
-      {error && (
-        <div className="p-3 rounded bg-red-100 text-red-700 text-sm">
-          {String(error)}
+      {/* Error / Notice */}
+      {(error || notice) && (
+        <div className="space-y-2">
+          {error && (
+            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
+              {String(error)}
+            </div>
+          )}
+          {notice && (
+            <div
+              className={`p-3 rounded-lg text-sm border ${
+                notice.type === 'success'
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  : notice.type === 'warning'
+                  ? 'bg-amber-50 text-amber-800 border-amber-200'
+                  : 'bg-red-50 text-red-800 border-red-200'
+              }`}
+            >
+              {notice.text}
+            </div>
+          )}
         </div>
       )}
 
-      {/* Notices */}
-      {notice && (
-        <div
-          className={`p-3 rounded text-sm ${
-            notice.type === 'success'
-              ? 'bg-green-100 text-green-800'
-              : notice.type === 'warning'
-              ? 'bg-yellow-100 text-yellow-800'
-              : 'bg-red-100 text-red-700'
-          }`}
-        >
-          {notice.text}
+      {/* Organisatienaam (card) */}
+      <form onSubmit={saveOrgName} className="rounded-2xl border p-4 bg-white shadow-sm">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-semibold">Organisatienaam</h3>
+          {!canAdmin && <span className="text-xs text-gray-500">Alleen admin kan wijzigen</span>}
         </div>
-      )}
-
-      {/* Organisatienaam */}
-      <form onSubmit={saveOrgName} className="p-4 border rounded-xl">
-        <h3 className="font-semibold mb-2">Organisatienaam</h3>
-        <div className="flex gap-2">
+        <div className="mt-3 flex flex-col sm:flex-row gap-2">
           <input
-            className="flex-1 border rounded px-3 py-2"
+            className="flex-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black/10"
             placeholder="Organisatienaam"
             value={orgName}
             onChange={(e) => setOrgName(e.target.value)}
             disabled={!canAdmin}
           />
           <button
-            className="px-4 py-2 rounded bg-black text-white disabled:opacity-50"
+            className="px-4 py-2 rounded-lg bg-black text-white disabled:opacity-50"
             disabled={savingName || !orgName.trim() || !canAdmin}
           >
             {savingName ? 'Opslaan…' : 'Opslaan'}
           </button>
         </div>
-        {!canAdmin && (
-          <p className="text-xs text-gray-500 mt-1">Alleen admin kan de naam wijzigen.</p>
-        )}
       </form>
 
-      {/* Teamleden + zoeken */}
-      <div className="p-4 border rounded-xl">
-        <div className="flex items-center justify-between mb-3">
+      {/* Teamleden (card) */}
+      <div className="rounded-2xl border p-4 bg-white shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
           <h3 className="font-semibold">Teamleden</h3>
-          <button onClick={() => { loadMembers(); if (orgId && canAdmin) loadInvites(); }} className="text-sm underline">
-            Vernieuwen
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400">
+                <IconSearch />
+              </span>
+              <input
+                className="border rounded-lg pl-8 pr-3 py-2 w-[240px] focus:outline-none focus:ring-2 focus:ring-black/10"
+                placeholder="Zoek op naam, e-mail of rol…"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+              />
+            </div>
+            <button
+              onClick={() => { loadMembers(); if (orgId && canAdmin) loadInvites(); }}
+              className="inline-flex items-center gap-2 text-sm px-3 py-2 rounded-lg border hover:bg-gray-50"
+            >
+              <IconRefresh /> Vernieuwen
+            </button>
+          </div>
         </div>
 
-        <input
-          className="border rounded px-3 py-2 w-full md:w-1/2 mb-3"
-          placeholder="Zoek op naam, e-mail of rol…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
+        {!orgId && (
+          <div className="text-sm text-red-600">Geen organisatie gekoppeld</div>
+        )}
 
         {loading ? (
-          <p>Leden laden…</p>
+          <div className="space-y-2">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="h-12 rounded-lg bg-gray-100 animate-pulse" />
+            ))}
+          </div>
         ) : filtered.length === 0 ? (
-          <p>Geen leden gevonden.</p>
+          <div className="text-sm text-gray-600">Geen leden gevonden.</div>
         ) : (
           <ul className="divide-y">
-            {filtered.map((m) => (
-              <li key={m.user_id} className="py-3 flex items-center justify-between gap-4">
-                <div>
-                  <div className="font-medium flex items-center gap-2">
-                    <span>{m.full_name || m.email || m.user_id}</span>
-                    {ownerId === m.user_id && (
-                      <span className="text-[11px] px-2 py-0.5 rounded bg-gray-100 border">
-                        Owner
-                      </span>
-                    )}
-                    {m.role === 'admin' && (
-                      <span className="text-[11px] px-2 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-700">
-                        Admin
-                      </span>
-                    )}
+            {filtered.map((m) => {
+              const initials = (m.full_name || m.email || '?')
+                .split(' ')
+                .map(s => s[0]?.toUpperCase())
+                .join('')
+                .slice(0, 2)
+
+              return (
+                <li key={m.user_id} className="py-3 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    {/* Avatar */}
+                    <div className="h-9 w-9 rounded-full bg-gray-100 border flex items-center justify-center text-xs font-semibold">
+                      {initials || '–'}
+                    </div>
+                    {/* Tekst */}
+                    <div>
+                      <div className="font-medium flex items-center gap-2">
+                        <span>{m.full_name || m.email || m.user_id}</span>
+                        {ownerId === m.user_id && (
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 border">
+                            Owner
+                          </span>
+                        )}
+                        {m.role === 'admin' && (
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700">
+                            Admin
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-500">Sinds: {safeSince(m?.since)}</div>
+                    </div>
                   </div>
-                  <div className="text-xs text-gray-500">Sinds: {safeSince(m?.since)}</div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <select
-                    value={m.role}
-                    onChange={(e) => changeRole(m.user_id, e.target.value)}
-                    className="border rounded px-2 py-1"
-                    disabled={!canAdmin || isLastAdmin(m.user_id)}
-                  >
-                    {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                  </select>
-                  <button
-                    onClick={() => removeMember(m.user_id)}
-                    className="text-red-600 text-sm"
-                    disabled={!canAdmin || isLastAdmin(m.user_id)}
-                  >
-                    Verwijderen
-                  </button>
-                </div>
-              </li>
-            ))}
+
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={m.role}
+                      onChange={(e) => changeRole(m.user_id, e.target.value)}
+                      className="border rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-black/10"
+                      disabled={!canAdmin || isLastAdmin(m.user_id)}
+                    >
+                      {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                    </select>
+                    <button
+                      onClick={() => removeMember(m.user_id)}
+                      className="text-red-600 text-sm px-3 py-1.5 rounded-lg border hover:bg-red-50 disabled:opacity-50"
+                      disabled={!canAdmin || isLastAdmin(m.user_id)}
+                    >
+                      Verwijderen
+                    </button>
+                  </div>
+                </li>
+              )
+            })}
           </ul>
         )}
       </div>
 
-      {/* Uitnodigen */}
-      <form onSubmit={sendInvite} className="p-4 border rounded-xl space-y-3">
-        <h3 className="font-semibold">Gebruiker uitnodigen</h3>
+      {/* Uitnodigen (card) */}
+      <form onSubmit={sendInvite} className="rounded-2xl border p-4 bg-white shadow-sm space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold">Gebruiker uitnodigen</h3>
+          <span className="text-xs text-gray-500">
+            {atLimit ? `Limiet bereikt (${members.length}/${SEAT_LIMIT})` : `Beschikbaar: ${SEAT_LIMIT - members.length}`}
+          </span>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <input
             type="email"
             required
-            className="border rounded px-3 py-2"
+            className="border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black/10"
             placeholder="email@bedrijf.nl"
             value={inviteEmail}
             onChange={(e) => setInviteEmail(e.target.value)}
@@ -502,34 +560,28 @@ export default function TeamTab() {
           <select
             value={inviteRole}
             onChange={(e) => setInviteRole(e.target.value)}
-            className="border rounded px-3 py-2"
+            className="border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black/10"
             disabled={!canAdmin || atLimit}
           >
             {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
           </select>
           <button
-            className="px-4 py-2 rounded bg-black text-white disabled:opacity-50"
+            className="px-4 py-2 rounded-lg bg-black text-white disabled:opacity-50"
             disabled={!canAdmin || atLimit}
           >
             Uitnodigen
           </button>
         </div>
 
-        {atLimit && (
-          <p className="text-xs text-gray-500">
-            Limiet bereikt ({members.length}/{SEAT_LIMIT}). Verwijder eerst iemand om te kunnen uitnodigen.
-          </p>
-        )}
-
         {inviteLink && (
-          <div className="bg-gray-50 border rounded p-3 text-sm">
+          <div className="bg-gray-50 border rounded-lg p-3 text-sm">
             <div className="mb-2">Uitnodigingslink (7 dagen geldig):</div>
             <div className="flex gap-2">
-              <input className="flex-1 border rounded px-2 py-1" value={inviteLink} readOnly />
+              <input className="flex-1 border rounded-lg px-2 py-1" value={inviteLink} readOnly />
               <button
                 type="button"
                 onClick={() => copyToClipboard(inviteLink)}
-                className="px-3 py-1 border rounded"
+                className="px-3 py-1 border rounded-lg"
               >
                 Kopieer
               </button>
@@ -538,9 +590,9 @@ export default function TeamTab() {
         )}
       </form>
 
-      {/* Openstaande uitnodigingen (alleen admin) */}
+      {/* Openstaande uitnodigingen (card) */}
       {canAdmin && (
-        <div className="p-4 border rounded-xl">
+        <div className="rounded-2xl border p-4 bg-white shadow-sm">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-semibold">Openstaande uitnodigingen</h3>
             <span className="text-sm text-gray-500">{invites.length} open</span>
@@ -566,14 +618,14 @@ export default function TeamTab() {
                       <button
                         type="button"
                         onClick={() => copyToClipboard(link)}
-                        className="px-3 py-1 border rounded text-sm"
+                        className="px-3 py-1 border rounded-lg text-sm hover:bg-gray-50"
                       >
                         Kopieer link
                       </button>
                       <button
                         type="button"
                         onClick={() => revokeInvite(inv.id)}
-                        className="px-3 py-1 border rounded text-sm text-red-600"
+                        className="px-3 py-1 border rounded-lg text-sm text-red-600 hover:bg-red-50"
                       >
                         Intrekken
                       </button>
