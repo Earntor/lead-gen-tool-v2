@@ -11,6 +11,14 @@ import { logDomainSignal } from '../../lib/logDomainSignal.js';
 import { probeHostHeader } from '../../lib/probeHostHeader';
 import { upsertDomainEnrichmentCache } from '../../lib/upsertDomainEnrichmentCache';
 import punycode from 'node:punycode'; // voor IDN → ASCII normalisatie
+// BEGIN PATCH: imports
+import psl from 'psl';                         // eTLD+1 normalisatie
+import tls from 'node:tls';                    // SNI probing
+import { createRequire } from 'node:module';   // CJS import voor imghash
+const require = createRequire(import.meta.url);
+const imghash = require('imghash');
+// END PATCH
+
 
 
 // Verwijder null/undefined en lege strings uit een payload
@@ -106,6 +114,13 @@ async function logBlockedSignal({
 // Kleine helpers
 const validNum = (v) => typeof v === 'number' && !Number.isNaN(v);
 
+// Is een timestamp recent genoeg (default 72 uur)?
+function isFreshEnough(ts, ttlHours = 72) {
+  if (!ts) return false;
+  const t = new Date(ts).getTime();
+  return Number.isFinite(t) && (Date.now() - t) < ttlHours * 3600 * 1000;
+}
+
 // service-subdomeinen die we wegstrippen
 const SERVICE_LABELS = /^(mail|vpn|smtp|webmail|pop3|imap|owa|remote|ns\d*|mx\d*|cpanel|webdisk|autodiscover|server|host|exchange|secure|ssl|admin|gateway|proxy|support|login|portal|test|staging|dev)\./i;
 
@@ -130,27 +145,20 @@ function stripSubdomain(domain) {
   return d;
 }
 
-
+// BEGIN PATCH: cleanAndValidateDomain met PSL/eTLD+1
 function cleanAndValidateDomain(domain, source, asname, org_id, page_url, ip_address, confidence, confidence_reason) {
   if (!domain) return null;
 
-  // basis normalisatie
-  let cleaned = stripSubdomain(domain);
+  let cleaned = stripSubdomain(String(domain).trim());
   if (!cleaned) return null;
 
-  // alleen toegestane tekens
-  cleaned = cleaned.replace(/[^a-z0-9.-]/g, '');
-
-  // geen leading/trailing dot of hyphen
-  cleaned = cleaned.replace(/^\.+/, '').replace(/\.+$/, '').replace(/^-+/, '').replace(/-+$/, '');
-
-  // moet minstens één dot hebben
+  cleaned = cleaned.replace(/[^a-z0-9.-]/g, '')
+                   .replace(/^\.+/, '').replace(/\.+$/, '')
+                   .replace(/^-+/, '').replace(/-+$/, '');
   if (!cleaned.includes('.')) return null;
 
   // geen IP-adressen
-  const isIPv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(cleaned);
-  const isIPv6 = /:/.test(cleaned);
-  if (isIPv4 || isIPv6) return null;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(cleaned) || /:/.test(cleaned)) return null;
 
   // labels valideren
   const labels = cleaned.split('.');
@@ -158,19 +166,16 @@ function cleanAndValidateDomain(domain, source, asname, org_id, page_url, ip_add
   if (labels.some(l => !/^[a-z0-9-]+$/.test(l))) return null;
   if (labels.some(l => l.startsWith('-') || l.endsWith('-'))) return null;
 
-  // TLD: letters, 2–24
-  const tld = labels[labels.length - 1];
-if (!/^([a-z]{2,24}|xn--[a-z0-9-]{2,})$/.test(tld)) return null;
+  // PSL: reduceer naar eTLD+1 (acme.co.uk → acme.co.uk)
+  const parsed = psl.parse(cleaned);
+  if (!parsed || parsed.error || !parsed.domain) return null;
+  cleaned = parsed.domain.toLowerCase();
 
-  // minstens één label met een letter
-  if (!labels.some(l => /[a-z]/.test(l))) return null;
-
-  // hosting/blacklist blokkeren
-  const endsWithDomain = (host, tail) =>
-  host === tail || host.endsWith(`.${tail}`);
-const isBlocked =
-  HOSTING_DOMAINS.some(dom => endsWithDomain(cleaned, dom)) ||
-  EXTRA_BLACKLIST_DOMAINS.some(dom => endsWithDomain(cleaned, dom));
+  // blacklist/hosting
+  const endsWithDomain = (host, tail) => host === tail || host.endsWith(`.${tail}`);
+  const isBlocked =
+    HOSTING_DOMAINS.some(dom => endsWithDomain(cleaned, dom)) ||
+    EXTRA_BLACKLIST_DOMAINS.some(dom => endsWithDomain(cleaned, dom));
 
   if (isBlocked) {
     const safeConfidence =
@@ -180,22 +185,17 @@ const isBlocked =
 
     console.log(`⛔ Geblokkeerd domein (${source}): ${cleaned}`);
     logBlockedSignal({
-      ip_address,
-      domain: cleaned,
-      source,
-      asname,
-      reason: 'blacklisted domain in cleanup',
-      org_id,
-      page_url,
-      confidence: safeConfidence,
-      confidence_reason: safeReason,
+      ip_address, domain: cleaned, source, asname,
+      reason: 'blacklisted domain in cleanup', org_id, page_url,
+      confidence: safeConfidence, confidence_reason: safeReason,
       ignore_type: 'blocked'
     });
     return null;
   }
-
   return cleaned;
 }
+// END PATCH
+
 
 
 
@@ -204,7 +204,7 @@ async function calculateConfidenceByFrequency(ip, domain) {
     .from('rdns_log')
     .select('*')
     .eq('ip_address', ip)
-    .order('created_at', { ascending: false })
+    .order('checked_at', { ascending: false })
     .limit(20); // laatste 20 logs
 
   if (error || !data) return null;
@@ -240,6 +240,13 @@ export default async function handler(req, res) {
     site_id
   } = req.body;
 
+  // ⬇️ Globale IP-API velden die we later invullen
+let ip_country = null;
+let ip_city = null;
+let ip_postal_code = null;
+let location = null;
+
+
 // Queue-status bijwerken voor alle pending jobs van deze bezoeker (ip+site)
 const markQueue = async (status, reason) => {
   try {
@@ -272,6 +279,25 @@ const markQueue = async (status, reason) => {
   // ⚠️ Geen return hier – laat de enrichment gewoon doorlopen
 }
 
+// ⏳ Cooldown: recent mislukte verrijking? Sla 6 uur over
+try {
+  const since = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(); // 6 uur terug
+  const { data: recentFail } = await supabaseAdmin
+    .from('ignored_ip_log')
+    .select('id')
+    .eq('ip_address', ip_address)
+    .in('ignore_type', ['no-domain','low-confidence'])
+    .gte('ignored_at', since)
+    .limit(1);
+
+  if (recentFail?.length) {
+    await markQueue('skipped', 'skipped: recent failure cooldown');
+    return res.status(200).json({ ignored: true, reason: 'recent failure cooldown' });
+  }
+} catch (e) {
+  console.warn('⚠️ cooldown check faalde:', e.message);
+}
+
 
   try {
     console.log('--- API LEAD DEBUG ---');
@@ -285,27 +311,52 @@ const markQueue = async (status, reason) => {
 
     let ipData = cached;
 
-    const needsDomainEnrichment =
-      !cached ||
-      cached.company_name === 'Testbedrijf' ||
-      (cached.company_domain && (
-        !cached.domain_address ||
-        !cached.domain_city ||
-        !cached.domain_country ||
-        !cached.confidence ||
-        !cached.confidence_reason ||
-        !cached.meta_description ||
-        !cached.phone ||
-        !cached.email ||
-        !cached.domain_lat ||
-        !cached.domain_lon ||
-        !cached.category ||
-        !cached.rdns_hostname ||
-        !cached.linkedin_url ||
-        !cached.facebook_url ||
-        !cached.instagram_url ||
-        !cached.twitter_url
-      ));
+// 🔎 Nieuwe, duidelijke checks op wat er in cache zit
+const cachedHasDomain    = !!cached?.company_domain;
+const cachedHasProfile   = !!(cached?.company_name || cached?.meta_description || cached?.category);
+const cachedHasContacts  = !!(cached?.phone || cached?.email || cached?.linkedin_url || cached?.facebook_url || cached?.instagram_url || cached?.twitter_url);
+const cachedHasAddr      = !!(cached?.domain_address || cached?.domain_city || cached?.domain_country);
+const cachedHasConfidence= (cached?.confidence != null) && !Number.isNaN(Number(cached.confidence));
+const cachedIsFresh      = isFreshEnough(cached?.last_updated ?? cached?.enriched_at, 72); // 72u TTL
+const manualLock         = cached?.manual_enrich === true; // respecteer handmatig verrijkte profielen
+
+// 🔒 Manual lock actief? Niet verrijken en niets overschrijven.
+if (cached && manualLock) {
+  await markQueue('done', 'cache hit (manual lock)');
+  return res.status(200).json({
+    success: true,
+    mode: 'cache_hit_locked',
+    company_domain: cached.company_domain ?? null,
+    company_name:   cached.company_name ?? null,
+    confidence:     cached.confidence ?? null
+  });
+}
+
+// 🧠 Alleen verrijken als het echt nodig is
+const needsDomainEnrichment =
+  !cached
+  || !cachedIsFresh
+  || !cachedHasDomain                  // ← BELANGRIJK: zonder domein altijd verrijken
+  || cached?.company_name === 'Testbedrijf'
+  || (cachedHasDomain && (
+       !cachedHasConfidence
+       || !cachedHasAddr
+       || !cachedHasContacts
+       || !cachedHasProfile
+       || !cached?.rdns_hostname
+     ));
+
+// ⚡ Early return bij verse, complete cache (scheelt kosten & tijd)
+if (cached && !needsDomainEnrichment && !manualLock) {
+  await markQueue('done', 'cache hit (fresh)');
+  return res.status(200).json({
+    success: true,
+    mode: 'cache_hit',
+    company_domain: cached.company_domain ?? null,
+    company_name:   cached.company_name ?? null,
+    confidence:     cached.confidence ?? null
+  });
+}
 
     if (!cached || needsDomainEnrichment) {
       const ipapiRes = await fetch(`http://ip-api.com/json/${ip_address}`);
@@ -323,12 +374,14 @@ const markQueue = async (status, reason) => {
         throw new Error(`IP-API error: ${ipapi.message || 'onbekende fout'}`);
       }
 
-let ip_country = ipapi.country || null;
-let ip_city = ipapi.city || null;
-let ip_postal_code = ipapi.zip || null;
+ip_country = ipapi.country || null;
+ip_city = ipapi.city || null;
+ip_postal_code = ipapi.zip || null;
 
 // Consistente location opbouw
-let location = null;
+location = null;
+
+
 if (ip_city && ip_country) {
   location = ipapi.regionName ? `${ip_city}, ${ipapi.regionName}` : ip_city;
 } else if (ip_country) {
@@ -347,7 +400,7 @@ if (!ip_city && !ip_country) {
 }
 
 
-     const asname = ipapi.asname || '';
+const asname = String(ipapi.as || ipapi.asname || ipapi.org || '');
 const isISP = KNOWN_ISPS.some(isp => asname.toLowerCase().includes(isp.toLowerCase()));
 
 
@@ -421,13 +474,27 @@ if (!extracted) continue;
           phone: null
         };
 
-        let score = scoreReverseDnsHostname(hostname, enrichmentStub);
-        let reason = getConfidenceReason(score);
+        // BEGIN PATCH: RDNS scoring + forward-resolve check
+let score = scoreReverseDnsHostname(hostname, { domain: extracted });
+let reason = getConfidenceReason(score);
 
-        if (extracted === 'moreketing.nl') {
-          score = 0.95;
-          reason = 'Whitelisted testdomein';
-        }
+try {
+  const forwardsA = await dns.resolve(extracted);
+  const forwards = (forwardsA || []).map(String);
+  const match = forwards.includes(ip_address);
+  if (match) { score = Math.max(score, 0.7); reason += ' + forward-resolve match'; }
+  else       { score = Math.max(0, score - 0.05); reason += ' + no forward-resolve'; }
+} catch {
+  score = Math.max(0, score - 0.05);
+  reason += ' + forward-resolve failed';
+}
+
+if (extracted === 'moreketing.nl') {
+  score = 0.95;
+  reason = 'Whitelisted testdomein';
+}
+// END PATCH
+
 
         const threshold = 0.5;
         if (score < threshold) {
@@ -577,6 +644,7 @@ try {
 
 
     // 🌐 Stap 6 – HTTP fetch naar IP → SIGNAL
+// ⬇️ VERVANG je hele try/catch-blok door dit:
 try {
   const result = await getDomainFromHttpIp(ip_address);
 
@@ -591,20 +659,183 @@ try {
     confidence_reason
   );
 
-  await supabaseAdmin.from('http_fetch_log').insert({
-    ip_address,
-    fetched_at: new Date().toISOString(),
-    success: result.success || false,
-    extracted_domain: extractedDomain || null,
-    enrichment_source: ENRICHMENT_SOURCES.HTTP_FETCH,
-    confidence: result.confidence || null,
-    confidence_reason: result.confidence_reason || CONFIDENCE_REASONS.HTTP_FETCH,
-    redirect_location: result.redirect_location || null,
-    og_url: result.og_url || null,
-    html_snippet: result.html_snippet || null,
-    error_message: result.error_message || null
-  });
+  // 1) Insert + id terughalen
+  const { data: httpInserted } = await supabaseAdmin
+    .from('http_fetch_log')
+    .insert({
+      ip_address,
+      fetched_at: new Date().toISOString(),
+      success: result.success || false,
+      extracted_domain: extractedDomain || null,
+      enrichment_source: ENRICHMENT_SOURCES.HTTP_FETCH,
+      confidence: result.confidence || null,
+      confidence_reason: result.confidence_reason || CONFIDENCE_REASONS.HTTP_FETCH,
+      redirect_location: result.redirect_location || null,
+      og_url: result.og_url || null,
+      html_snippet: result.html_snippet || null,
+      error_message: result.error_message || null
+    })
+    .select('id')
+    .single();
 
+  const httpFetchInsertId = httpInserted?.id || null;
+
+  // 2) Hints uit headers/HTML/robots halen en in dezelfde rij updaten
+  try {
+    const hdrs = result.headers || {};         // { 'set-cookie': [..], 'access-control-allow-origin': [...] }
+    const html = result.raw_html || '';
+    const robots = result.robots_txt || '';
+
+    // Set-Cookie: Domain=...
+    const setCookieArr = Array.isArray(hdrs['set-cookie']) ? hdrs['set-cookie'] : [];
+    const setCookieDomains = [];
+    for (const c of setCookieArr) {
+      const m = /domain=([^;]+)/i.exec(String(c));
+      if (m?.[1]) setCookieDomains.push(m[1].trim().toLowerCase());
+    }
+
+    // CORS: Access-Control-Allow-Origin
+    const aco = hdrs['access-control-allow-origin'];
+    const allowOrigins = Array.isArray(aco)
+      ? aco
+      : (aco ? String(aco).split(',').map(s => s.trim()) : []);
+
+    // HTML: canonical/og/manifest
+    let canonicalHost = null, ogHost = null, manifestUrl = null, sitemapUrls = [];
+
+    const canon = /<link[^>]+rel=["']canonical["'][^>]*href=["']([^"']+)/i.exec(html);
+    if (canon?.[1]) { try { canonicalHost = new URL(canon[1], 'http://dummy').hostname; } catch {} }
+
+    const og = /<meta[^>]+property=["']og:url["'][^>]*content=["']([^"']+)/i.exec(html);
+    if (og?.[1])    { try { ogHost = new URL(og[1], 'http://dummy').hostname; } catch {} }
+
+    const manifest = /<link[^>]+rel=["']manifest["'][^>]*href=["']([^"']+)/i.exec(html);
+    if (manifest?.[1]) manifestUrl = manifest[1];
+
+    // robots.txt → sitemap(s)
+    if (robots) {
+      const ms = [...robots.matchAll(/sitemap:\s*([^\s]+)/ig)].map(m => m[1]);
+      sitemapUrls = ms.length ? ms : [];
+    }
+
+    // Update dezelfde rij met headers/robots/hints
+    if (httpFetchInsertId) {
+      await supabaseAdmin.from('http_fetch_log')
+        .update({
+          headers: hdrs,
+          robots_txt: robots || null,
+          hints: {
+            set_cookie_domains: setCookieDomains.length ? setCookieDomains : null,
+            allow_origins: allowOrigins.length ? allowOrigins : null,
+            canonical_host: canonicalHost || null,
+            og_url_host: ogHost || null,
+            manifest_url: manifestUrl || null,
+            sitemap_urls: sitemapUrls.length ? sitemapUrls : null
+          }
+        })
+        .eq('id', httpFetchInsertId);
+    }
+
+    // 3) Signalen bijschrijven op basis van hints
+
+    // 3a) Cookie-domeinen
+    for (const raw of setCookieDomains) {
+      const cand = cleanAndValidateDomain(
+        raw,
+        ENRICHMENT_SOURCES.HTTP_FETCH,
+        asname, org_id, page_url, ip_address,
+        confidence, confidence_reason
+      );
+      if (!cand) continue;
+      const sig = await logDomainSignal({
+        ip_address,
+        domain: cand,
+        source: ENRICHMENT_SOURCES.HTTP_FETCH,
+        confidence: 0.58,
+        confidence_reason: 'Set-Cookie Domain'
+      });
+      if (sig) domainSignals.push(sig);
+    }
+
+    // 3b) CORS allow-origin
+    // 3b) CORS allow-origin (robuuster: skip "*" / "null" / localhost / IPs; fallback zonder schema; dedupe)
+{
+  const seen = new Set(); // dedupe
+  for (const raw of allowOrigins) {
+    const val = String(raw || '').trim().toLowerCase();
+    if (!val) continue;
+
+    // Sla wildcards/onbruikbaar over
+    if (val === '*' || val === 'null') continue;
+
+    // Skip localhost en bekende dev-origins
+    if (/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\/?$/.test(val)) continue;
+
+    // Skip IP-origins (IPv4/IPv6)
+    if (/^https?:\/\/\d{1,3}(\.\d{1,3}){3}(?::\d+)?\/?$/.test(val)) continue; // IPv4
+    if (/^https?:\/\/\[[0-9a-f:]+\](?::\d+)?\/?$/i.test(val)) continue;        // IPv6
+
+    // Hostname extraheren – met schema via URL, anders bare-host fallback
+    let host = null;
+    try {
+      const norm = val.includes('://') ? val : `https://${val.replace(/^\/\//, '')}`;
+      host = new URL(norm).hostname;
+    } catch {
+      const m = val.match(/^([a-z0-9.-]+)$/i);
+      host = m ? m[1] : null;
+    }
+    if (!host) continue;
+
+    // Skip interne suffixen (voorkomt ruis)
+    if (/\.(local|lan|internal|intra|corp)$/i.test(host)) continue;
+
+    // Dedupe exact dezelfde host
+    if (seen.has(host)) continue;
+    seen.add(host);
+
+    const cand = cleanAndValidateDomain(
+      host,
+      ENRICHMENT_SOURCES.HTTP_FETCH,
+      asname, org_id, page_url, ip_address,
+      confidence, confidence_reason
+    );
+    if (!cand) continue;
+
+    const sig = await logDomainSignal({
+      ip_address,
+      domain: cand,
+      source: ENRICHMENT_SOURCES.HTTP_FETCH,
+      confidence: 0.55,
+      confidence_reason: 'CORS allow-origin'
+    });
+    if (sig) domainSignals.push(sig);
+  }
+}
+
+
+    // 3c) canonical/og hosts
+    for (const rawHost of [canonicalHost, ogHost].filter(Boolean)) {
+      const cand = cleanAndValidateDomain(
+        rawHost,
+        ENRICHMENT_SOURCES.HTTP_FETCH,
+        asname, org_id, page_url, ip_address,
+        confidence, confidence_reason
+      );
+      if (!cand) continue;
+      const sig = await logDomainSignal({
+        ip_address,
+        domain: cand,
+        source: ENRICHMENT_SOURCES.HTTP_FETCH,
+        confidence: 0.6,
+        confidence_reason: 'HTML canonical/og'
+      });
+      if (sig) domainSignals.push(sig);
+    }
+  } catch (hintErr) {
+    console.warn('⚠️ header/html hints parsing faalde:', hintErr.message);
+  }
+
+  // bestaand gedrag: direct signaal als extractedDomain er al is
   if (result.success && extractedDomain) {
     const signal = await logDomainSignal({
       ip_address,
@@ -613,7 +844,6 @@ try {
       confidence: result.confidence || 0.6,
       confidence_reason: result.confidence_reason || CONFIDENCE_REASONS.HTTP_FETCH
     });
-
     if (signal) domainSignals.push(signal);
   }
 } catch (e) {
@@ -626,6 +856,7 @@ try {
     error_message: e.message || 'onbekende fout'
   });
 }
+
 
 
    // 🖼️ Stap 7 – favicon hash matching → SIGNAL
@@ -739,6 +970,95 @@ try {
   console.warn('⚠️ Favicon match faalde:', err.message);
 }
 
+// BEGIN PATCH: Favicon pHash (naast bestaande hash)
+async function getFaviconPHash(ip) {
+  function fetchBuffer(url, timeoutMs = 3000) {
+    return new Promise((resolve) => {
+      const proto = url.startsWith('https') ? require('node:https') : require('node:http');
+      const req = proto.get(url, { timeout: timeoutMs }, (res) => {
+        const chunks = [];
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+      });
+      req.on('error', () => resolve(null));
+      req.setTimeout(timeoutMs, () => { try { req.destroy(); } catch {} resolve(null); });
+    });
+  }
+  for (const scheme of ['https','http']) {
+    const buf = await fetchBuffer(`${scheme}://${ip}/favicon.ico`);
+    if (!buf || buf.length < 64) continue;
+    try {
+      const phash = await imghash.hash(buf, 16, 'hex'); // 64-bit hex
+      return String(phash);
+    } catch {}
+  }
+  return null;
+}
+
+try {
+  const phash = await getFaviconPHash(ip_address);
+  if (phash) {
+    const { data: match } = await supabaseAdmin
+      .from('favicon_hash_map')
+      .select('*')
+      .eq('phash', phash)
+      .maybeSingle();
+
+    if (match?.domain) {
+      const cand = cleanAndValidateDomain(
+        match.domain, ENRICHMENT_SOURCES.FAVICON, asname, org_id, page_url, ip_address, confidence, confidence_reason
+      );
+      if (cand) {
+        const sig = await logDomainSignal({
+          ip_address, domain: cand, source: ENRICHMENT_SOURCES.FAVICON,
+          confidence: match.confidence ?? 0.75, confidence_reason: 'favicon pHash match'
+        });
+        if (sig) domainSignals.push(sig);
+
+        await supabaseAdmin.from('favicon_hash_log').insert({
+          ip_address, favicon_phash: phash, matched_domain: cand,
+          used: true, confidence: match.confidence ?? 0.75, confidence_reason: 'favicon pHash match'
+        });
+
+        await supabaseAdmin
+  .from('favicon_hash_map')
+  .upsert(
+    {
+      // gebruik echte hash als die bestaat, anders stabiele synthetische PK
+      hash: match?.hash ?? `ph_${phash}`,
+      phash,
+      domain: cand,
+      confidence: match?.confidence ?? 0.75,
+      source: 'phash',
+      last_seen: new Date().toISOString()
+    },
+    { onConflict: 'hash' }
+  );
+      }
+    } else {
+      await supabaseAdmin.from('favicon_hash_log').insert({
+        ip_address, favicon_phash: phash, matched_domain: null, used: false
+      });
+      await supabaseAdmin
+  .from('favicon_hash_map')
+  .upsert(
+    {
+      hash: match?.hash ?? `ph_${phash}`, // synthetische PK voor pHash-only
+      phash,
+      domain: null,
+      confidence: 0.5,
+      source: 'observed-phash',
+      last_seen: new Date().toISOString()
+    },
+    { onConflict: 'hash' }
+  );
+    }
+  }
+} catch (e) {
+  console.warn('⚠️ favicon pHash faalde:', e.message);
+}
+// END PATCH
+
 
 
     // 🧪 Stap 8 – Host header probing → SIGNAL
@@ -804,8 +1124,179 @@ if (Array.isArray(result?.trials) && result.trials.length > 0) {
   console.warn('⚠️ Host header probing faalde:', e.message);
 }
 
+// 🔐 EXTRA stap — TLS SNI probe (shared IP bevestigen)
+// Plakken: ná host header probing, vóór "✅ Stap 9 – Combineer signalen"
+try {
+  // 1) Kandidaten verzamelen: fdns_lookup + alles wat we al als signalen zagen
+  const { data: fdnsResults } = await supabaseAdmin
+    .from('fdns_lookup')
+    .select('domain')
+    .eq('ip', ip_address);
 
-    // ✅ Stap 9 – Combineer signalen
+  const seed = (fdnsResults || []).map(r => r.domain).filter(Boolean);
+  const fromSignals = domainSignals.map(s => s.domain).filter(Boolean);
+  const sniCandidates = [...new Set([...seed, ...fromSignals])].slice(0, 10); // max 10, hou 'm snel
+
+  // 2) Per kandidaat SNI-handshake doen naar dit IP
+  for (const cand of sniCandidates) {
+    const tested = cleanAndValidateDomain(
+      cand,
+      ENRICHMENT_SOURCES.TLS,
+      asname, org_id, page_url, ip_address,
+      confidence, confidence_reason
+    );
+    if (!tested) continue;
+
+    const cert = await new Promise((resolve) => {
+      const socket = tls.connect({
+        host: ip_address,
+        port: 443,
+        servername: tested,          // ← SNI = kandidaat domein
+        rejectUnauthorized: false,   // we willen alleen het cert lezen
+        ALPNProtocols: []            // geen ALPN nodig
+      }, () => {
+        const c = socket.getPeerCertificate(true);
+        const info = {
+          commonName: c?.subject?.CN || null,
+          subjectAltName: c?.subjectaltname || null
+        };
+        socket.end();
+        resolve(info);
+      });
+      socket.setTimeout(3000, () => { try { socket.destroy(); } catch {} resolve(null); });
+      socket.on('error', () => resolve(null));
+    });
+
+    // 3) Checkt of het cert dit domein dekt (CN of SAN)
+    let covers = false;
+    if (cert) {
+      const cn = cert.commonName?.toLowerCase();
+      const san = cert.subjectAltName?.toLowerCase() || '';
+      const sanList = san.split(/,\s*/).map(x => x.replace(/^dns:/, ''));
+
+      if (cn && (cn === tested || cn.endsWith(`.${tested}`) || tested.endsWith(`.${cn}`))) covers = true;
+      if (!covers && sanList.length) {
+        covers = sanList.some(d => d === tested || d.endsWith(`.${tested}`) || tested.endsWith(`.${d}`));
+      }
+    }
+
+    // 4) Log altijd in tls_log; als het dekt, markeer used + confidence
+    await supabaseAdmin.from('tls_log').insert({
+      ip_address,
+      tested_domain: tested,
+      sni: true,
+      common_name: cert?.commonName || null,
+      subject_alt_name: cert?.subjectAltName || null,
+      extracted_domain: covers ? tested : null,
+      used: !!covers,
+      confidence: covers ? 0.75 : null,
+      confidence_reason: covers ? 'TLS SNI confirm' : null,
+      enrichment_source: ENRICHMENT_SOURCES.TLS
+    });
+
+    // 5) Bij een hit: extra signaal toevoegen
+    if (covers) {
+      const sig = await logDomainSignal({
+        ip_address,
+        domain: tested,
+        source: ENRICHMENT_SOURCES.TLS,
+        confidence: 0.75,
+        confidence_reason: 'TLS SNI confirm'
+      });
+      if (sig) domainSignals.push(sig);
+    }
+  }
+} catch (e) {
+  console.warn('⚠️ TLS SNI probing faalde:', e.message);
+}
+
+// BEGIN PATCH: helper voor email-DNS hints
+async function emailDnsHints(domain, ip) {
+  let spf = null, dmarc = null, mxHosts = [], mxPointsToIp = false;
+  try {
+    const txt = await dns.resolveTxt(domain);
+    const spfRec = (txt.find(arr => arr.join('').toLowerCase().startsWith('v=spf1')) || null);
+    spf = spfRec ? spfRec.join('') : null;
+  } catch {}
+  try {
+    const dmarcRec = await dns.resolveTxt(`_dmarc.${domain}`);
+    if (dmarcRec?.length) dmarc = dmarcRec.map(a => a.join('')).join(' ');
+  } catch {}
+  try {
+    const mx = await dns.resolveMx(domain);
+    mxHosts = mx.map(m => m.exchange);
+    for (const h of mxHosts) {
+      try {
+        const a = await dns.resolve(h);
+        if (a?.map(String).includes(ip)) { mxPointsToIp = true; break; }
+      } catch {}
+    }
+  } catch {}
+  let scoreBoost = 0;
+  if (spf) scoreBoost += 0.05;
+  if (dmarc) scoreBoost += 0.05;
+  if (mxHosts.length) scoreBoost += 0.05;
+  if (mxPointsToIp) scoreBoost += 0.05;
+  return { spf, dmarc, mxHosts, mxPointsToIp, scoreBoost };
+}
+// END PATCH
+
+
+// BEGIN PATCH: email-DNS correlatie + cache + signalen
+try {
+  const candidateDomains = [...new Set(domainSignals.map(s => s.domain))].slice(0, 10);
+  for (const cand of candidateDomains) {
+    const hints = await emailDnsHints(cand, ip_address);
+
+    if (hints.spf || hints.dmarc || hints.mxHosts?.length) {
+      const { data: existing } = await supabaseAdmin
+        .from('domain_enrichment_cache')
+        .select('email_dns')
+        .eq('company_domain', cand)
+        .maybeSingle();
+
+      if (!existing?.email_dns) {
+        await supabaseAdmin.from('domain_enrichment_cache').upsert({
+          company_domain: cand,
+          email_dns: {
+            spf: hints.spf || null,
+            dmarc: hints.dmarc || null,
+            mx_hosts: hints.mxHosts?.length ? hints.mxHosts : null,
+            mx_points_to_ip: hints.mxPointsToIp || false
+          },
+          email_dns_checked_at: new Date().toISOString()
+        });
+      }
+    }
+
+    if (hints.scoreBoost > 0) {
+      const sig = await logDomainSignal({
+        ip_address, domain: cand,
+        source: ENRICHMENT_SOURCES.HTTP_FETCH, // infra-hints → lage/medium bron
+        confidence: 0.05 + Math.min(hints.scoreBoost, 0.2),
+        confidence_reason: 'Email DNS correlation'
+      });
+      if (sig) domainSignals.push(sig);
+    }
+  }
+} catch (e) {
+  console.warn('⚠️ email DNS hints faalde:', e.message);
+}
+// END PATCH
+
+
+   // ✅ Stap 9 – Combineer signalen
+// Kleine dedupe: dezelfde bron + hetzelfde domein telt maar één keer
+if (domainSignals.length) {
+  const seen = new Set();
+  domainSignals = domainSignals.filter(s => {
+    const key = `${s.source}:${s.domain}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 if (!company_domain && domainSignals.length > 0) {
   const likely = getLikelyDomainFromSignals(domainSignals);
 
@@ -817,6 +1308,36 @@ if (!company_domain && domainSignals.length > 0) {
       console.log('🔁 Confidence aangepast op basis van frequentieboost:', freqBoost);
     }
   }
+
+// BEGIN PATCH: confirmed by form (directe query, snel dankzij indexen)
+try {
+  if (likely?.domain) {
+    // 1) Exacte match: (ip, domain)
+    const q1 = await supabaseAdmin
+      .from('form_submission_log')
+      .select('id', { count: 'exact', head: true })
+      .eq('ip', ip_address)
+      .eq('domain', likely.domain);
+    const count1 = (q1 && typeof q1.count === 'number') ? q1.count : 0;
+
+    // 2) Fallback: (ip, email eindigt op @domain) — trigram index helpt
+    const q2 = await supabaseAdmin
+      .from('form_submission_log')
+      .select('id', { count: 'exact', head: true })
+      .eq('ip', ip_address)
+      .ilike('email', `%@${likely.domain}`);
+    const count2 = (q2 && typeof q2.count === 'number') ? q2.count : 0;
+
+    if ((count1 + count2) > 0) {
+      likely.confidence = Math.max(likely.confidence ?? 0, 0.8);
+      likely.confidence_reason = (likely.confidence_reason ? likely.confidence_reason + ' + ' : '') + 'confirmed by form';
+    }
+  }
+} catch (e) {
+  console.warn('⚠️ confirmed-by-form live check faalde:', e.message);
+}
+// END PATCH
+
 
   if (likely) {
     // Laat ook het 'likely domain' via onze centrale validatie gaan
@@ -966,7 +1487,7 @@ return res.status(200).json({ ignored: true, reason: 'no domain found' });
       let domainEnrichment = cachedDomainEnrichment || null;
 
       try {
-        domainEnrichment = await enrichFromDomain(company_domain, ipapi.lat, ipapi.lon);
+        domainEnrichment = await enrichFromDomain(company_domain);
         if (domainEnrichment?.domain) {
   const cleaned = cleanAndValidateDomain(
     domainEnrichment.domain,
@@ -1115,9 +1636,10 @@ const cachePayload = pruneEmpty({
   company_name,
   company_domain,
   location,
-  ip_postal_code: ipapi.zip || undefined,
-  ip_city: ipapi.city || undefined,
-  ip_country: ipapi.country || undefined,
+ip_postal_code: ip_postal_code || undefined,
+ip_city: ip_city || undefined,
+ip_country: ip_country || undefined,
+
 
   enriched_at: new Date().toISOString(),
   last_updated: new Date().toISOString(),
@@ -1143,7 +1665,11 @@ const cachePayload = pruneEmpty({
   category
 });
 
-if (!cached) {
+// 🔒 Manual lock? Sla helemaal niets op/over.
+if (manualLock && cached) {
+  console.log('🔒 manual_enrich=true → ipapi_cache niet overschrijven');
+  ipData = cached;
+} else if (!cached) {
   const { error: insertErr } = await supabaseAdmin
     .from('ipapi_cache')
     .insert(cachePayload);
