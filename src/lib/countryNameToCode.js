@@ -1,36 +1,206 @@
 // src/lib/countryNameToCode.js
-// Zet een land-naam (zoals "Netherlands" of "United States") om naar ISO-2 code ("nl", "us")
-// Case-insensitive: we normaliseren naar lowercase.
+// Zet een landnaam (NL/EN), alias of ISO-code om naar ISO-2 in lowercase (bijv. "nl", "us").
+// - Accent- en spatie-insensitive (Côte d’Ivoire == cote d ivoire)
+// - Herkent veel NL/EN aliassen (Holland, Verenigd Koninkrijk, VK, etc.)
+// - Herkent ISO-2 (gewoon normaliseren) en ISO-3 (via mapping)
+
+function stripDiacritics(str) {
+  return String(str)
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "");
+}
+
+const ISO3_TO_ISO2 = {
+  // EU + veelvoorkomend
+  nld:"nl", deu:"de", fra:"fr", gbr:"gb", irl:"ie", esp:"es", ita:"it", prt:"pt",
+  swe:"se", nor:"no", fin:"fi", dnk:"dk", pol:"pl", usa:"us", can:"ca", che:"ch",
+  aut:"at", cze:"cz", grc:"gr", tur:"tr", lux:"lu", isl:"is", hun:"hu", rou:"ro",
+  bgr:"bg", hrv:"hr", svn:"si", svk:"sk", lva:"lv", ltu:"lt", est:"ee", ukr:"ua",
+  rus:"ru", nld:"nl", bel:"be",
+
+  // Wereldwijd (selectie)
+  arg:"ar", bra:"br", mex:"mx", col:"co", per:"pe", chl:"cl", ven:"ve", ury:"uy",
+  bol:"bo", pry:"py",
+  aus:"au", nzl:"nz", jpn:"jp", kor:"kr", prk:"kp", chn:"cn", hkg:"hk", twn:"tw",
+  ind:"in", idn:"id", tha:"th", vnm:"vn", phl:"ph", mys:"my", sgp:"sg",
+  zaf:"za", egy:"eg", mar:"ma", dza:"dz", tun:"tn", nga:"ng", gha:"gh", ken:"ke",
+  eth:"et", tza:"tz", ugx:"ug", civ:"ci", gnb:"gw",
+  are:"ae", sau:"sa", qat:"qa", kwt:"kw", irq:"iq", irn:"ir", isr:"il", lbn:"lb",
+  jor:"jo",
+  arm:"am", aze:"az", geo:"ge", kaz:"kz", kgz:"kg", tkm:"tm", uzb:"uz",
+};
+
+const NAME_TO_ISO2 = {
+  // 🇳🇱 + 🇬🇧 aliassen (lowercase, accent/quote-insensitive)
+  // Nederland
+  "nederland":"nl","the netherlands":"nl","netherlands":"nl","holland":"nl",
+
+  // België
+  "belgie":"be","belgië":"be","belgium":"be",
+
+  // Duitsland
+  "duitsland":"de","germany":"de",
+
+  // Frankrijk
+  "frankrijk":"fr","france":"fr",
+
+  // Verenigd Koninkrijk (VK)
+  "verenigd koninkrijk":"gb","verenigd koninkrijk (vk)":"gb","vk":"gb",
+  "united kingdom":"gb","great britain":"gb","uk":"gb","engeland":"gb","england":"gb",
+
+  // Ierland
+  "ierland":"ie","ireland":"ie",
+
+  // Spanje
+  "spanje":"es","spain":"es",
+
+  // Italië
+  "italie":"it","italië":"it","italy":"it",
+
+  // Portugal
+  "portugal":"pt",
+
+  // Scandinavië
+  "zweden":"se","sweden":"se",
+  "noorwegen":"no","norway":"no",
+  "finland":"fi",
+
+  // Denemarken
+  "denemarken":"dk","denmark":"dk",
+
+  // Polen
+  "polen":"pl","poland":"pl",
+
+  // VS/Canada
+  "verenigde staten":"us","verenigde staten van amerika":"us","united states":"us","usa":"us","u.s.a.":"us",
+  "canada":"ca",
+
+  // Zwitserland/Oostenrijk
+  "zwitserland":"ch","switzerland":"ch",
+  "oostenrijk":"at","austria":"at",
+
+  // Tsjechië
+  "tsjechie":"cz","tsjechië":"cz","czech republic":"cz","czechia":"cz",
+
+  // Griekenland
+  "griekenland":"gr","greece":"gr","hellas":"gr","el":"gr",
+
+  // Turkije
+  "turkije":"tr","türkiye":"tr","turkey":"tr",
+
+  // Benelux + periferie
+  "luxemburg":"lu","luxembourg":"lu",
+  "ijsland":"is","iceland":"is",
+  "hongarije":"hu","hungary":"hu",
+  "roemenie":"ro","roemenië":"ro","romania":"ro",
+  "bulgarije":"bg","bulgaria":"bg",
+  "kroatie":"hr","kroatië":"hr","croatia":"hr",
+  "slovenie":"si","slovenië":"si","slovenia":"si",
+  "slowakije":"sk","slovakia":"sk",
+  "letland":"lv","latvia":"lv",
+  "litouwen":"lt","lithuania":"lt",
+  "estland":"ee","estonia":"ee",
+
+  // Balkan/Zuidoost
+  "servie":"rs","servië":"rs","serbia":"rs",
+  "bosnie en herzegovina":"ba","bosnië en herzegovina":"ba","bosnia and herzegovina":"ba",
+  "noord macedonie":"mk","noord-macedonie":"mk","north macedonia":"mk",
+  "albanie":"al","albanië":"al","albania":"al",
+  "montenegro":"me",
+
+  // Oost-Europa
+  "oekraine":"ua","oekraïne":"ua","ukraine":"ua",
+  "rusland":"ru","russia":"ru","russian federation":"ru",
+
+  // Azië
+  "china":"cn",
+  "japan":"jp",
+  "india":"in",
+  "indonesie":"id","indonesië":"id","indonesia":"id",
+  "viet nam":"vn","vietnam":"vn",
+  "korea, republic of":"kr","zuid-korea":"kr","south korea":"kr",
+  "korea, democratic people's republic of":"kp","noord-korea":"kp","north korea":"kp",
+  "taiwan":"tw","taiwan, province of china":"tw",
+  "hong kong":"hk",
+  "thailand":"th",
+  "filipijnen":"ph","philippines":"ph",
+  "maleisie":"my","maleisië":"my","malaysia":"my",
+  "singapore":"sg",
+
+  // Oceanië
+  "australie":"au","australië":"au","australia":"au",
+  "nieuw zeeland":"nz","nieuw-zeeland":"nz","new zealand":"nz",
+
+  // Afrika (selectie)
+  "zuid-afrika":"za","zuid afrika":"za","south africa":"za",
+  "egypte":"eg","egypt":"eg",
+  "marokko":"ma","morocco":"ma",
+  "algerije":"dz","algeria":"dz",
+  "nigeria":"ng","ghana":"gh","kenia":"ke","kenya":"ke","ethiopie":"et","ethiopië":"et","ethiopia":"et",
+  "tanzania":"tz",
+  "ivoorkust":"ci","cote d ivoire":"ci","côte d’ivoire":"ci","cote d’ivoire":"ci","côte d'ivoire":"ci","cote d'ivoire":"ci","ivory coast":"ci",
+
+  // Midden-Oosten (selectie)
+  "verenigde arabische emiraten":"ae","united arab emirates":"ae",
+  "saudi-arabie":"sa","saudi arabie":"sa","saudi-arabië":"sa","saudi arabia":"sa",
+  "qatar":"qa","kuwait":"kw",
+  "irak":"iq","iraq":"iq","iran":"ir",
+  "israel":"il","israël":"il","israel":"il",
+  "libanon":"lb","lebanon":"lb","jordanie":"jo","jordanië":"jo","jordan":"jo",
+
+  // Overig EU/Europa
+  "schotland":"gb","scotland":"gb","wales":"gb",
+  "faeröer":"fo","faeroer":"fo","faroe islands":"fo",
+
+  // Specials/gebieden die je in B2B tegenkomt
+  "curacao":"cw","curaçao":"cw",
+  "reunion":"re","réunion":"re",
+  "sint maarten (dutch part)":"sx",
+  "guernsey":"gg","jersey":"je","isle of man":"im",
+  "aland":"ax","åland":"ax","aland islands":"ax","åland islands":"ax",
+};
+
+// Publieke API
 export function countryNameToCode(name) {
   if (!name) return null;
-  const key = String(name).toLowerCase().trim();
 
-  const map = {
-    "afghanistan":"af","aland islands":"ax","albania":"al","algeria":"dz","american samoa":"as","andorra":"ad","angola":"ao","anguilla":"ai","antarctica":"aq","antigua and barbuda":"ag","argentina":"ar","armenia":"am","aruba":"aw","australia":"au","austria":"at","azerbaijan":"az",
-    "bahamas":"bs","bahrain":"bh","bangladesh":"bd","barbados":"bb","belarus":"by","belgium":"be","belize":"bz","benin":"bj","bermuda":"bm","bhutan":"bt","bolivia (plurinational state of)":"bo","bolivia":"bo","bonaire, sint eustatius and saba":"bq","bosnia and herzegovina":"ba","botswana":"bw","bouvet island":"bv","brazil":"br","british indian ocean territory":"io","brunei darussalam":"bn","brunei":"bn","bulgaria":"bg","burkina faso":"bf","burundi":"bi",
-    "cabo verde":"cv","cambodia":"kh","cameroon":"cm","canada":"ca","cayman islands":"ky","central african republic":"cf","chad":"td","chile":"cl","china":"cn","christmas island":"cx","cocos (keeling) islands":"cc","colombia":"co","comoros":"km","congo":"cg","congo, democratic republic of the":"cd","cook islands":"ck","costa rica":"cr","cote d'ivoire":"ci","côte d’ivoire":"ci","croatia":"hr","cuba":"cu","curaçao":"cw","curacao":"cw","cyprus":"cy","czechia":"cz","czech republic":"cz",
-    "denmark":"dk","djibouti":"dj","dominica":"dm","dominican republic":"do",
-    "ecuador":"ec","egypt":"eg","el salvador":"sv","equatorial guinea":"gq","eritrea":"er","estonia":"ee","eswatini":"sz","swaziland":"sz","ethiopia":"et",
-    "falkland islands (malvinas)":"fk","faroe islands":"fo","fiji":"fj","finland":"fi","france":"fr","french guiana":"gf","french polynesia":"pf","french southern territories":"tf",
-    "gabon":"ga","gambia":"gm","georgia":"ge","germany":"de","ghana":"gh","gibraltar":"gi","greece":"gr","greenland":"gl","grenada":"gd","guadeloupe":"gp","guam":"gu","guatemala":"gt","guernsey":"gg","guinea":"gn","guinea-bissau":"gw","guyana":"gy",
-    "haiti":"ht","heard island and mcdonald islands":"hm","holy see":"va","vatican city":"va","honduras":"hn","hong kong":"hk","hungary":"hu",
-    "iceland":"is","india":"in","indonesia":"id","iran, islamic republic of":"ir","iran":"ir","iraq":"iq","ireland":"ie","isle of man":"im","israel":"il","italy":"it",
-    "jamaica":"jm","japan":"jp","jersey":"je","jordan":"jo",
-    "kazakhstan":"kz","kenya":"ke","kiribati":"ki","korea, democratic people's republic of":"kp","north korea":"kp","korea, republic of":"kr","south korea":"kr","kuwait":"kw","kyrgyzstan":"kg",
-    "lao people's democratic republic":"la","laos":"la","latvia":"lv","lebanon":"lb","lesotho":"ls","liberia":"lr","libya":"ly","liechtenstein":"li","lithuania":"lt","luxembourg":"lu",
-    "macao":"mo","macau":"mo","madagascar":"mg","malawi":"mw","malaysia":"my","maldives":"mv","mali":"ml","malta":"mt","marshall islands":"mh","martinique":"mq","mauritania":"mr","mauritius":"mu","mayotte":"yt","mexico":"mx","micronesia (federated states of)":"fm","moldova, republic of":"md","moldova":"md","monaco":"mc","mongolia":"mn","montenegro":"me","montserrat":"ms","morocco":"ma","mozambique":"mz","myanmar":"mm","burma":"mm",
-    "namibia":"na","nauru":"nr","nepal":"np","netherlands":"nl","new caledonia":"nc","new zealand":"nz","nicaragua":"ni","niger":"ne","nigeria":"ng","niue":"nu","norfolk island":"nf","north macedonia":"mk","northern mariana islands":"mp","norway":"no",
-    "oman":"om",
-    "pakistan":"pk","palau":"pw","palestine, state of":"ps","palestine":"ps","panama":"pa","papua new guinea":"pg","paraguay":"py","peru":"pe","philippines":"ph","pitcairn":"pn","poland":"pl","portugal":"pt","puerto rico":"pr",
-    "qatar":"qa",
-    "reunion":"re","réunion":"re","romania":"ro","russian federation":"ru","russia":"ru","rwanda":"rw",
-    "saint barthelemy":"bl","saint barthélemy":"bl","saint helena, ascension and tristan da cunha":"sh","saint kitts and nevis":"kn","saint lucia":"lc","saint martin (french part)":"mf","saint pierre and miquelon":"pm","saint vincent and the grenadines":"vc","samoa":"ws","san marino":"sm","sao tome and principe":"st","são tomé and príncipe":"st","saudi arabia":"sa","senegal":"sn","serbia":"rs","seychelles":"sc","sierra leone":"sl","singapore":"sg","sint maarten (dutch part)":"sx","slovakia":"sk","slovenia":"si","solomon islands":"sb","somalia":"so","south africa":"za","south georgia and the south sandwich islands":"gs","south sudan":"ss","spain":"es","sri lanka":"lk","sudan":"sd","suriname":"sr","svalbard and jan mayen":"sj","sweden":"se","switzerland":"ch","syrian arab republic":"sy","syria":"sy",
-    "taiwan, province of china":"tw","taiwan":"tw","tajikistan":"tj","tanzania, united republic of":"tz","tanzania":"tz","thailand":"th","timor-leste":"tl","east timor":"tl","togo":"tg","tokelau":"tk","tonga":"to","trinidad and tobago":"tt","tunisia":"tn","turkey":"tr","türkiye":"tr","turkmenistan":"tm","turks and caicos islands":"tc","tuvalu":"tv",
-    "uganda":"ug","ukraine":"ua","united arab emirates":"ae","united kingdom":"gb","uk":"gb","great britain":"gb","united states":"us","usa":"us","united states minor outlying islands":"um","uruguay":"uy","uzbekistan":"uz",
-    "vanuatu":"vu","venezuela (bolivarian republic of)":"ve","venezuela":"ve","viet nam":"vn","vietnam":"vn","virgin islands (british)":"vg","british virgin islands":"vg","virgin islands (u.s.)":"vi","u.s. virgin islands":"vi",
-    "wallis and futuna":"wf","western sahara":"eh",
-    "yemen":"ye","zambia":"zm","zimbabwe":"zw"
-  };
+  // 0) normalize input
+  const raw = String(name).trim();
 
-  return map[key] || null;
+  // 1) ISO-2? → normaliseren
+  if (/^[A-Za-z]{2}$/.test(raw)) {
+    // UK → GB, EL → GR etc. (FlagCDN/ISO2 compat)
+    let c = raw.toLowerCase();
+    if (c === "uk") c = "gb";
+    if (c === "el") c = "gr";
+    return c;
+  }
+
+  // 2) ISO-3? → naar ISO-2
+  if (/^[A-Za-z]{3}$/.test(raw)) {
+    const iso3 = raw.toLowerCase();
+    if (ISO3_TO_ISO2[iso3]) return ISO3_TO_ISO2[iso3];
+  }
+
+  // 3) Naam (NL/EN), accent-insensitive + spaties normaliseren
+  const key = stripDiacritics(raw)
+    .toLowerCase()
+    .replace(/’/g, "'")
+    .replace(/[^a-z0-9\s\-'&().]/g, " ") // rare chars weg
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Directe hit?
+  if (NAME_TO_ISO2[key]) return NAME_TO_ISO2[key];
+
+  // Extra slimme aliases (korte varianten)
+  // - “u.s.” / “u.s.a.” → us
+  if (/^u\.?s\.?a?\.?$/.test(key)) return "us";
+  // - “u.k.” → gb
+  if (/^u\.?k\.?$/.test(key)) return "gb";
+
+  // Geen match
+  return null;
 }
+
+export default countryNameToCode;

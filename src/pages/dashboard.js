@@ -9,30 +9,25 @@ import { utcToZonedTime } from 'date-fns-tz';
 import { countryNameToCode } from "../lib/countryNameToCode";
 
 // Normaliseer landcode voor FlagCDN: twee letters, lowercase, met uitzonderingen.
+// ⛔️ Alleen domain_country gebruiken (géén ip_country fallback)
 function getFlagCodeFromLead(lead) {
-  // 1) Eerst proberen op basis van domain_country (naam → code via helper)
+  if (!lead?.domain_country) return null;
+
   let code = null;
-  if (lead?.domain_country) {
-    try {
-      code = countryNameToCode(lead.domain_country);
-    } catch {}
-  }
+  try {
+    // jouw robuuste mapping uit lib/countryNameToCode.js
+    code = countryNameToCode(lead.domain_country);
+  } catch {}
 
-  // 2) Anders fallback naar ip_country (zou al ISO-2 moeten zijn)
-  if (!code && lead?.ip_country) {
-    code = String(lead.ip_country);
-  }
+  // fallback: als helper niets geeft, gebruik raw waarde
+  if (!code) code = String(lead.domain_country || "").trim();
 
-  if (!code) return null;
+  // normaliseer
+  code = code.toLowerCase();
+  if (code === "uk") code = "gb"; // FlagCDN gebruikt gb
+  if (code === "el") code = "gr"; // el → gr
 
-  // 3) Normaliseer
-  code = String(code).trim().toLowerCase();
-
-  // 4) Uitzonderingen / mapping fixes:
-  if (code === 'uk') code = 'gb'; // FlagCDN gebruikt gb
-  if (code === 'el') code = 'gr'; // Sommige datasets gebruiken el voor Griekenland
-
-  // Extra sanity check: precies 2 letters (anders niet renderen)
+  // Alleen geldige ISO2 codes toestaan
   if (!/^[a-z]{2}$/.test(code)) return null;
 
   return code;
@@ -1308,18 +1303,21 @@ if (leadRating >= 80) {
   )}
 
   {/* Eén enkele bron voor de vlag (met normalisatie) */}
+{/* Eén enkele bron voor de vlag (met normalisatie) */}
 {(() => {
-  const flagCode = getFlagCodeFromLead(selectedCompanyData);
+  const flagCode = getFlagCodeFromLead(company); // ✅ gebruik company
   return flagCode ? (
     <img
       src={`https://flagcdn.com/w20/${flagCode}.png`}
-      alt={selectedCompanyData.domain_country || selectedCompanyData.ip_country || "land"}
+      alt={company.domain_country || flagCode.toUpperCase()}
       className="w-5 h-3 rounded shadow-sm"
-      title={selectedCompanyData.domain_country || selectedCompanyData.ip_country || ""}
+      title={company.domain_country || flagCode.toUpperCase()}
       onError={(e) => (e.currentTarget.style.display = "none")}
+      loading="lazy"
     />
   ) : null;
 })()}
+
 
 
   <h3 className="text-base font-semibold text-gray-800">
@@ -1496,24 +1494,20 @@ try {
   </span>
 
   {/* Vlag op basis van domain_country */}
-  {selectedCompanyData.domain_country && countryNameToCode(selectedCompanyData.domain_country) && (
+  {(() => {
+  const flagCode = getFlagCodeFromLead(selectedCompanyData); // gebruikt alleen domain_country
+  return flagCode ? (
     <img
-      src={`https://flagcdn.com/w20/${countryNameToCode(selectedCompanyData.domain_country)}.png`}
-      alt={selectedCompanyData.domain_country}
+      src={`https://flagcdn.com/w20/${flagCode}.png`}
+      alt={selectedCompanyData.domain_country || flagCode.toUpperCase()}
       className="w-5 h-3 rounded shadow-sm"
-      title={selectedCompanyData.domain_country}
+      title={selectedCompanyData.domain_country || flagCode.toUpperCase()}
+      onError={(e) => (e.currentTarget.style.display = "none")}
+      loading="lazy"
     />
-  )}
+  ) : null;
+})()}
 
-  {/* Fallback naar ip_country als domain_country ontbreekt */}
-  {!selectedCompanyData.domain_country && selectedCompanyData.ip_country && (
-    <img
-      src={`https://flagcdn.com/w20/${String(selectedCompanyData.ip_country).toLowerCase()}.png`}
-      alt={selectedCompanyData.ip_country}
-      className="w-5 h-3 rounded shadow-sm"
-      title={selectedCompanyData.ip_country}
-    />
-  )}
 
       <div className="relative">
         <button
