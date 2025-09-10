@@ -8,6 +8,36 @@ import { isToday, isYesterday, isWithinInterval, subDays } from 'date-fns';
 import { utcToZonedTime } from 'date-fns-tz';
 import { countryNameToCode } from "../lib/countryNameToCode";
 
+// Normaliseer landcode voor FlagCDN: twee letters, lowercase, met uitzonderingen.
+function getFlagCodeFromLead(lead) {
+  // 1) Eerst proberen op basis van domain_country (naam → code via helper)
+  let code = null;
+  if (lead?.domain_country) {
+    try {
+      code = countryNameToCode(lead.domain_country);
+    } catch {}
+  }
+
+  // 2) Anders fallback naar ip_country (zou al ISO-2 moeten zijn)
+  if (!code && lead?.ip_country) {
+    code = String(lead.ip_country);
+  }
+
+  if (!code) return null;
+
+  // 3) Normaliseer
+  code = String(code).trim().toLowerCase();
+
+  // 4) Uitzonderingen / mapping fixes:
+  if (code === 'uk') code = 'gb'; // FlagCDN gebruikt gb
+  if (code === 'el') code = 'gr'; // Sommige datasets gebruiken el voor Griekenland
+
+  // Extra sanity check: precies 2 letters (anders niet renderen)
+  if (!/^[a-z]{2}$/.test(code)) return null;
+
+  return code;
+}
+
 
 // Skeletons loading
 function FiltersSkeleton() {
@@ -1273,34 +1303,30 @@ if (leadRating >= 80) {
       src={`https://img.logo.dev/${company.company_domain}?token=pk_R_r8ley_R_C7tprVCpFASQ`}
       alt="logo"
       className="w-6 h-6 object-contain rounded"
-      onError={(e) => (e.target.style.display = "none")}
+      onError={(e) => (e.currentTarget.style.display = "none")}
     />
   )}
 
-  {/* Vlag op basis van domain_country (naam → code) */}
-  {company.domain_country && countryNameToCode(company.domain_country) && (
+  {/* Eén enkele bron voor de vlag (met normalisatie) */}
+{(() => {
+  const flagCode = getFlagCodeFromLead(selectedCompanyData);
+  return flagCode ? (
     <img
-      src={`https://flagcdn.com/w20/${countryNameToCode(company.domain_country)}.png`}
-      alt={company.domain_country}
+      src={`https://flagcdn.com/w20/${flagCode}.png`}
+      alt={selectedCompanyData.domain_country || selectedCompanyData.ip_country || "land"}
       className="w-5 h-3 rounded shadow-sm"
-      title={company.domain_country}
+      title={selectedCompanyData.domain_country || selectedCompanyData.ip_country || ""}
+      onError={(e) => (e.currentTarget.style.display = "none")}
     />
-  )}
+  ) : null;
+})()}
 
-  {/* Fallback: als domain_country ontbreekt, gebruik ip_country (ISO) */}
-  {!company.domain_country && company.ip_country && (
-    <img
-      src={`https://flagcdn.com/w20/${String(company.ip_country).toLowerCase()}.png`}
-      alt={company.ip_country}
-      className="w-5 h-3 rounded shadow-sm"
-      title={company.ip_country}
-    />
-  )}
 
   <h3 className="text-base font-semibold text-gray-800">
     {company.company_name}
   </h3>
 </div>
+
 
 
               {company.kvk_city && (
@@ -1752,7 +1778,6 @@ try {
 
 {/* ─────────────────────────────────────────────── */}
 
-
        {/* ─── Texteer-veld als openNoteFor gelijk is ───────────────── */}
         {openNoteFor === selectedCompanyData.company_domain && (
           <div className="mt-2 bg-gray-50 border border-gray-200 rounded-lg p-4">
@@ -1854,9 +1879,6 @@ body: JSON.stringify({ company_domain: openNoteFor, deleteAllForDomain: true }),
 
 </div>
 
-
-
-
             {/* OpenStreetMap */}
             <div className="w-full h-65 rounded-xl border border-gray-200 shadow overflow-hidden">
   {mapCoords ? (
@@ -1956,9 +1978,6 @@ body: JSON.stringify({ company_domain: openNoteFor, deleteAllForDomain: true }),
     </li>
   ))}
 </ul>
-
-
-
                 </div>
               )}
             </div>
@@ -1972,8 +1991,6 @@ body: JSON.stringify({ company_domain: openNoteFor, deleteAllForDomain: true }),
     </div>
   )}
 </div>
-
-
       </div>
     </div>
   );
