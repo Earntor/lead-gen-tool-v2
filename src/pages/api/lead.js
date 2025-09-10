@@ -16,10 +16,9 @@ import psl from 'psl';                         // eTLD+1 normalisatie
 import tls from 'node:tls';                    // SNI probing
 import { createRequire } from 'node:module';   // CJS import voor imghash
 const require = createRequire(import.meta.url);
-const imghash = require('imghash');
 // END PATCH
 
-
+export const config = { runtime: 'nodejs' };
 
 // Verwijder null/undefined en lege strings uit een payload
 function pruneEmpty(obj) {
@@ -972,6 +971,18 @@ try {
 
 // BEGIN PATCH: Favicon pHash (naast bestaande hash)
 async function getFaviconPHash(ip) {
+  // 3a) imghash lazy inladen (werkt in Next/Vercel bundling)
+  let imghashMod;
+  try {
+    // ESM dynamic import -> bundlers zien 'imghash' en nemen 'm mee
+    imghashMod = await import('imghash');
+  } catch (e) {
+    console.warn('imghash niet aanwezig — pHash stap wordt overgeslagen:', e.message);
+    return null; // netjes overslaan i.p.v. crashen
+  }
+  const imghash = imghashMod.default || imghashMod;
+
+  // 3b) favicon ophalen (gebruik http/https modules)
   function fetchBuffer(url, timeoutMs = 3000) {
     return new Promise((resolve) => {
       const proto = url.startsWith('https') ? require('node:https') : require('node:http');
@@ -984,7 +995,8 @@ async function getFaviconPHash(ip) {
       req.setTimeout(timeoutMs, () => { try { req.destroy(); } catch {} resolve(null); });
     });
   }
-  for (const scheme of ['https','http']) {
+
+  for (const scheme of ['https', 'http']) {
     const buf = await fetchBuffer(`${scheme}://${ip}/favicon.ico`);
     if (!buf || buf.length < 64) continue;
     try {
@@ -994,6 +1006,7 @@ async function getFaviconPHash(ip) {
   }
   return null;
 }
+
 
 try {
   const phash = await getFaviconPHash(ip_address);
