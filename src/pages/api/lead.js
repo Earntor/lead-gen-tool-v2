@@ -15,6 +15,7 @@ import punycode from 'node:punycode'; // voor IDN → ASCII normalisatie
 import psl from 'psl';                         // eTLD+1 normalisatie
 import tls from 'node:tls';                    // SNI probing
 import { createRequire } from 'node:module';   // CJS import voor imghash
+import net from 'node:net'; // service banner probes (SMTP/IMAP/POP3/FTP)
 const require = createRequire(import.meta.url);
 // END PATCH
 
@@ -30,6 +31,200 @@ function pruneEmpty(obj) {
   }
   return out;
 }
+
+// === Normalisatie helpers ===
+function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
+function truncate(s, n) { return (typeof s === 'string' && s.length > n) ? s.slice(0, n) : s || null; }
+function normText(s) { return (typeof s === 'string' ? s : '').trim() || null; }
+function normName(s) {
+  const t = normText(s);
+  if (!t) return null;
+  // collapse spaces, titlecase-achtig zonder te gek te doen
+  const clean = t.replace(/\s+/g, ' ').replace(/[^\p{L}\p{N}\-.'&() ]/gu, '');
+  return truncate(clean, 200);
+}
+function normEmail(s) {
+  const t = (s || '').trim().toLowerCase();
+  if (!t) return null;
+  // simpele sanity check
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(t)) return null;
+  return truncate(t, 255);
+}
+function normPhone(s) {
+  const t = (s || '').replace(/[^\d+]/g, '');
+  if (!t) return null;
+  // minimaal 6 cijfers om rommel te vermijden
+  const digits = t.replace(/\D/g, '');
+  if (digits.length < 6) return null;
+  return truncate(t, 32);
+}
+function normUrl(u) {
+  if (!u) return null;
+  let s = String(u).trim();
+  if (!s) return null;
+  if (!/^https?:\/\//i.test(s)) s = 'https://' + s.replace(/^\/\//, '');
+  try {
+    const url = new URL(s);
+    // geen localhost / IP’s voor social links etc.
+    if (/^(localhost|127\.0\.0\.1|\[::1\])$/i.test(url.hostname)) return null;
+    return truncate(url.toString(), 512);
+  } catch { return null; }
+}
+function sameHostOrApex(urlStr, domain) {
+  try {
+    const u = new URL(urlStr);
+    const host = u.hostname.toLowerCase();
+    return host === domain || host.endsWith('.' + domain);
+  } catch { return false; }
+}
+
+// --- CSP helpers ---
+function parseCspHosts(cspHeader) {
+  const out = new Set();
+  const s = (typeof cspHeader === 'string') ? cspHeader : Array.isArray(cspHeader) ? cspHeader.join('; ') : '';
+  if (!s) return [];
+  const directives = s.split(';');
+  for (const d of directives) {
+    const [name, ...rest] = d.trim().split(/\s+/);
+    if (!name) continue;
+    if (!/^(default-src|script-src|connect-src|img-src|media-src|frame-src|font-src|child-src|worker-src)$/i.test(name)) continue;
+    for (const token of rest) {
+      const t = token.trim().toLowerCase();
+      if (!t || t === 'self' || t === 'none' || t === 'unsafe-inline' || t === 'unsafe-eval') continue;
+      if (t === 'https:' || t === 'http:' || t.startsWith('data:') || t.startsWith('blob:') || t.startsWith('filesystem:')) continue;
+      let host = t.replace(/^https?:\/\//, '').replace(/^\*\./, '');
+      host = host.replace(/[^a-z0-9.-]/g, '');
+      if (host && host.includes('.')) out.add(host);
+    }
+  }
+  return [...out];
+}
+
+// --- Simple fetch text with timeout ---
+async function fetchTextFast(url, timeoutMs = 2500) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal, redirect: 'follow' });
+    if (!r.ok) return null;
+    return await r.text();
+  } catch { return null; }
+  finally { clearTimeout(t); }
+}
+
+// --- Sitemap/security.txt brute op IP ---
+async function bruteSitemapsOnIp(ip) {
+  const paths = ['sitemap.xml', 'sitemap_index.xml', 'sitemap/sitemap.xml', '.well-known/security.txt'];
+  const schemes = ['https', 'http'];
+  const found = new Set();
+  for (const scheme of schemes) {
+    for (const p of paths) {
+      const url = `${scheme}://${ip}/${p}`;
+      const txt = await fetchTextFast(url);
+      if (!txt) continue;
+      const re = /https?:\/\/([a-z0-9.-]+\.[a-z0-9-]{2,})/ig;
+      let m; while ((m = re.exec(txt))) { found.add(m[1].toLowerCase()); }
+    }
+  }
+  return [...found];
+}
+
+// --- Domeinen uit banners knippen ---
+function extractDomains(text) {
+  const out = new Set();
+  if (!text) return [];
+  const re = /([a-z0-9.-]+\.[a-z0-9-]{2,})/ig;
+  let m; while ((m = re.exec(text))) out.add(String(m[1]).toLowerCase());
+  return [...out];
+}
+
+// --- Social normalisatie: alleen echte platformen toestaan ---
+function filterSocial(url) {
+  const u = normUrl(url);
+  if (!u) return null;
+  try {
+    const host = new URL(u).hostname.toLowerCase();
+    if (/(^|\.)linkedin\.com$|(^|\.)facebook\.com$|(^|\.)instagram\.com$|(^|\.)twitter\.com$|(^|\.)x\.com$/.test(host)) {
+      return u;
+    }
+  } catch {}
+  return null;
+}
+
+// --- Service banner probing (SMTP/IMAP/POP3/FTP) ---
+async function probeServiceBanners(ip) {
+  const PORTS = [
+    { port: 25,  tls: false, verb: 'EHLO', payload: 'EHLO probe.local\r\n' },
+    { port: 587, tls: false, verb: 'EHLO', payload: 'EHLO probe.local\r\n' },
+    { port: 2525,tls: false, verb: 'EHLO', payload: 'EHLO probe.local\r\n' },
+    { port: 21,  tls: false, verb: 'FEAT', payload: 'FEAT\r\n' },
+    { port: 110, tls: false, verb: 'QUIT', payload: 'QUIT\r\n' },
+    { port: 995, tls: true,  verb: 'QUIT', payload: 'QUIT\r\n' },
+    { port: 143, tls: false, verb: 'CAPA', payload: 'a1 CAPABILITY\r\n' },
+    { port: 993, tls: true,  verb: 'CAPA', payload: 'a1 CAPABILITY\r\n' },
+  ];
+
+  const results = [];
+  const allDomains = new Set();
+
+  for (const cfg of PORTS) {
+    const { port, tls: useTls, verb, payload } = cfg;
+
+    const banner = await new Promise((resolve) => {
+      let sock;
+      let buf = '';
+      const done = (s) => { try { sock && sock.destroy(); } catch {} resolve(s); };
+
+      const onData = (chunk) => {
+        buf += chunk.toString('utf8');
+        if (buf.length > 2048) done(buf.slice(0, 2048));
+      };
+
+      const onReady = () => {
+        try { sock.write(payload); } catch {}
+        setTimeout(() => done(buf), 600);
+      };
+
+      const opts = { host: ip, port, timeout: 2200 };
+      sock = useTls
+        ? tls.connect({ ...opts, rejectUnauthorized: false }, onReady)
+        : net.connect(opts, onReady);
+
+      sock.setTimeout(2200, () => done(buf));
+      sock.on('data', onData);
+      sock.on('error', () => done(buf));
+      sock.on('end',  () => done(buf));
+      sock.on('close',() => done(buf));
+    });
+
+    const snippet = (banner || '').slice(0, 2048);
+    const rawDomains = extractDomains(snippet);
+    const cleaned = [];
+    for (const d of rawDomains) {
+      const c = cleanAndValidateDomain(d, ENRICHMENT_SOURCES.SERVICE_BANNER, null, null, null, ip, null, null);
+      if (c) { cleaned.push(c); allDomains.add(c); }
+    }
+
+    try {
+      await supabaseAdmin.from('service_banner_log').insert({
+        ip_address: ip,
+        port,
+        tls: useTls,
+        verb,
+        banner_snippet: snippet || null,
+        matched_domains: cleaned.length ? cleaned : null
+      });
+    } catch (e) {
+      console.warn('⚠️ service_banner_log insert faalde:', e.message);
+    }
+
+    results.push({ port, tls: useTls, verb, snippet, domains: cleaned });
+  }
+
+  return { results, allDomains: [...allDomains] };
+}
+
+
 
 // Bekende consumenten-ISPs
 const KNOWN_ISPS = [
@@ -48,7 +243,9 @@ const ENRICHMENT_SOURCES = {
   SCRAPE: 'website_scrape',
   ISP_BASELINE: 'isp_baseline',
   IPAPI_BASELINE: 'ipapi_baseline',
-  CACHE_REUSE: 'cache_reuse'
+  CACHE_REUSE: 'cache_reuse',
+  SERVICE_BANNER: 'service_banner'
+
 };
 
 // confidence reason gelijktrekken
@@ -63,9 +260,10 @@ const CONFIDENCE_REASONS = {
   SCRAPE: 'Website scraping',
   ISP_BASELINE: 'Baseline ISP-gegevens',
   IPAPI_BASELINE: 'Baseline IP-API-gegevens',
-  CACHE_REUSE: 'Herbruikte domeinverrijking uit cache'
-};
+  CACHE_REUSE: 'Herbruikte domeinverrijking uit cache',
+    SERVICE_BANNER: 'service_banner'
 
+};
 
 // Hostingproviders
 const HOSTING_DOMAINS = [
@@ -77,7 +275,7 @@ const HOSTING_DOMAINS = [
 const EXTRA_BLACKLIST_DOMAINS = [
   'kpn.net', 'ziggo.nl', 'glasoperator.nl', 't-mobilethuis.nl', 'chello.nl',
   'dynamic.upc.nl', 'vodafone.nl', 'versatel.nl', 'msn.com', 'akamaitechnologies.com',
-  'telenet.be', 'myaisfibre.com', 'filterplatform.nl', 'xs4all.nl', 'home.nl',
+  'telenet.be', 'myaisfibre.com', 'filterplatform.nl', 'xs4all.nl', 'home.nl', 'digimobil.es', 'solcon.nl', 'avatel.es',
   'weserve.nl', 'crawl.cloudflare.com', 'kabelnoord.net', 'googlebot.com','client.t-mobilethuis.nl', 'routit.net', 'starlinkisp.net', 'baremetal.scw.cloud','fbsv.net','sprious.com', 'your-server.de', 'vodafone.pt', 'ip.telfort.nl', 'amazonaws.com', 'dataproviderbot.com', 'apple.com', 'belgacom.be' 
 ];
 
@@ -107,8 +305,6 @@ async function logBlockedSignal({
     console.error('❌ ignored_ip_log insert (blocked) faalde:', error.message, error.details || '');
   }
 }
-
-
 
 // Kleine helpers
 const validNum = (v) => typeof v === 'number' && !Number.isNaN(v);
@@ -196,6 +392,253 @@ function cleanAndValidateDomain(domain, source, asname, org_id, page_url, ip_add
 // END PATCH
 
 
+// === ALT-HTTP HELPERS (NIEUW) ===
+// Poorten die we extra proberen naast 80/443
+const ALT_HTTP_PORTS = [8080, 8443, 8000, 8888, 3000, 5000, 7001, 9443];
+const HTTPS_PORTS = new Set([443, 8443, 9443]);
+
+// Kleine fetch naar IP:PORT met korte timeout en simpele domeinextractie
+async function httpFetchIpPort(ip, port, timeoutMs = 3000) {
+  const isHttps = HTTPS_PORTS.has(port);
+  const url = `${isHttps ? 'https' : 'http'}://${ip}:${port}/`;
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, redirect: 'follow' });
+    const headers = Object.fromEntries([...res.headers.entries()].map(([k,v]) => [k.toLowerCase(), v]));
+    let raw_html = '';
+    try { raw_html = await res.text(); } catch { raw_html = ''; }
+
+    // Heuristieken om een domein te vinden
+    let extracted_domain = null;
+    let confidence = 0.6;
+    let confidence_reason = 'HTTP alt-port';
+
+    // 1) Redirect Location → host
+    const loc = headers['location'] || null;
+    if (loc && !extracted_domain) {
+      try {
+        extracted_domain = new URL(loc, url).hostname;
+        confidence = 0.65;
+        confidence_reason = 'HTTP alt-port redirect';
+      } catch {}
+    }
+
+    // 2) HTML canonical/og:url → host
+    if (!extracted_domain && raw_html) {
+      const canon = /<link[^>]+rel=["']canonical["'][^>]*href=["']([^"']+)/i.exec(raw_html);
+      const og    = /<meta[^>]+property=["']og:url["'][^>]*content=["']([^"']+)/i.exec(raw_html);
+      const h = (canon?.[1] || og?.[1]) || null;
+      if (h) {
+        try {
+          extracted_domain = new URL(h, url).hostname;
+          confidence = 0.62;
+          confidence_reason = 'HTTP alt-port canonical/og';
+        } catch {}
+      }
+    }
+
+    return {
+      success: true,
+      port,
+      headers,
+      raw_html,
+      redirect_location: loc || null,
+      extracted_domain: extracted_domain || null,
+      confidence,
+      confidence_reason
+    };
+  } catch (e) {
+    return {
+      success: false,
+      port,
+      error_message: e.message || 'http alt-port error'
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Loop over de alt-poorten; log altijd; stop bij eerste sterke hit
+async function tryHttpOnAltPorts(ip) {
+  for (const port of ALT_HTTP_PORTS) {
+    const r = await httpFetchIpPort(ip, port);
+
+    // Altijd loggen in http_fetch_log (inclusief 'port')
+    await supabaseAdmin.from('http_fetch_log').insert({
+      ip_address: ip,
+      fetched_at: new Date().toISOString(),
+      success: r.success,
+      port: r.port,
+      extracted_domain: r.extracted_domain || null,
+      enrichment_source: ENRICHMENT_SOURCES.HTTP_FETCH,
+      confidence: r.confidence || null,
+      confidence_reason: r.confidence_reason || null,
+      redirect_location: r.redirect_location || null,
+      headers: r.headers || null,
+      html_snippet: r.raw_html ? r.raw_html.slice(0, 5000) : null,
+      error_message: r.error_message || null
+    });
+
+    // Stop zodra we een domein te pakken hebben
+    if (r.success && r.extracted_domain) {
+      return r;
+    }
+  }
+  return null;
+}
+
+
+// === CNAME chain helper (NIEUW) ===
+// Volgt CNAME-records tot maxDepth. Returnt { chain: [..], terminal, success, error }
+async function resolveCnameChain(seed, maxDepth = 5) {
+  const seen = new Set();
+  const chain = [];
+  let current = stripSubdomain(seed);
+  if (!current) return { chain, terminal: null, success: false, error: 'invalid seed' };
+
+  for (let i = 0; i < maxDepth; i++) {
+    if (seen.has(current)) {
+      return { chain, terminal: current, success: false, error: 'loop detected' };
+    }
+    seen.add(current);
+    chain.push(current);
+
+    // Probeer CNAME voor 'current'
+    let cnames = [];
+    try {
+      cnames = await dns.resolveCname(current);
+    } catch {
+      // geen CNAME → klaar (terminal is current)
+      return { chain, terminal: current, success: true, error: null };
+    }
+
+    const nxt = cnames?.[0] ? stripSubdomain(cnames[0]) : null;
+    if (!nxt || nxt === current) {
+      return { chain, terminal: current, success: true, error: null };
+    }
+    current = nxt;
+  }
+  return { chain, terminal: current, success: true, error: 'maxDepth reached' };
+}
+
+// === A/AAAA resolving helpers (NIEUW) ===
+
+// resolve A + AAAA en check of één van de adressen gelijk is aan het target IP (v4/v6 safe)
+async function domainResolvesToIp(domain, ip) {
+  const matches = new Set();
+  const target = String(ip).toLowerCase();
+
+  const tryResolve = async (fn) => {
+    try {
+      const arr = await fn(domain);
+      for (const a of (arr || [])) {
+        const v = typeof a === 'string' ? a : (a?.address || a);
+        if (!v) continue;
+        if (String(v).toLowerCase() === target) matches.add(target);
+      }
+    } catch {}
+  };
+
+  await tryResolve(dns.resolve4);
+  await tryResolve(dns.resolve6);
+
+  return matches.size > 0;
+}
+
+// Check een beperkte set kandidaten (cap voor performance) en maak een kleine classificatie
+async function computeCohostingHeuristics(ip, candidateDomains, maxCheck = 30) {
+  // 1) fdns_lookup count (snapshot)
+  let fdnsTotal = 0;
+  try {
+    const { count } = await supabaseAdmin
+      .from('fdns_lookup')
+      .select('*', { count: 'exact', head: true })
+      .eq('ip', ip);
+    fdnsTotal = typeof count === 'number' ? count : 0;
+  } catch {}
+
+  // 2) Live A/AAAA check over kandidaten (apex / uniek / gelimiteerd)
+  const unique = Array.from(new Set((candidateDomains || []).filter(Boolean))).slice(0, maxCheck);
+  const liveMatches = [];
+  for (const d of unique) {
+    const ok = await domainResolvesToIp(d, ip);
+    if (ok) liveMatches.push(d);
+  }
+
+  // 3) Classificatie op basis van fdns_total
+  let classification = 'unknown';
+  if (fdnsTotal >= 50) classification = 'heavy-multitenant';
+  else if (fdnsTotal >= 10) classification = 'moderate';
+  else classification = 'low';
+
+  return {
+    fdnsTotal,
+    liveChecked: unique.length,
+    liveMatchCount: liveMatches.length,
+    liveMatches,
+    classification
+  };
+}
+
+// Pas kleine penalty/boost toe op domainSignals (pure heuristiek, voorzichtig!)
+function applyCohostingAdjustments(domainSignals, heur) {
+  if (!Array.isArray(domainSignals) || domainSignals.length === 0) return { adjusted: domainSignals, applied: 0, reason: 'no signals' };
+
+  // Basisregelset — heel kleine nudges
+  let delta = 0;
+  let reason = 'no change';
+
+  if (heur.classification === 'heavy-multitenant') {
+    // veel co-hosting => downgrade "zachte" bronnen een tikje
+    delta = -0.07;
+    reason = 'heavy multitenant penalty';
+  } else if (heur.classification === 'moderate') {
+    delta = -0.04;
+    reason = 'moderate multitenant penalty';
+  } else if (heur.classification === 'low' && heur.liveMatchCount > 0) {
+    // weinig co-hosting + minstens 1 live match => mini-boost op hardere bronnen
+    delta = +0.03;
+    reason = 'low multitenant boost (live matches present)';
+  }
+
+  if (delta === 0) return { adjusted: domainSignals, applied: 0, reason };
+
+  // Bronnen die we penaliseren of boosten
+  const SOFT_SOURCES = new Set(['http_fetch', 'favicon_hash', 'host_header', 'website_scrape']);
+  const HARD_SOURCES = new Set(['reverse_dns', 'tls_cert', 'final_likely']);
+
+  const out = domainSignals.map(sig => {
+    const s = { ...sig };
+
+    // Alleen aanpassen als confidence numeriek is
+    if (typeof s.confidence === 'number' && !Number.isNaN(s.confidence)) {
+      let doAdjust = false;
+
+      if (delta < 0) {
+        // Penalty alleen voor "soft" bronnen
+        if (SOFT_SOURCES.has(String(s.source))) doAdjust = true;
+      } else {
+        // Boost alleen voor "hard" bronnen, en als het domein in liveMatches zit
+        if (HARD_SOURCES.has(String(s.source)) && heur.liveMatches.includes(s.domain)) doAdjust = true;
+      }
+
+      if (doAdjust) {
+        const newVal = Math.max(0.05, Math.min(0.95, s.confidence + delta));
+        if (newVal !== s.confidence) {
+          s.confidence = newVal;
+          s.confidence_reason = (s.confidence_reason ? s.confidence_reason + ' + ' : '') + reason;
+        }
+      }
+    }
+
+    return s;
+  });
+
+  return { adjusted: out, applied: delta, reason };
+}
 
 
 async function calculateConfidenceByFrequency(ip, domain) {
@@ -544,6 +987,83 @@ domainSignals.push(signal);
       });
     }
 
+// === PTR-candidate expansion (NIEUW) ===
+// Bouw extra kandidaten op basis van RDNS: apex + www.apex
+let ptrGenerated = [];
+try {
+  if (reverseDnsDomain) {
+    // 1) schoonmaken → eTLD+1 (apex)
+    const cleaned = stripSubdomain(reverseDnsDomain);  // bv. mail01.acme.nl -> acme.nl (stript service-labels)
+    const parsed = psl.parse(cleaned || '');
+    const apex = parsed && !parsed.error ? parsed.domain : null;
+
+    // 2) maak de 2 kandidaten en valideer ze meteen
+    if (apex) {
+      for (const cand of [apex, `www.${apex}`]) {
+        const v = cleanAndValidateDomain(
+          cand,
+          ENRICHMENT_SOURCES.RDNS,
+          asname,
+          org_id,
+          page_url,
+          ip_address,
+          confidence,
+          confidence_reason
+        );
+        if (v) ptrGenerated.push(v);
+      }
+    }
+  }
+} catch (e) {
+  console.warn('⚠️ PTR-candidate expansion faalde:', e.message);
+}
+
+// === CNAME chain discovery (NIEUW) ===
+// We nemen als seeds: de PTR-afgeleiden + (indien later niet beschikbaar) voegen we fdns in bij de host-probe stap
+let cnameDerived = [];
+try {
+  const seeds = new Set(ptrGenerated || []);
+  for (const seed of seeds) {
+    const out = await resolveCnameChain(seed, 6);
+    // Log altijd (audit)
+    await supabaseAdmin.from('cname_chain_log').insert({
+      ip_address,
+      seed_domain: seed,
+      chain: out.chain?.length ? out.chain : null,
+      terminal: out.terminal || null,
+      depth: Array.isArray(out.chain) ? out.chain.length : null,
+      success: !!out.success,
+      error_message: out.error || null
+    });
+
+    // Als terminaldomein bruikbaar is, normaliseer/valideer en voeg toe als kandidaat + licht signaal
+    if (out.terminal) {
+      const validated = cleanAndValidateDomain(
+        out.terminal,
+        ENRICHMENT_SOURCES.HOST_HEADER,   // CNAME helpt vooral voor HTTP host proef
+        asname, org_id, page_url, ip_address,
+        confidence, confidence_reason
+      );
+      if (validated) {
+        cnameDerived.push(validated);
+
+        // licht signaal — CNAME ≠ keiharde bevestiging, maar wel nuttig
+        const sig = await logDomainSignal({
+          ip_address,
+          domain: validated,
+          source: ENRICHMENT_SOURCES.HOST_HEADER,
+          confidence: 0.52,
+          confidence_reason: 'CNAME terminal'
+        });
+        if (sig) domainSignals.push(sig);
+      }
+    }
+  }
+} catch (e) {
+  console.warn('⚠️ CNAME chain discovery faalde:', e.message);
+}
+
+
 // 🔐 Stap 3 – TLS-certificaatinspectie → SIGNAL (audit-proof)
 try {
   const certInfo = await getTlsCertificateFromIp(ip_address);
@@ -830,6 +1350,72 @@ try {
       });
       if (sig) domainSignals.push(sig);
     }
+    // 3d) CSP header(s) → hosts
+    try {
+      const cspHeader = hdrs['content-security-policy'] || hdrs['content-security-policy-report-only'] || null;
+      let cspHosts = [];
+      if (cspHeader) {
+        const raw = parseCspHosts(cspHeader);
+        for (const h of raw) {
+          const cand = cleanAndValidateDomain(
+            h, ENRICHMENT_SOURCES.HTTP_FETCH, asname, org_id, page_url, ip_address, confidence, confidence_reason
+          );
+          if (!cand) continue;
+          cspHosts.push(cand);
+          const sig = await logDomainSignal({
+            ip_address,
+            domain: cand,
+            source: ENRICHMENT_SOURCES.HTTP_FETCH,
+            confidence: 0.54,
+            confidence_reason: 'CSP host'
+          });
+          if (sig) domainSignals.push(sig);
+        }
+      }
+
+      // 3e) Sitemap/security.txt brute → hosts
+      let bruteHosts = [];
+      try {
+        const rawHosts = await bruteSitemapsOnIp(ip_address);
+        for (const h of rawHosts) {
+          const cand = cleanAndValidateDomain(
+            h, ENRICHMENT_SOURCES.HTTP_FETCH, asname, org_id, page_url, ip_address, confidence, confidence_reason
+          );
+          if (!cand) continue;
+          bruteHosts.push(cand);
+          const sig = await logDomainSignal({
+            ip_address,
+            domain: cand,
+            source: ENRICHMENT_SOURCES.HTTP_FETCH,
+            confidence: 0.56,
+            confidence_reason: 'Sitemap/security.txt host'
+          });
+          if (sig) domainSignals.push(sig);
+        }
+      } catch (e) {
+        console.warn('⚠️ sitemap brute faalde:', e.message);
+      }
+
+      // Hintveld uitbreiden in dezelfde http_fetch_log rij
+      if (httpFetchInsertId) {
+        await supabaseAdmin.from('http_fetch_log')
+          .update({
+            hints: {
+              set_cookie_domains: setCookieDomains.length ? setCookieDomains : null,
+              allow_origins: allowOrigins.length ? allowOrigins : null,
+              canonical_host: canonicalHost || null,
+              og_url_host: ogHost || null,
+              manifest_url: manifestUrl || null,
+              sitemap_urls: sitemapUrls.length ? sitemapUrls : null,
+              csp_hosts: cspHosts.length ? [...new Set(cspHosts)] : null,
+              sitemap_bruteforce_hosts: bruteHosts.length ? [...new Set(bruteHosts)] : null
+            }
+          })
+          .eq('id', httpFetchInsertId);
+      }
+    } catch (e) {
+      console.warn('⚠️ CSP/sitemap hints verwerken faalde:', e.message);
+    }
   } catch (hintErr) {
     console.warn('⚠️ header/html hints parsing faalde:', hintErr.message);
   }
@@ -854,6 +1440,35 @@ try {
     success: false,
     error_message: e.message || 'onbekende fout'
   });
+}
+
+// 🔁 ALT-HTTP POORTEN (NIEUW) — ná de gewone HTTP fetch
+try {
+  const alt = await tryHttpOnAltPorts(ip_address);
+  if (alt?.extracted_domain) {
+    const cleaned = cleanAndValidateDomain(
+      alt.extracted_domain,
+      ENRICHMENT_SOURCES.HTTP_FETCH,
+      asname,
+      org_id,
+      page_url,
+      ip_address,
+      confidence,
+      confidence_reason
+    );
+    if (cleaned) {
+      const sig = await logDomainSignal({
+        ip_address,
+        domain: cleaned,
+        source: ENRICHMENT_SOURCES.HTTP_FETCH,
+        confidence: alt.confidence || 0.62,
+        confidence_reason: alt.confidence_reason || 'HTTP alt-port'
+      });
+      if (sig) domainSignals.push(sig);
+    }
+  }
+} catch (e) {
+  console.warn('⚠️ ALT-HTTP ports probe faalde:', e.message);
 }
 
 
@@ -1072,6 +1687,24 @@ try {
 }
 // END PATCH
 
+// 🛰️ Stap — Service banner probing → SIGNALS
+try {
+  const banners = await probeServiceBanners(ip_address);
+  if (banners?.allDomains?.length) {
+    for (const d of banners.allDomains) {
+      const sig = await logDomainSignal({
+        ip_address,
+        domain: d,
+        source: ENRICHMENT_SOURCES.SERVICE_BANNER,
+        confidence: 0.58,
+        confidence_reason: CONFIDENCE_REASONS.SERVICE_BANNER
+      });
+      if (sig) domainSignals.push(sig);
+    }
+  }
+} catch (e) {
+  console.warn('⚠️ service banner probing faalde:', e.message);
+}
 
 
     // 🧪 Stap 8 – Host header probing → SIGNAL
@@ -1081,7 +1714,15 @@ try {
     .select('domain')
     .eq('ip', ip_address);
 
-  const domainsToTry = fdnsResults?.map(r => r.domain).filter(Boolean).slice(0, 5);
+const domainsToTry = [
+  ...(fdnsResults?.map(r => r.domain).filter(Boolean) || []),
+  ...ptrGenerated,
+  ...cnameDerived
+]
+  .filter(Boolean)
+  .filter((v, i, a) => a.indexOf(v) === i) // dedupe
+  .slice(0, 7); // een tikje ruimer nu we meer bronnen hebben
+
 
   if (domainsToTry?.length > 0) {
     const result = await probeHostHeader(ip_address, domainsToTry);
@@ -1129,6 +1770,20 @@ if (Array.isArray(result?.trials) && result.trials.length > 0) {
     content_snippet: (result?.html_snippet || result?.snippet || result?.reason || null)?.slice(0, 500) || null,
     success: !!cleanedDomain
   });
+// Extra logging: markeer PTR-gegenereerde testen (generated=true)
+try {
+  if (ptrGenerated?.length) {
+    const rows = ptrGenerated.map(d => ({
+      ip_address,
+      tested_domain: d,
+      generated: true,
+      success: false  // puur markering; echte successes zijn al apart gelogd
+    }));
+    await supabaseAdmin.from('host_probe_log').insert(rows);
+  }
+} catch (e) {
+  console.warn('⚠️ host_probe_log generated-marking faalde:', e.message);
+}
 }
 }
 
@@ -1139,8 +1794,9 @@ if (Array.isArray(result?.trials) && result.trials.length > 0) {
 
 // 🔐 EXTRA stap — TLS SNI probe (shared IP bevestigen)
 // Plakken: ná host header probing, vóór "✅ Stap 9 – Combineer signalen"
+// 🔐 EXTRA stap — TLS SNI probe (ports 443/8443/9443)
 try {
-  // 1) Kandidaten verzamelen: fdns_lookup + alles wat we al als signalen zagen
+  // 1) Kandidaten: fdns_lookup + alle domeinen uit signalen
   const { data: fdnsResults } = await supabaseAdmin
     .from('fdns_lookup')
     .select('domain')
@@ -1148,9 +1804,11 @@ try {
 
   const seed = (fdnsResults || []).map(r => r.domain).filter(Boolean);
   const fromSignals = domainSignals.map(s => s.domain).filter(Boolean);
-  const sniCandidates = [...new Set([...seed, ...fromSignals])].slice(0, 10); // max 10, hou 'm snel
+  const sniCandidates = [...new Set([...seed, ...fromSignals])].slice(0, 10); // max 10 voor snelheid
 
-  // 2) Per kandidaat SNI-handshake doen naar dit IP
+  // ✅ Nieuw: naast 443 ook 8443 en 9443 proberen
+  const SNI_PORTS = [443, 8443, 9443];
+
   for (const cand of sniCandidates) {
     const tested = cleanAndValidateDomain(
       cand,
@@ -1160,68 +1818,74 @@ try {
     );
     if (!tested) continue;
 
-    const cert = await new Promise((resolve) => {
-      const socket = tls.connect({
-        host: ip_address,
-        port: 443,
-        servername: tested,          // ← SNI = kandidaat domein
-        rejectUnauthorized: false,   // we willen alleen het cert lezen
-        ALPNProtocols: []            // geen ALPN nodig
-      }, () => {
-        const c = socket.getPeerCertificate(true);
-        const info = {
-          commonName: c?.subject?.CN || null,
-          subjectAltName: c?.subjectaltname || null
-        };
-        socket.end();
-        resolve(info);
+    for (const port of SNI_PORTS) {
+      // 2) TLS-handshake met SNI = tested (het kandidaat-domein)
+      const cert = await new Promise((resolve) => {
+        const socket = tls.connect({
+          host: ip_address,
+          port,
+          servername: tested,          // ← SNI
+          rejectUnauthorized: false,   // alleen cert lezen
+          ALPNProtocols: []            // geen ALPN nodig
+        }, () => {
+          const c = socket.getPeerCertificate(true);
+          const info = {
+            commonName: c?.subject?.CN || null,
+            subjectAltName: c?.subjectaltname || null
+          };
+          socket.end();
+          resolve(info);
+        });
+        socket.setTimeout(3000, () => { try { socket.destroy(); } catch {} resolve(null); });
+        socket.on('error', () => resolve(null));
       });
-      socket.setTimeout(3000, () => { try { socket.destroy(); } catch {} resolve(null); });
-      socket.on('error', () => resolve(null));
-    });
 
-    // 3) Checkt of het cert dit domein dekt (CN of SAN)
-    let covers = false;
-    if (cert) {
-      const cn = cert.commonName?.toLowerCase();
-      const san = cert.subjectAltName?.toLowerCase() || '';
-      const sanList = san.split(/,\s*/).map(x => x.replace(/^dns:/, ''));
+      // 3) Check of cert dit domein dekt (CN of SAN)
+      let covers = false;
+      if (cert) {
+        const cn = cert.commonName?.toLowerCase();
+        const san = cert.subjectAltName?.toLowerCase() || '';
+        const sanList = san.split(/,\s*/).map(x => x.replace(/^dns:/, ''));
 
-      if (cn && (cn === tested || cn.endsWith(`.${tested}`) || tested.endsWith(`.${cn}`))) covers = true;
-      if (!covers && sanList.length) {
-        covers = sanList.some(d => d === tested || d.endsWith(`.${tested}`) || tested.endsWith(`.${d}`));
+        if (cn && (cn === tested || cn.endsWith(`.${tested}`) || tested.endsWith(`.${cn}`))) covers = true;
+        if (!covers && sanList.length) {
+          covers = sanList.some(d => d === tested || d.endsWith(`.${tested}`) || tested.endsWith(`.${d}`));
+        }
       }
-    }
 
-    // 4) Log altijd in tls_log; als het dekt, markeer used + confidence
-    await supabaseAdmin.from('tls_log').insert({
-      ip_address,
-      tested_domain: tested,
-      sni: true,
-      common_name: cert?.commonName || null,
-      subject_alt_name: cert?.subjectAltName || null,
-      extracted_domain: covers ? tested : null,
-      used: !!covers,
-      confidence: covers ? 0.75 : null,
-      confidence_reason: covers ? 'TLS SNI confirm' : null,
-      enrichment_source: ENRICHMENT_SOURCES.TLS
-    });
-
-    // 5) Bij een hit: extra signaal toevoegen
-    if (covers) {
-      const sig = await logDomainSignal({
+      // 4) Altijd loggen in tls_log (inclusief poort en tested_domain)
+      await supabaseAdmin.from('tls_log').insert({
         ip_address,
-        domain: tested,
-        source: ENRICHMENT_SOURCES.TLS,
-        confidence: 0.75,
-        confidence_reason: 'TLS SNI confirm'
+        port,
+        tested_domain: tested,
+        sni: true,
+        common_name: cert?.commonName || null,
+        subject_alt_name: cert?.subjectAltName || null,
+        extracted_domain: covers ? tested : null,
+        used: !!covers,
+        confidence: covers ? 0.75 : null,
+        confidence_reason: covers ? 'TLS SNI confirm' : null,
+        enrichment_source: ENRICHMENT_SOURCES.TLS
       });
-      if (sig) domainSignals.push(sig);
+
+      // 5) Bij hit → signaal toevoegen en niet ook nog andere poorten voor deze kandidaat proberen
+      if (covers) {
+        const sig = await logDomainSignal({
+          ip_address,
+          domain: tested,
+          source: ENRICHMENT_SOURCES.TLS,
+          confidence: 0.75,
+          confidence_reason: 'TLS SNI confirm'
+        });
+        if (sig) domainSignals.push(sig);
+        break; // volgende kandidaat
+      }
     }
   }
 } catch (e) {
   console.warn('⚠️ TLS SNI probing faalde:', e.message);
 }
+
 
 // BEGIN PATCH: helper voor email-DNS hints
 async function emailDnsHints(domain, ip) {
@@ -1243,6 +1907,9 @@ async function emailDnsHints(domain, ip) {
         const a = await dns.resolve(h);
         if (a?.map(String).includes(ip)) { mxPointsToIp = true; break; }
       } catch {}
+      try { const a = await dns.resolve4(h); if (a?.map(String).includes(ip)) mxPointsToIp = true; } catch {}
+try { const a6 = await dns.resolve6(h); if (a6?.map(String).includes(ip)) mxPointsToIp = true; } catch {}
+
     }
   } catch {}
   let scoreBoost = 0;
@@ -1297,6 +1964,48 @@ try {
 }
 // END PATCH
 
+// === Co-hosting heuristics (NIEUW) ===
+try {
+  // Kandidaten die iets zeggen over "wie hoort hier bij": alles wat we al zagen
+  const candidateDomains = [
+    ...new Set([
+      ...domainSignals.map(s => s.domain).filter(Boolean),
+      ...(ptrGenerated || []),
+      ...(cnameDerived || [])
+    ])
+  ].slice(0, 30);
+
+  const heur = await computeCohostingHeuristics(ip_address, candidateDomains, 30);
+
+  // Audit loggen
+  await supabaseAdmin.from('ip_cohost_log').insert({
+    ip_address,
+    fdns_total: heur.fdnsTotal,
+    live_checked: heur.liveChecked,
+    live_match_count: heur.liveMatchCount,
+    live_matches: heur.liveMatches.length ? heur.liveMatches : null,
+    classification: heur.classification,
+    penalty_applied: (heur.classification === 'heavy-multitenant') ? -0.07
+                     : (heur.classification === 'moderate') ? -0.04
+                     : (heur.classification === 'low' && heur.liveMatchCount > 0) ? 0.03
+                     : 0,
+    reason: (heur.classification === 'heavy-multitenant') ? 'many fdns domains'
+           : (heur.classification === 'moderate') ? 'some fdns domains'
+           : (heur.classification === 'low' && heur.liveMatchCount > 0) ? 'low cohosting + live match'
+           : 'no change'
+  });
+
+  // Signalen licht bijsturen
+  const { adjusted, applied, reason } = applyCohostingAdjustments(domainSignals, heur);
+  domainSignals = adjusted;
+
+  if (applied !== 0) {
+    console.log(`ℹ️ co-hosting adjustment: ${applied} (${reason})`);
+  }
+} catch (e) {
+  console.warn('⚠️ co-hosting heuristics faalde:', e.message);
+}
+
 
    // ✅ Stap 9 – Combineer signalen
 // Kleine dedupe: dezelfde bron + hetzelfde domein telt maar één keer
@@ -1312,6 +2021,16 @@ if (domainSignals.length) {
 
 if (!company_domain && domainSignals.length > 0) {
   const likely = getLikelyDomainFromSignals(domainSignals);
+  if (likely?.breakdown) {
+  console.log('🧮 voting breakdown', {
+    chosen: likely.domain,
+    hardCount: likely.breakdown.hardCount,
+    hardMax: likely.breakdown.hardMax,
+    diversityBonus: likely.breakdown.diversityBonus,
+    topContributors: likely.breakdown.topContributors
+  });
+}
+
 
   if (likely?.domain) {
     const freqBoost = await calculateConfidenceByFrequency(ip_address, likely.domain);
@@ -1549,19 +2268,19 @@ return res.status(200).json({ ignored: true, reason: 'no domain found' });
       }
 
       if (scraped) {
-  phone = scraped.phone || null;
-  email = scraped.email || null;
-  linkedin_url = scraped.linkedin_url || null;
-  facebook_url = scraped.facebook_url || null;
-  instagram_url = scraped.instagram_url || null;
-  twitter_url = scraped.twitter_url || null;
-  meta_description = scraped.meta_description || null;
+  if (phone == null && scraped.phone != null)                 phone = scraped.phone;
+  if (email == null && scraped.email != null)                 email = scraped.email;
+  if (linkedin_url == null && scraped.linkedin_url != null)   linkedin_url = scraped.linkedin_url;
+  if (facebook_url == null && scraped.facebook_url != null)   facebook_url = scraped.facebook_url;
+  if (instagram_url == null && scraped.instagram_url != null) instagram_url = scraped.instagram_url;
+  if (twitter_url == null && scraped.twitter_url != null)     twitter_url = scraped.twitter_url;
+  if (meta_description == null && scraped.meta_description != null) meta_description = scraped.meta_description;
 
-  // Scrape mag nooit de primaire bron overschrijven:
   if (!enrichment_source) {
     enrichment_source = ENRICHMENT_SOURCES.SCRAPE;
   }
 }
+
 
 
       if (domainEnrichment) {
@@ -1639,6 +2358,83 @@ if ((!company_domain || company_domain.trim() === '')
 return res.status(200).json({ ignored: true, reason: 'low confidence no domain' });
 }
 
+// === STAP 7: Resultaat-normalisatie & guardrails ===
+
+// 1) Clamp & opschonen confidence/reden
+if (typeof finalConfidence === 'number') {
+  confidence = clamp(finalConfidence, 0, 0.99); // boven 0.99 vermijden
+} else {
+  confidence = null;
+}
+confidence_reason = truncate(normText(confidence_reason), 400);
+
+// 2) Domein is leidend: als er géén domein is, dan geen bedrijf/contact/social opslaan
+if (!company_domain) {
+  company_name = null;
+  phone = null; email = null;
+  linkedin_url = null; facebook_url = null; instagram_url = null; twitter_url = null;
+  meta_description = null; category = null;
+}
+
+// 3) Company domain nog één keer strak normaliseren (lowercase en eTLD+1 via cleanAndValidateDomain)
+if (company_domain) {
+  const revalidated = cleanAndValidateDomain(
+    company_domain,
+    ENRICHMENT_SOURCES.FINAL_LIKELY,
+    null, null, null, ip_address, confidence, confidence_reason
+  );
+  company_domain = revalidated || null;
+  if (!company_domain) {
+    // wanneer hij toch afvalt: alles resetten om mis-attributie te voorkomen
+    company_name = null;
+    phone = null; email = null;
+    linkedin_url = null; facebook_url = null; instagram_url = null; twitter_url = null;
+    meta_description = null; category = null;
+  }
+}
+
+// 4) Tekstvelden normaliseren
+company_name       = normName(company_name);
+meta_description   = truncate(normText(meta_description), 500);
+category           = truncate(normText(category), 60);
+domain_address     = truncate(normText(domain_address), 200);
+domain_city        = truncate(normText(domain_city), 80);
+domain_country     = truncate(normText(domain_country), 80);
+domain_postal_code = truncate(normText(domain_postal_code), 20);
+
+// 5) Contactkanalen normaliseren
+email  = normEmail(email);
+phone  = normPhone(phone);
+linkedin_url  = normUrl(linkedin_url);
+facebook_url  = normUrl(facebook_url);
+instagram_url = normUrl(instagram_url);
+twitter_url   = normUrl(twitter_url);
+
+// 6) Socials: alleen bewaren als ze (waarschijnlijk) bij het domein horen
+if (company_domain) {
+  for (const [k, v] of Object.entries({ facebook_url, instagram_url, twitter_url })) {
+    if (v && !sameHostOrApex(v, company_domain)) {
+      if (k === 'facebook_url')  facebook_url = null;
+      if (k === 'instagram_url') instagram_url = null;
+      if (k === 'twitter_url')   twitter_url = null;
+    }
+  }
+}
+
+// 7) Coördinaten sanity (geen IP-locatie hier gebruiken, alleen domeinlocatie)
+if (!(validNum(domain_lat) && validNum(domain_lon))) {
+  domain_lat = null; domain_lon = null;
+}
+
+// 8) rdns_hostname inkorten en ontdoen van rare tekens
+reverseDnsDomain = truncate(normText(reverseDnsDomain), 255);
+
+// 9) enrichment_source begrenzen tot bekende waarden
+const KNOWN_SOURCES = new Set(Object.values(ENRICHMENT_SOURCES));
+if (!KNOWN_SOURCES.has(enrichment_source)) {
+  enrichment_source = ENRICHMENT_SOURCES.FINAL_LIKELY;
+}
+
 // Coördinaten alleen als beide bestaan (voor DOMAIN coords)
 const domainLatOk = validNum(domain_lat);
 const domainLonOk = validNum(domain_lon);
@@ -1657,7 +2453,7 @@ ip_country: ip_country || undefined,
   enriched_at: new Date().toISOString(),
   last_updated: new Date().toISOString(),
   enrichment_source,
-  confidence: finalConfidence,
+confidence: confidence, // clamped waarde uit stap 7
   confidence_reason,
   rdns_hostname: reverseDnsDomain || undefined,
 
