@@ -119,24 +119,27 @@ async function runFrequencyWithBounds(frequency, bounds) {
     try {
       // E-mailadres
       const { data: profile, error: profileErr } = await supabaseAdmin
-        .from('profiles')
-        .select('email, full_name')
-        .eq('id', user_id)
-        .maybeSingle();
+  .from('profiles')
+  .select('email, full_name')
+  .eq('id', user_id)
+  .maybeSingle();
 
-      if (profileErr) throw profileErr;
-      if (!profile?.email) {
-        await supabaseAdmin.from('email_log').insert({
-          user_id, org_id, frequency,
-          period_start_utc: periodStartISO,
-          period_end_utc:   periodEndISO,
-          lead_count: 0,
-          status: 'error',
-          error_msg: 'Geen e-mailadres gevonden voor user'
-        });
-        results.push({ user_id, org_id, status: 'error', error: 'no email' });
-        continue;
-      }
+if (profileErr) throw profileErr;
+recipientEmail = profile?.email ?? null;
+if (!recipientEmail) {
+  await supabaseAdmin.from('email_log').insert({
+    user_id, org_id, frequency,
+    period_start_utc: periodStartISO,
+    period_end_utc:   periodEndISO,
+    lead_count: 0,
+    status: 'error',
+    error_msg: 'Geen e-mailadres gevonden voor user',
+    recipient_email: null, // 👈 nieuw
+  });
+  results.push({ user_id, org_id, status: 'error', error: 'no email' });
+  continue;
+}
+
 
       // Leads precies binnen de kalendergrenzen
       const { data: leads, error: leadsErr } = await supabaseAdmin
@@ -152,13 +155,14 @@ async function runFrequencyWithBounds(frequency, bounds) {
 
       if (!leads || leads.length === 0) {
         await supabaseAdmin.from('email_log').insert({
-          user_id, org_id, frequency,
-          period_start_utc: periodStartISO,
-          period_end_utc:   periodEndISO,
-          lead_count: 0,
-          status: 'skipped_empty',
-          error_msg: null
-        });
+  user_id, org_id, frequency,
+  period_start_utc: periodStartISO,
+  period_end_utc:   periodEndISO,
+  lead_count: 0,
+  status: 'skipped_empty',
+  error_msg: null,
+  recipient_email: recipientEmail, // 👈 nieuw
+});
         results.push({ user_id, org_id, status: 'skipped_empty' });
         continue;
       }
@@ -175,33 +179,36 @@ async function runFrequencyWithBounds(frequency, bounds) {
       const html = buildEmailHTML({ title, rangeText, leads, appUrl });
 
       await sendEmail({
-        to: profile.email,
-        subject: `${title} • ${rangeText}`,
-        html
-      });
+  to: recipientEmail, // 👈
+  subject: `${title} • ${rangeText}`,
+  html
+});
 
-      await supabaseAdmin.from('email_log').insert({
-        user_id, org_id, frequency,
-        period_start_utc: periodStartISO,
-        period_end_utc:   periodEndISO,
-        lead_count: leads.length,
-        status: 'sent',
-        error_msg: null
-      });
+await supabaseAdmin.from('email_log').insert({
+  user_id, org_id, frequency,
+  period_start_utc: periodStartISO,
+  period_end_utc:   periodEndISO,
+  lead_count: leads.length,
+  status: 'sent',
+  error_msg: null,
+  recipient_email: recipientEmail, // 👈 nieuw
+});
+
 
       results.push({ user_id, org_id, status: 'sent', leads: leads.length });
     } catch (innerErr) {
       console.error('digest error (per sub):', innerErr);
-      await supabaseAdmin.from('email_log').insert({
-        user_id: s.user_id,
-        org_id: s.org_id,
-        frequency,
-        period_start_utc: periodStartISO,
-        period_end_utc:   periodEndISO,
-        lead_count: 0,
-        status: 'error',
-        error_msg: String(innerErr?.message || innerErr)
-      });
+     await supabaseAdmin.from('email_log').insert({
+  user_id: s.user_id,
+  org_id: s.org_id,
+  frequency,
+  period_start_utc: periodStartISO,
+  period_end_utc:   periodEndISO,
+  lead_count: 0,
+  status: 'error',
+  error_msg: String(innerErr?.message || innerErr),
+  recipient_email: recipientEmail, // 👈 kan null zijn
+});
       results.push({
         user_id: s.user_id,
         org_id: s.org_id,

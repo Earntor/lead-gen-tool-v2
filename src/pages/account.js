@@ -465,7 +465,7 @@ async function saveDigest(changes) {
     label="Dagelijks om 07:00 (NL-tijd)"
   />
   <span>
-    Dagelijks om <strong>07:00</strong> (NL-tijd) — <em>volledige vorige kalenderdag</em>
+    Ontvang dagelijks overzicht
   </span>
 </div>
 
@@ -479,7 +479,7 @@ async function saveDigest(changes) {
     label="Wekelijks (maandag 07:00 NL)"
   />
   <span>
-    Wekelijks op <strong>maandag</strong> om <strong>07:00</strong> (NL-tijd) — <em>volledige vorige kalenderweek (ma–zo)</em>
+    Ontvang wekelijks overzicht
   </span>
 </div>
 
@@ -493,7 +493,7 @@ async function saveDigest(changes) {
     label="Maandelijks 07:00 NL"
   />
   <span>
-    Maandelijks om <strong>07:00</strong> (NL-tijd) — <em>volledige vorige kalendermaand</em>
+    Ontvang maandelijks overzicht
     {digest.monthly && (
       <em className="ml-2 text-gray-500">
         (verzenddag: <strong>{digest.monthlyDom || '—'}</strong>)
