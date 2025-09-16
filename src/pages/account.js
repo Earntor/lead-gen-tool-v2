@@ -17,6 +17,26 @@ function getTodayDomNL() {
 }
 
 
+function Toggle({ checked, disabled, onChange, label }) {
+  return (
+    <button
+      type="button"
+      onClick={() => !disabled && onChange(!checked)}
+      className={`relative inline-flex h-6 w-11 items-center rounded-full transition
+        ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+        ${checked ? 'bg-blue-600' : 'bg-gray-300'}`}
+      role="switch"
+      aria-checked={checked}
+      aria-label={typeof label === 'string' ? label : undefined}
+    >
+      <span
+        className={`inline-block h-5 w-5 transform rounded-full bg-white transition
+          ${checked ? 'translate-x-5' : 'translate-x-1'}`}
+      />
+    </button>
+  );
+}
+
 
 export default function Account() {
   const router = useRouter()
@@ -259,39 +279,31 @@ async function saveDigest(changes) {
   try {
     const next = { ...digest, ...changes };
 
-    const payload = {
-      user_id: user.id,
-      org_id: currentOrgId,
-      daily_enabled: !!next.daily,
-      weekly_enabled: !!next.weekly,
-      monthly_enabled: !!next.monthly,
-      updated_at: new Date().toISOString(),
-    };
-
-    // ✅ bij 'maandelijks' AAN en er is nog geen dag → zet dag van vandaag (NL)
-    if (next.monthly && !next.monthlyDom) {
-      payload.monthly_dom = getTodayDomNL();
-      next.monthlyDom = payload.monthly_dom;
-    }
-
-    // ✅ bij 'maandelijks' UIT → wis de dag in DB en state
-    if (!next.monthly) {
-      payload.monthly_dom = null;
-      next.monthlyDom = null;
-    }
-
-    const { error } = await supabase
-      .from('digest_subscriptions')
-      .upsert(payload, { onConflict: 'user_id,org_id' });
+    const { data, error } = await supabase.rpc('set_digest_subscription', {
+      p_org_id: currentOrgId,
+      p_daily:  !!next.daily,
+      p_weekly: !!next.weekly,
+      p_monthly:!!next.monthly,
+      // Laat null door; de RPC zet zelf een nette default of wist 'm
+      p_monthly_dom: next.monthly ? (next.monthlyDom ?? null) : null
+    });
 
     if (error) throw error;
-    setDigest(next);
+
+    // Sync state met server-respons
+    setDigest({
+      daily:     !!data.daily_enabled,
+      weekly:    !!data.weekly_enabled,
+      monthly:   !!data.monthly_enabled,
+      monthlyDom: data.monthly_dom ?? null
+    });
   } catch (e) {
     alert('Opslaan van e-mailoverzicht-instellingen mislukt: ' + (e?.message || e));
   } finally {
     setDigestSaving(false);
   }
 }
+
 
 
 
@@ -445,50 +457,51 @@ async function saveDigest(changes) {
 
     <div className="space-y-3">
       {/* Dagelijks */}
-      <label className="flex items-center gap-3">
-        <input
-          type="checkbox"
-  disabled={!currentOrgId || digestLoading || digestSaving}
-          checked={digest.daily}
-          onChange={(e) => saveDigest({ daily: e.target.checked })}
-        />
-        <span>
-          Dagelijks om <strong>07:00</strong> (NL-tijd) — <em>volledige vorige kalenderdag</em>
-        </span>
-      </label>
+      <div className="flex items-center gap-3">
+  <Toggle
+    checked={digest.daily}
+    disabled={!currentOrgId || digestLoading || digestSaving}
+    onChange={(val) => saveDigest({ daily: val })}
+    label="Dagelijks om 07:00 (NL-tijd)"
+  />
+  <span>
+    Dagelijks om <strong>07:00</strong> (NL-tijd) — <em>volledige vorige kalenderdag</em>
+  </span>
+</div>
+
 
       {/* Wekelijks (maandag 07:00) */}
-      <label className="flex items-center gap-3">
-        <input
-  type="checkbox"
-  disabled={!currentOrgId || digestLoading || digestSaving}
-  checked={digest.weekly}
-  onChange={(e) => saveDigest({ weekly: e.target.checked })}
-/>
+      <div className="flex items-center gap-3">
+  <Toggle
+    checked={digest.weekly}
+    disabled={!currentOrgId || digestLoading || digestSaving}
+    onChange={(val) => saveDigest({ weekly: val })}
+    label="Wekelijks (maandag 07:00 NL)"
+  />
+  <span>
+    Wekelijks op <strong>maandag</strong> om <strong>07:00</strong> (NL-tijd) — <em>volledige vorige kalenderweek (ma–zo)</em>
+  </span>
+</div>
 
-        <span>
-          Wekelijks op <strong>maandag</strong> om <strong>07:00</strong> (NL-tijd) — <em>volledige vorige kalenderweek (ma–zo)</em>
-        </span>
-      </label>
 
       {/* Maandelijks (07:00, dag wordt vastgezet bij aanzetten) */}
-      <label className="flex items-center gap-3">
-        <input
-  type="checkbox"
-  disabled={!currentOrgId || digestLoading || digestSaving}
-  checked={digest.monthly}
-  onChange={(e) => saveDigest({ monthly: e.target.checked })}
-/>
+      <div className="flex items-center gap-3">
+  <Toggle
+    checked={digest.monthly}
+    disabled={!currentOrgId || digestLoading || digestSaving}
+    onChange={(val) => saveDigest({ monthly: val })}
+    label="Maandelijks 07:00 NL"
+  />
+  <span>
+    Maandelijks om <strong>07:00</strong> (NL-tijd) — <em>volledige vorige kalendermaand</em>
+    {digest.monthly && (
+      <em className="ml-2 text-gray-500">
+        (verzenddag: <strong>{digest.monthlyDom || '—'}</strong>)
+      </em>
+    )}
+  </span>
+</div>
 
-        <span>
-          Maandelijks om <strong>07:00</strong> (NL-tijd) — <em>volledige vorige kalendermaand</em>
-          {digest.monthly && (
-            <em className="ml-2 text-gray-500">
-              (verzenddag: <strong>{digest.monthlyDom || '—'}</strong>)
-            </em>
-          )}
-        </span>
-      </label>
 
       {(digestLoading || digestSaving) && (
         <div className="text-sm text-gray-500">Opslaan…</div>
