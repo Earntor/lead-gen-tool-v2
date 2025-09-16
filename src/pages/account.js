@@ -10,6 +10,12 @@ const TeamTab = dynamic(() => import('../components/TeamTab'), {
   loading: () => <p>Team laden…</p>,
 })
 
+function getTodayDomNL() {
+  const now = new Date();
+  const dayStr = new Intl.DateTimeFormat('nl-NL', { timeZone: 'Europe/Amsterdam', day: '2-digit' }).format(now);
+  return parseInt(dayStr, 10);
+}
+
 
 
 export default function Account() {
@@ -28,6 +34,10 @@ export default function Account() {
   const [trackingScript, setTrackingScript] = useState('')
   const [lastTrackingPing, setLastTrackingPing] = useState(null);
   const [currentOrgId, setCurrentOrgId] = useState(null);
+  const [digest, setDigest] = useState({ daily: false, weekly: false, monthly: false, monthlyDom: null });
+const [digestLoading, setDigestLoading] = useState(false);
+const [digestSaving, setDigestSaving] = useState(false);
+
  
   
   
@@ -218,6 +228,73 @@ useEffect(() => {
     setTimeout(() => setCopySuccess(''), 2000)
   }
 
+useEffect(() => {
+  if (!user?.id || !currentOrgId) return;
+  let cancelled = false;
+  (async () => {
+    setDigestLoading(true);
+    try {
+      const { data } = await supabase
+        .from('digest_subscriptions')
+        .select('daily_enabled, weekly_enabled, monthly_enabled, monthly_dom')
+        .eq('user_id', user.id)
+        .eq('org_id', currentOrgId)
+        .maybeSingle();
+      if (!cancelled && data) {
+        setDigest({ daily: !!data.daily_enabled, weekly: !!data.weekly_enabled, monthly: !!data.monthly_enabled, monthlyDom: data.monthly_dom ?? null });
+      } else if (!cancelled) {
+        setDigest({ daily: false, weekly: false, monthly: false, monthlyDom: null });
+      }
+    } finally {
+      if (!cancelled) setDigestLoading(false);
+    }
+  })();
+  return () => { cancelled = true; };
+}, [user, currentOrgId]);
+
+
+async function saveDigest(changes) {
+  if (!user?.id || !currentOrgId) return;
+  setDigestSaving(true);
+  try {
+    const next = { ...digest, ...changes };
+
+    const payload = {
+      user_id: user.id,
+      org_id: currentOrgId,
+      daily_enabled: !!next.daily,
+      weekly_enabled: !!next.weekly,
+      monthly_enabled: !!next.monthly,
+      updated_at: new Date().toISOString(),
+    };
+
+    // ✅ bij 'maandelijks' AAN en er is nog geen dag → zet dag van vandaag (NL)
+    if (next.monthly && !next.monthlyDom) {
+      payload.monthly_dom = getTodayDomNL();
+      next.monthlyDom = payload.monthly_dom;
+    }
+
+    // ✅ bij 'maandelijks' UIT → wis de dag in DB en state
+    if (!next.monthly) {
+      payload.monthly_dom = null;
+      next.monthlyDom = null;
+    }
+
+    const { error } = await supabase
+      .from('digest_subscriptions')
+      .upsert(payload, { onConflict: 'user_id,org_id' });
+
+    if (error) throw error;
+    setDigest(next);
+  } catch (e) {
+    alert('Opslaan van e-mailoverzicht-instellingen mislukt: ' + (e?.message || e));
+  } finally {
+    setDigestSaving(false);
+  }
+}
+
+
+
   if (loading || !user) {
     return (
       <div className="flex justify-center items-center h-screen">
@@ -362,11 +439,71 @@ useEffect(() => {
         )}
 
         {activeTab === 'instellingen' && (
-          <div>
-            <h2 className="text-xl font-semibold mb-4">Instellingen</h2>
-            <p className="text-gray-600">Hier kun je je voorkeuren instellen.</p>
-          </div>
-        )}
+  <div>
+    <h2 className="text-xl font-semibold mb-2">Instellingen</h2>
+    <p className="text-gray-600 mb-4">E-mail overzichten met belangrijkste websitebezoekers.</p>
+
+    <div className="space-y-3">
+      {/* Dagelijks */}
+      <label className="flex items-center gap-3">
+        <input
+          type="checkbox"
+  disabled={!currentOrgId || digestLoading || digestSaving}
+          checked={digest.daily}
+          onChange={(e) => saveDigest({ daily: e.target.checked })}
+        />
+        <span>
+          Dagelijks om <strong>07:00</strong> (NL-tijd) — <em>volledige vorige kalenderdag</em>
+        </span>
+      </label>
+
+      {/* Wekelijks (maandag 07:00) */}
+      <label className="flex items-center gap-3">
+        <input
+  type="checkbox"
+  disabled={!currentOrgId || digestLoading || digestSaving}
+  checked={digest.weekly}
+  onChange={(e) => saveDigest({ weekly: e.target.checked })}
+/>
+
+        <span>
+          Wekelijks op <strong>maandag</strong> om <strong>07:00</strong> (NL-tijd) — <em>volledige vorige kalenderweek (ma–zo)</em>
+        </span>
+      </label>
+
+      {/* Maandelijks (07:00, dag wordt vastgezet bij aanzetten) */}
+      <label className="flex items-center gap-3">
+        <input
+  type="checkbox"
+  disabled={!currentOrgId || digestLoading || digestSaving}
+  checked={digest.monthly}
+  onChange={(e) => saveDigest({ monthly: e.target.checked })}
+/>
+
+        <span>
+          Maandelijks om <strong>07:00</strong> (NL-tijd) — <em>volledige vorige kalendermaand</em>
+          {digest.monthly && (
+            <em className="ml-2 text-gray-500">
+              (verzenddag: <strong>{digest.monthlyDom || '—'}</strong>)
+            </em>
+          )}
+        </span>
+      </label>
+
+      {(digestLoading || digestSaving) && (
+        <div className="text-sm text-gray-500">Opslaan…</div>
+      )}
+      {!digestLoading && !digestSaving && (
+        <div className="text-sm text-green-700">Wijzigingen worden automatisch opgeslagen.</div>
+      )}
+
+      <p className="text-xs text-gray-500 mt-2">
+        We sturen alleen een mail als er bezoekers zijn binnen de periode (max 10). De mail toont exact dezelfde bedrijven als je dashboard.
+      </p>
+    </div>
+  </div>
+)}
+
 
         {activeTab === 'facturen' && (
           <div>
