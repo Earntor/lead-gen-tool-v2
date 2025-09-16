@@ -32,21 +32,7 @@
     }
   ],
   "crons": [
-    {
-      "path": "/api/worker-enrich",
-      "schedule": "0 0 * * *"
-    },
-    {
-      "path": "/api/cron/digest?frequency=daily&secret=725af37e0d8d87341be4d2d087407a1433195bffe00998a12aa95e66842e93b1",
-      "schedule": "30 5 * * *"
-    },
-    {
-      "path": "/api/cron/digest?frequency=weekly&secret=725af37e0d8d87341be4d2d087407a1433195bffe00998a12aa95e66842e93b1",
-      "schedule": "30 5 * * 1"
-    },
-    {
-      "path": "/api/cron/digest?frequency=monthly&secret=725af37e0d8d87341be4d2d087407a1433195bffe00998a12aa95e66842e93b1",
-      "schedule": "30 5 1 * *"
-    }
+    { "path": "/api/worker-enrich", "schedule": "0 0 * * *" },
+    { "path": "/api/cron/digest?secret=JOUW_CRON_SECRET", "schedule": "30 5 * * *" }
   ]
 }
