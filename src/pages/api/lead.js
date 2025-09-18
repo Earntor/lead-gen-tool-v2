@@ -669,6 +669,38 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+    // BEGIN PATCH: nooit enrichment draaien voor je eigen app/dash
+  try {
+    const hostHdr = String(req.headers.host || '').toLowerCase();     // host van jouw API zelf
+    const referer = String(req.headers.referer || '');
+    const refHost = (() => { try { return new URL(referer).hostname.toLowerCase(); } catch { return ''; } })();
+
+    // Hosts die in de body kunnen zitten
+    const bodyPageUrl  = (req.body && req.body.page_url) ? String(req.body.page_url) : '';
+    const bodyPageHost = (() => { try { return new URL(bodyPageUrl).hostname.toLowerCase(); } catch { return ''; } })();
+    const siteIdHost   = String(req.body?.site_id || '').toLowerCase();
+
+    // Pas deze hint aan als jouw (sub)domain anders heet
+    const APP_HINT = 'lead-gen-tool-v2';
+
+    const isOwnHost = (h) =>
+      !!h && (
+        h === hostHdr ||                 // exact zelfde host als API
+        h.endsWith('.vercel.app') ||     // Vercel preview/prod
+        h.includes(APP_HINT)             // jouw eigen app hostnaam
+      );
+
+    if (isOwnHost(refHost) || isOwnHost(bodyPageHost) || isOwnHost(siteIdHost)) {
+      // Snel terug; niets verrijken, queue netjes markeren
+      await markQueue('skipped', 'skipped: app self-visit');
+      return res.status(200).json({ ignored: true, reason: 'app self-visit' });
+    }
+  } catch {
+    // bij parsefouten: negeer en ga door
+  }
+  // END PATCH
+
+
   const {
     ip_address,
     org_id,
