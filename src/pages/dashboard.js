@@ -152,7 +152,6 @@ const [noteDraft, setNoteDraft] = useState('');               // tekst in textar
 const [noteUpdatedAt, setNoteUpdatedAt] = useState({});       // laatste bewerkt per domein
 const [authToken, setAuthToken] = useState(null);
 const [notesByDomain, setNotesByDomain] = useState({}); // { [domain]: "note text" }
-const fetchedDomainsRef = useRef(new Set());            // om dubbele fetches te voorkomen
 const geocodeCacheRef = useRef(new Map()); // key: adres-string → { lat, lon }
 const [profile, setProfile] = useState(null);
 
@@ -351,74 +350,49 @@ const [profile, setProfile] = useState(null);
 }, [router]);
 
 
-  // ⬇️ NIEUWE useEffect: notities ophalen zodra we een token én leads hebben
-// Notities ophalen: alleen voor domeinen die we nog niet gehaald hebben.
-// Let op: we updaten *niet* allLeads, maar alleen notesByDomain.
+  // ⬇️ Batch: alle notities in één keer (géén N+1 meer)
 useEffect(() => {
-  if (!authToken || allLeads.length === 0) return;
+  // We hebben een org en leads nodig
+  if (!profile?.current_org_id || allLeads.length === 0) return;
 
-  // Unieke, stabiele lijst domeinen
+  // Unieke domeinen uit de lijst
   const domains = [...new Set(allLeads.map(l => l.company_domain).filter(Boolean))];
   if (domains.length === 0) return;
-
-  // Filter op domeinen die we nog niet fetched hebben
-  const toFetch = domains.filter(d => !fetchedDomainsRef.current.has(d));
-  if (toFetch.length === 0) return;
 
   let cancelled = false;
 
   (async () => {
     try {
-      const results = await Promise.all(
-        toFetch.map(async (domain) => {
-          try {
-            const res = await fetch(`/api/lead-note?company_domain=${encodeURIComponent(domain)}`, {
-              headers: { Authorization: `Bearer ${authToken}` },
-            });
-            if (!res.ok) return [domain, null, null];
-            const json = await res.json();
-// Nieuwe API geeft { notes: [...] }, oude gaf { note, updated_at }.
-// Dit werkt voor beide:
-const latest = Array.isArray(json?.notes) ? (json.notes[0] || null) : (json || null);
-const content = latest?.content ?? latest?.note ?? '';
-const ts = latest?.updated_at ?? null;
-return [domain, content, ts];
+      const { data, error } = await supabase
+        .from('lead_notes')
+        .select('company_domain, note, updated_at')
+        .eq('org_id', profile.current_org_id)
+        .in('company_domain', domains);
 
-          } catch {
-            return [domain, null, null];
-          }
-        })
-      );
-
+      if (error) {
+        console.error('Notes batch fetch error:', error.message);
+        return;
+      }
       if (cancelled) return;
 
-      // Markeer als fetched zodat we ze niet opnieuw ophalen
-      toFetch.forEach(d => fetchedDomainsRef.current.add(d));
+      // Omdat (org_id, company_domain) uniek is, is er max 1 rij per domein
+      const nextNotes = {};
+      const nextUpdated = {};
+      for (const row of (data || [])) {
+        nextNotes[row.company_domain] = row.note || '';
+        if (row.updated_at) nextUpdated[row.company_domain] = row.updated_at;
+      }
 
-      // Note‑map bijwerken zonder allLeads te raken
-      setNotesByDomain(prev => {
-        const next = { ...prev };
-        results.forEach(([domain, note]) => {
-          if (note !== null && note !== undefined) next[domain] = note;
-        });
-        return next;
-      });
-
-      // Laatst‑bewerkt timestamps vullen
-      setNoteUpdatedAt(prev => {
-        const next = { ...prev };
-        results.forEach(([domain, , ts]) => {
-          if (ts) next[domain] = ts;
-        });
-        return next;
-      });
-    } catch {
-      // stil falen is oké
+      setNotesByDomain(prev => ({ ...prev, ...nextNotes }));
+      setNoteUpdatedAt(prev => ({ ...prev, ...nextUpdated }));
+    } catch (e) {
+      console.error('Notes batch fetch exception:', e);
     }
   })();
 
   return () => { cancelled = true; };
-}, [authToken, allLeads]);
+}, [profile?.current_org_id, allLeads]);
+
 
 
 

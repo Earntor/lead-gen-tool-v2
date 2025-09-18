@@ -494,11 +494,6 @@ async function saveDigest(changes) {
   />
   <span>
     Ontvang maandelijks overzicht
-    {digest.monthly && (
-      <em className="ml-2 text-gray-500">
-        (verzenddag: <strong>{digest.monthlyDom || '—'}</strong>)
-      </em>
-    )}
   </span>
 </div>
 

@@ -116,6 +116,7 @@ async function runFrequencyWithBounds(frequency, bounds) {
 
   for (const s of subs) {
     const { user_id, org_id } = s;
+    let recipientEmail = null;
     try {
       // E-mailadres
       const { data: profile, error: profileErr } = await supabaseAdmin
