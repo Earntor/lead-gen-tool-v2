@@ -19,6 +19,16 @@ import net from 'node:net'; // service banner probes (SMTP/IMAP/POP3/FTP)
 const require = createRequire(import.meta.url);
 // END PATCH
 
+// interne app-hosts en paden die we willen overslaan
+const APP_HOSTS = [
+  "lead-gen-tool-v2.vercel.app", // jouw tijdelijke app-url
+  "localhost",
+  "127.0.0.1"
+];
+
+const APP_PATH_PREFIXES = ["/login", "/dashboard", "/account"];
+
+
 export const config = { runtime: 'nodejs' };
 
 // Verwijder null/undefined en lege strings uit een payload
@@ -905,6 +915,8 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+
   
 
   const {
@@ -946,18 +958,23 @@ const markQueue = async (status, reason) => {
 };
 
 
-  try {
-  const url = new URL(page_url);
-  if (url.hostname.endsWith("vercel.app")) {
-  console.log("⛔️ dashboard-bezoek gedetecteerd, wordt niet opgeslagen:", page_url);
-  await markQueue('skipped', 'skipped: dashboard visit');
-  return res.status(200).json({ ignored: true, reason: "dashboard visit" });
+  // ⛔️ Skip ALLE app-bezoeken (host of bekende paden) – vóór welk heavy werk dan ook
+try {
+  const u = new URL(page_url || "");
+  const host = (u.hostname || "").toLowerCase();
+  const path = u.pathname || "/";
+
+  const isAppHost = APP_HOSTS.includes(host);
+  const isAppPath = APP_PATH_PREFIXES.some(p => path.startsWith(p));
+
+  if (isAppHost || isAppPath) {
+    await markQueue('skipped', 'skipped: internal app visit');
+    return res.status(200).json({ ignored: true, reason: "internal app visit" });
+  }
+} catch {
+  // Ongeldige URL? Niks blokkeren; laat enrichment doorlopen voor echte sites
 }
 
-} catch (e) {
-  console.warn("⚠️ Ongeldige page_url ontvangen, maar enrichment gaat door:", page_url);
-  // ⚠️ Geen return hier – laat de enrichment gewoon doorlopen
-}
 
 // ⏳ Cooldown: recent mislukte verrijking? Sla 6 uur over
 try {
