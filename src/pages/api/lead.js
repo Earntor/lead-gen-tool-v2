@@ -77,6 +77,223 @@ function sameHostOrApex(urlStr, domain) {
     return host === domain || host.endsWith('.' + domain);
   } catch { return false; }
 }
+// === EXTRA HINT HELPERS (nieuw) ==============================================
+
+// 0) Max bytes voor HTML-scans (snel en veilig)
+const MAX_HTML_BYTES = 150_000;
+
+// A) Link: header → hosts uit rel=preload/preconnect/dns-prefetch
+function parseLinkHeaderHosts(linkHeader) {
+  const out = new Set();
+  const s = Array.isArray(linkHeader) ? linkHeader.join(',') : String(linkHeader || '');
+  const re = /<([^>]+)>;\s*rel="?(\w[\w-]*)"?/ig;
+  let m; while ((m = re.exec(s))) {
+    const rel = (m[2] || '').toLowerCase();
+    if (!['preload','preconnect','dns-prefetch'].includes(rel)) continue;
+    try {
+      const h = new URL(m[1], 'https://x').hostname.toLowerCase();
+      if (h && h.includes('.')) out.add(h);
+    } catch {}
+  }
+  return [...out];
+}
+
+// B) Alt-Svc header → hosts
+function parseAltSvcHosts(altSvc) {
+  const out = new Set();
+  const s = String(altSvc || '').toLowerCase();
+  // voorbeelden: h3=":443"; ma=86400; persist=1; host="example.com"
+  const re = /host="?([a-z0-9.-]+\.[a-z0-9-]{2,})"?/g;
+  let m; while ((m = re.exec(s))) out.add(m[1]);
+  return [...out];
+}
+
+// C) HTML <link rel="dns-prefetch|preconnect|preload"> → hosts
+function parseHtmlRelHosts(html) {
+  const out = { dns_prefetch: [], preconnect: [], preload: [] };
+  if (!html) return out;
+  const pick = (rel) => {
+    const re = new RegExp(`<link[^>]+rel=["']${rel}["'][^>]*href=["']([^"']+)["']`, 'ig');
+    const set = new Set(); let m;
+    while ((m = re.exec(html))) {
+      try {
+        const h = new URL(m[1], 'https://x').hostname.toLowerCase();
+        if (h && h.includes('.')) set.add(h);
+      } catch {}
+    }
+    return [...set];
+  };
+  out.dns_prefetch = pick('dns-prefetch');
+  out.preconnect   = pick('preconnect');
+  out.preload      = pick('preload');
+  return out;
+}
+
+// D) E-mails in HTML → domeinen
+function extractEmailDomains(html) {
+  const set = new Set();
+  if (!html) return [];
+  const re = /[A-Z0-9._%+-]+@([A-Z0-9.-]+\.[A-Z]{2,})/ig;
+  let m; while ((m = re.exec(html))) set.add(m[1].toLowerCase());
+  return [...set];
+}
+
+// E) Losse “bare” domeinen in HTML-tekst (voorzichtig; geen cdn/analytics)
+function extractBareDomains(html) {
+  const out = new Set();
+  if (!html) return [];
+  const re = /(?:[^a-z0-9@]|^)([a-z0-9.-]+\.[a-z0-9-]{2,})(?:[^a-z0-9.-]|$)/ig;
+  let m; while ((m = re.exec(html))) {
+    const d = (m[1] || '').toLowerCase();
+    if (!d) continue;
+    // skip duidelijke ruis
+    if (/(^|\.)googleapis\.com$|(^|\.)gstatic\.com$|(^|\.)doubleclick\.net$|(^|\.)google-analytics\.com$/.test(d)) continue;
+    out.add(d);
+  }
+  return [...out];
+}
+
+// F) Inline JS URL’s/host hints (window.API_URL, baseUrl, etc.)
+function extractInlineJsHosts(html) {
+  const out = new Set();
+  if (!html) return [];
+  const urlRe = /https?:\/\/([a-z0-9.-]+\.[a-z0-9-]{2,})[^\s"'<>)]*/ig;
+  let m; while ((m = urlRe.exec(html))) out.add(m[1].toLowerCase());
+  return [...out];
+}
+
+// G) Apple-touch icons & manifest → (p)hash, manifest host
+async function fetchAppleAssets(ip) {
+  // lazy import imghash (zelfde manier als pHash stap)
+  let imghashMod; try { imghashMod = await import('imghash'); } catch { return { icons: [], manifestHost: null }; }
+  const imghash = imghashMod.default || imghashMod;
+
+  function fetchBuffer(url, timeoutMs = 3000) {
+    return new Promise((resolve) => {
+      const proto = url.startsWith('https') ? require('node:https') : require('node:http');
+      const req = proto.get(url, { timeout: timeoutMs }, (res) => {
+        const chunks = [];
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+      });
+      req.on('error', () => resolve(null));
+      req.setTimeout(timeoutMs, () => { try { req.destroy(); } catch {} resolve(null); });
+    });
+  }
+
+  const ICON_PATHS = ['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png'];
+  const icons = [];
+  for (const scheme of ['https','http']) {
+    for (const path of ICON_PATHS) {
+      const buf = await fetchBuffer(`${scheme}://${ip}${path}`);
+      if (!buf || buf.length < 64) continue;
+      try {
+        const phash = await imghash.hash(buf, 16, 'hex');
+        const hex = buf.toString('hex').slice(0, 64); // snelle content-snapshot (geen echte cryptohash)
+        icons.push({ path, phash, hex });
+      } catch {}
+    }
+  }
+
+  // manifest.json → host uit 'start_url' of icon src
+  let manifestHost = null;
+  for (const scheme of ['https','http']) {
+    try {
+      const txt = await fetchTextFast(`${scheme}://${ip}/manifest.json`, 2500);
+      if (txt) {
+        const j = JSON.parse(txt);
+        const s = j.start_url || (Array.isArray(j.icons) && j.icons[0]?.src) || null;
+        if (s) {
+          try { manifestHost = new URL(s, `${scheme}://${ip}/`).hostname.toLowerCase(); } catch {}
+        }
+      }
+    } catch {}
+    if (manifestHost) break;
+  }
+
+  return { icons, manifestHost };
+}
+
+// H) “Default site” detectie om HTTP-signalen te downgraden
+function isDefaultSite(html, headers) {
+  const h = (html || '').toLowerCase();
+  const server = String(headers?.server || '').toLowerCase();
+  return (
+    /welcome to nginx/.test(h) ||
+    /apache2 ubuntu default page/.test(h) ||
+    /plesk.*default/i.test(h) ||
+    /cpanel/i.test(h) ||
+    /traefik/i.test(h) ||
+    /iis windows server/i.test(h) ||
+    /test page for the http server/i.test(h) ||
+    /default web site/i.test(h) ||
+    /nginx/.test(server) || /apache/.test(server)
+  );
+}
+
+// I) PTR woord→domein generator (+ kleine TLD-set)
+const TOP_TLDS = ['nl','com','eu','net','be','de','fr','uk'];
+function titleToSlug(s) {
+  return String(s || '').toLowerCase()
+    .replace(/&/g, ' en ')
+    .replace(/[().,'"]/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, '-');
+}
+function generateDomainsFromPtr(ptrHost, cap = 20) {
+  const base = stripSubdomain(ptrHost || '');
+  if (!base) return [];
+  const label = base.split('.').slice(0, -1).join('.') || base.split('.')[0] || '';
+  const words = (label || '').replace(/[^a-z0-9-]/gi,' ').split(/\s+/).filter(Boolean);
+  const variants = new Set();
+  for (const w of words) {
+    const raw = w.replace(/[^a-z0-9]/gi,'');
+    if (raw.length < 3) continue;
+    variants.add(raw);
+    variants.add(raw.replace(/-/g,''));
+  }
+  const out = new Set();
+  for (const v of variants) for (const tld of TOP_TLDS) out.add(`${v}.${tld}`);
+  return [...out].slice(0, cap);
+}
+
+// J) AS-naam → domein kandidaten
+function generateDomainsFromAsName(asname, cap = 12) {
+  if (!asname) return [];
+  let s = asname.toLowerCase();
+  s = s.replace(/\b(bv|b\.v\.|nv|n\.v\.|gmbh|s\.a\.|s\.r\.l\.|ltd|limited|llc|inc|co|holding|groep|group|b\.v)\b/g, ' ');
+  s = s.replace(/[^a-z0-9]+/g, ' ').trim();
+  if (!s) return [];
+  const slug = titleToSlug(s).replace(/-/g,'');
+  if (slug.length < 3) return [];
+  const out = new Set();
+  for (const tld of TOP_TLDS) out.add(`${slug}.${tld}`);
+  return [...out].slice(0, cap);
+}
+
+// K) Email SRV records → hosts; boost als host → dit IP resolve’t
+async function emailSrvHints(domain, ip) {
+  const kinds = ['_submission._tcp','_smtps._tcp','_imap._tcp','_imaps._tcp','_pop3._tcp','_pop3s._tcp'];
+  const hosts = new Set();
+  for (const k of kinds) {
+    try {
+      const recs = await dns.resolveSrv(`${k}.${domain}`);
+      for (const r of (recs || [])) if (r?.name) hosts.add(stripSubdomain(r.name));
+    } catch {}
+  }
+  const srvHosts = [...hosts];
+  let pointsToIp = false;
+  for (const h of srvHosts) {
+    try {
+      const a = await dns.resolve(h);
+      if ((a || []).map(String).includes(ip)) { pointsToIp = true; break; }
+    } catch {}
+  }
+  return { srvHosts, pointsToIp, scoreBoost: (srvHosts.length ? 0.05 : 0) + (pointsToIp ? 0.05 : 0) };
+}
+
+
 
 // --- CSP helpers ---
 function parseCspHosts(cspHeader) {
@@ -153,7 +370,8 @@ function filterSocial(url) {
 
 // --- Service banner probing (SMTP/IMAP/POP3/FTP) ---
 async function probeServiceBanners(ip) {
-  const PORTS = [
+    const PORTS = [
+    // e-mail/web/ftp die je had
     { port: 25,  tls: false, verb: 'EHLO', payload: 'EHLO probe.local\r\n' },
     { port: 587, tls: false, verb: 'EHLO', payload: 'EHLO probe.local\r\n' },
     { port: 2525,tls: false, verb: 'EHLO', payload: 'EHLO probe.local\r\n' },
@@ -162,7 +380,26 @@ async function probeServiceBanners(ip) {
     { port: 995, tls: true,  verb: 'QUIT', payload: 'QUIT\r\n' },
     { port: 143, tls: false, verb: 'CAPA', payload: 'a1 CAPABILITY\r\n' },
     { port: 993, tls: true,  verb: 'CAPA', payload: 'a1 CAPABILITY\r\n' },
+
+    // 🔥 aanvulling: SSH en hosting panels (soms lekken hostnames)
+    { port: 22,  tls: false, verb: 'SSH', payload: '' },      // lees alleen banner
+    { port: 2083,tls: true,  verb: 'Plesk/cPanel', payload: 'GET / HTTP/1.0\r\n\r\n' },
+    { port: 2087,tls: true,  verb: 'cPanel',       payload: 'GET / HTTP/1.0\r\n\r\n' },
+    { port: 2096,tls: true,  verb: 'cPanel',       payload: 'GET / HTTP/1.0\r\n\r\n' },
+    { port: 8443,tls: true,  verb: 'Plesk',        payload: 'GET / HTTP/1.0\r\n\r\n' },
+    { port: 8880,tls: false, verb: 'Plesk',        payload: 'GET / HTTP/1.0\r\n\r\n' },
+    { port: 7080,tls: false, verb: 'Panel',        payload: 'GET / HTTP/1.0\r\n\r\n' },
+    { port: 7081,tls: true,  verb: 'Panel',        payload: 'GET / HTTP/1.0\r\n\r\n' },
+
+    // proxies/alt-web
+    { port: 3128,tls: false, verb: 'HTTP',         payload: 'GET / HTTP/1.0\r\n\r\n' },
+    { port: 8008,tls: false, verb: 'HTTP',         payload: 'GET / HTTP/1.0\r\n\r\n' },
+    { port: 8081,tls: false, verb: 'HTTP',         payload: 'GET / HTTP/1.0\r\n\r\n' },
+    { port: 3001,tls: false, verb: 'HTTP',         payload: 'GET / HTTP/1.0\r\n\r\n' },
+    { port: 444, tls: true,  verb: 'HTTPS',        payload: 'GET / HTTP/1.0\r\n\r\n' },
+    { port: 10443,tls: true, verb: 'HTTPS',        payload: 'GET / HTTP/1.0\r\n\r\n' },
   ];
+
 
   const results = [];
   const allDomains = new Set();
@@ -668,38 +905,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
-
-    // BEGIN PATCH: nooit enrichment draaien voor je eigen app/dash
-  try {
-    const hostHdr = String(req.headers.host || '').toLowerCase();     // host van jouw API zelf
-    const referer = String(req.headers.referer || '');
-    const refHost = (() => { try { return new URL(referer).hostname.toLowerCase(); } catch { return ''; } })();
-
-    // Hosts die in de body kunnen zitten
-    const bodyPageUrl  = (req.body && req.body.page_url) ? String(req.body.page_url) : '';
-    const bodyPageHost = (() => { try { return new URL(bodyPageUrl).hostname.toLowerCase(); } catch { return ''; } })();
-    const siteIdHost   = String(req.body?.site_id || '').toLowerCase();
-
-    // Pas deze hint aan als jouw (sub)domain anders heet
-    const APP_HINT = 'lead-gen-tool-v2';
-
-    const isOwnHost = (h) =>
-      !!h && (
-        h === hostHdr ||                 // exact zelfde host als API
-        h.endsWith('.vercel.app') ||     // Vercel preview/prod
-        h.includes(APP_HINT)             // jouw eigen app hostnaam
-      );
-
-    if (isOwnHost(refHost) || isOwnHost(bodyPageHost) || isOwnHost(siteIdHost)) {
-      // Snel terug; niets verrijken, queue netjes markeren
-      await markQueue('skipped', 'skipped: app self-visit');
-      return res.status(200).json({ ignored: true, reason: 'app self-visit' });
-    }
-  } catch {
-    // bij parsefouten: negeer en ga door
-  }
-  // END PATCH
-
+  
 
   const {
     ip_address,
@@ -1095,6 +1301,34 @@ try {
   console.warn('⚠️ CNAME chain discovery faalde:', e.message);
 }
 
+// ⬇️ NIEUW: extra kandidaten uit PTR-woordvarianten en AS-naam
+let ptrWordCandidates = [];
+try {
+  if (reverseDnsDomain) {
+    ptrWordCandidates = generateDomainsFromPtr(reverseDnsDomain, 20)
+      .map(d => cleanAndValidateDomain(
+        d, ENRICHMENT_SOURCES.RDNS, asname, org_id, page_url, ip_address, confidence, confidence_reason
+      ))
+      .filter(Boolean);
+  }
+} catch (e) {
+  console.warn('⚠️ PTR word→domain expansion faalde:', e.message);
+}
+
+let asNameCandidates = [];
+try {
+  if (asname) {
+    asNameCandidates = generateDomainsFromAsName(asname, 12)
+      .map(d => cleanAndValidateDomain(
+        d, ENRICHMENT_SOURCES.RDNS, asname, org_id, page_url, ip_address, confidence, confidence_reason
+      ))
+      .filter(Boolean);
+  }
+} catch (e) {
+  console.warn('⚠️ AS-naam kandidaten faalde:', e.message);
+}
+
+
 
 // 🔐 Stap 3 – TLS-certificaatinspectie → SIGNAL (audit-proof)
 try {
@@ -1286,6 +1520,121 @@ try {
         })
         .eq('id', httpFetchInsertId);
     }
+
+    // >>> EXTRA HINTS (dns-prefetch, link:, alt-svc, emails, bare domains, inline js, apple icons, default-site)
+    const clippedHtml = html ? String(html).slice(0, MAX_HTML_BYTES) : '';
+
+    // 1) HTML <link rel=...>
+    const relHosts = parseHtmlRelHosts(clippedHtml);
+
+    // 2) Response headers: Link, Alt-Svc
+    const linkHeader = hdrs['link'] || null;
+    const altSvc     = hdrs['alt-svc'] || null;
+    const linkHosts  = parseLinkHeaderHosts(linkHeader);
+    const altSvcHosts= parseAltSvcHosts(altSvc);
+
+    // 3) E-mails / bare domains / inline JS URLs
+    const emailDomains = extractEmailDomains(clippedHtml);
+    const bareDomains  = extractBareDomains(clippedHtml);
+    const jsHosts      = extractInlineJsHosts(clippedHtml);
+
+    // 4) Extra headers met host hints
+    const xServed  = hdrs['x-served-by'] ? String(hdrs['x-served-by']).toLowerCase() : '';
+    const viaHdr   = hdrs['via'] ? String(hdrs['via']).toLowerCase() : '';
+    const sTiming  = hdrs['server-timing'] ? String(hdrs['server-timing']).toLowerCase() : '';
+    const xFwdHost = hdrs['x-forwarded-host'] ? String(hdrs['x-forwarded-host']).toLowerCase() : '';
+
+    const headerHosts = new Set();
+    [xServed, viaHdr, sTiming, xFwdHost].forEach(s => {
+      const matches = extractDomains(s);
+      for (const d of matches) headerHosts.add(d);
+    });
+
+    // 5) Apple-touch icons & manifest host
+    let appleIconItems = [];
+    let manifestHost = null;
+    try {
+      const assets = await fetchAppleAssets(ip_address);
+      appleIconItems = assets.icons || [];
+      manifestHost = assets.manifestHost || null;
+    } catch {}
+
+    // Hints updaten in dezelfde http_fetch_log rij (merge met bestaande keys)
+    if (httpFetchInsertId) {
+      const extraHints = {
+        dns_prefetch_hosts: relHosts.dns_prefetch?.length ? relHosts.dns_prefetch : null,
+        preconnect_hosts:   relHosts.preconnect?.length ? relHosts.preconnect : null,
+        preload_hosts:      relHosts.preload?.length ? relHosts.preload : null,
+        link_header_hosts:  linkHosts.length ? linkHosts : null,
+        alt_svc_hosts:      altSvcHosts.length ? altSvcHosts : null,
+        email_domains_in_html: emailDomains.length ? emailDomains : null,
+        bare_domains_in_html:  bareDomains.length ? bareDomains : null,
+        inline_js_hosts:       jsHosts.length ? jsHosts : null,
+        header_hint_hosts:     headerHosts.size ? [...headerHosts] : null,
+        apple_icons:           appleIconItems.length ? appleIconItems : null,
+        manifest_host:         manifestHost || null
+      };
+      await supabaseAdmin.from('http_fetch_log')
+        .update({ hints: { ...(result.hints || {}), ...extraHints } })
+        .eq('id', httpFetchInsertId);
+    }
+
+    // Signalen schrijven voor ALLE gevonden hosts/domeinen (lage/medium confidence)
+    const hintDomains = new Set([
+      ...relHosts.dns_prefetch, ...relHosts.preconnect, ...relHosts.preload,
+      ...linkHosts, ...altSvcHosts,
+      ...emailDomains, ...bareDomains, ...jsHosts,
+      ...headerHosts
+    ]);
+    if (manifestHost) hintDomains.add(manifestHost);
+
+    for (const raw of hintDomains) {
+      const cand = cleanAndValidateDomain(
+        raw, ENRICHMENT_SOURCES.HTTP_FETCH, asname, org_id, page_url, ip_address, confidence, confidence_reason
+      );
+      if (!cand) continue;
+      const sig = await logDomainSignal({
+        ip_address, domain: cand,
+        source: ENRICHMENT_SOURCES.HTTP_FETCH,
+        confidence: 0.53,
+        confidence_reason: 'HTML/headers hint'
+      });
+      if (sig) domainSignals.push(sig);
+    }
+
+    // Apple-icon pHash/“hash”: upserten in favicon_hash_map + signaal
+    for (const item of appleIconItems) {
+      const phash = item.phash || null;
+      const hex   = item.hex || null;
+      if (!phash) continue;
+
+      const syntheticKey = `ai_${phash}`;
+      await supabaseAdmin.from('favicon_hash_map').upsert({
+        hash: syntheticKey,
+        phash: phash,
+        domain: null,
+        confidence: 0.5,
+        source: 'apple_icon',
+        last_seen: new Date().toISOString()
+      }, { onConflict: 'hash' });
+
+      await supabaseAdmin.from('favicon_hash_log').insert({
+        ip_address, favicon_phash: phash, matched_domain: null, used: false,
+        confidence: null, confidence_reason: 'Apple icon observed'
+      });
+    }
+
+    // Default-site detectie → downgrade HTTP-signalen
+    if (isDefaultSite(clippedHtml, hdrs)) {
+      domainSignals = domainSignals.map(s => {
+        if (s.source === ENRICHMENT_SOURCES.HTTP_FETCH && typeof s.confidence === 'number') {
+          return { ...s, confidence: Math.max(0.05, s.confidence - 0.08),
+            confidence_reason: (s.confidence_reason ? s.confidence_reason + ' + ' : '') + 'default site' };
+        }
+        return s;
+      });
+    }
+
 
     // 3) Signalen bijschrijven op basis van hints
 
@@ -1749,11 +2098,14 @@ try {
 const domainsToTry = [
   ...(fdnsResults?.map(r => r.domain).filter(Boolean) || []),
   ...ptrGenerated,
-  ...cnameDerived
+  ...cnameDerived,
+  ...ptrWordCandidates,
+  ...asNameCandidates
 ]
   .filter(Boolean)
-  .filter((v, i, a) => a.indexOf(v) === i) // dedupe
-  .slice(0, 7); // een tikje ruimer nu we meer bronnen hebben
+  .filter((v, i, a) => a.indexOf(v) === i)
+  .slice(0, 12); // iets ruimer cap
+
 
 
   if (domainsToTry?.length > 0) {
@@ -1823,6 +2175,46 @@ try {
 } catch (e) {
   console.warn('⚠️ Host header probing faalde:', e.message);
 }
+
+// Email-SRV hints op topkandidaten (max 10) → kleine boost + cache
+try {
+  const candidateDomains = [...new Set(domainSignals.map(s => s.domain).filter(Boolean))].slice(0, 10);
+  for (const cand of candidateDomains) {
+    const hints = await emailSrvHints(cand, ip_address);
+
+    if (hints.srvHosts?.length) {
+      // cache SRV in domain_enrichment_cache.email_dns (merge)
+      const { data: existing } = await supabaseAdmin
+        .from('domain_enrichment_cache')
+        .select('email_dns')
+        .eq('company_domain', cand)
+        .maybeSingle();
+
+      const merged = {
+        ...(existing?.email_dns || {}),
+        srv_hosts: hints.srvHosts
+      };
+
+      await supabaseAdmin.from('domain_enrichment_cache').upsert({
+        company_domain: cand,
+        email_dns: merged,
+        email_dns_checked_at: new Date().toISOString()
+      });
+    }
+
+    if (hints.scoreBoost > 0) {
+      const sig = await logDomainSignal({
+        ip_address, domain: cand, source: ENRICHMENT_SOURCES.HTTP_FETCH,
+        confidence: Math.min(0.2, hints.scoreBoost),
+        confidence_reason: 'Email SRV correlation'
+      });
+      if (sig) domainSignals.push(sig);
+    }
+  }
+} catch (e) {
+  console.warn('⚠️ email SRV hints faalde:', e.message);
+}
+
 
 // 🔐 EXTRA stap — TLS SNI probe (shared IP bevestigen)
 // Plakken: ná host header probing, vóór "✅ Stap 9 – Combineer signalen"
