@@ -916,7 +916,14 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-
+// ⛔️ HARD GUARD: enrichment nooit draaien zonder geldige page_url
+  // of wanneer het om je eigen app-domein gaat.
+  const APP_HOSTS = new Set([
+    'lead-gen-tool-v2.vercel.app',
+    'localhost',
+    '127.0.0.1'
+  ]);
+  const safeUrl = (u) => { try { return new URL(String(u)); } catch { return null; } };
   
 
   const {
@@ -931,6 +938,21 @@ export default async function handler(req, res) {
     duration_seconds,
     site_id
   } = req.body;
+
+  const parsed = safeUrl(page_url);
+  // ongeldig of leeg → niet verrijken
+  if (!parsed) {
+    return res.status(200).json({ ignored: true, reason: 'invalid or missing page_url' });
+  }
+  // eigen app host → niet verrijken
+  if (APP_HOSTS.has(parsed.hostname)) {
+    return res.status(200).json({ ignored: true, reason: 'app host (dashboard/login/etc.)' });
+  }
+  // extra: als referrer óók je app is, skippen
+  const ref = safeUrl(referrer);
+  if (ref && APP_HOSTS.has(ref.hostname)) {
+    return res.status(200).json({ ignored: true, reason: 'app referrer' });
+  }
 
   // ⬇️ Globale IP-API velden die we later invullen
 let ip_country = null;
