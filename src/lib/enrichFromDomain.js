@@ -14,9 +14,9 @@ function formatCategory(key) {
 }
 
 function pickCategory(types = []) {
-  const specific = types.find(t => !GENERIC_TYPES.has(t));
-  return formatCategory(specific || types[0] || null);
-}
+   const specific = types.find(t => !GENERIC_TYPES.has(t));
+   return formatCategory(specific || null); // geen terugval op generiek
+ }
 
 function pickAddrObj(comp, type) {
   return comp?.find(c => c.types?.includes(type)) || null;
@@ -98,8 +98,11 @@ export async function enrichFromDomain(queryString, ipLat, ipLon) {
       if (!result) continue;
 
       const name = result.name || null;
-      const types = result.types || [];
-      const category = pickCategory(types);
+    const types =
+   (Array.isArray(result.types) && result.types.length)
+     ? result.types
+     : (Array.isArray(r.types) ? r.types : []);
+ const category = pickCategory(types);
 
       const addr = extractStructuredAddress(result);
       const phone = result.international_phone_number || result.formatted_phone_number || null;
