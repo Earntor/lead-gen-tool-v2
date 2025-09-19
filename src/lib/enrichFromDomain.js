@@ -10,6 +10,19 @@ function getLocalizedText(x) {
   return x.text ?? null;
 }
 
+function toTextQuery(q) {
+  // Zet "https://www.moreketing.nl/..." → "moreketing"
+  let s = String(q || '').trim();
+  s = s.replace(/^https?:\/\//i, '').replace(/^www\./i, '');
+  const host = s.split(/[/?#]/)[0]; // pak alleen host
+  if (/\./.test(host)) {
+    const base = host.split('.')[0].replace(/[-_]/g, ' ').trim();
+    if (base) return base;
+  }
+  return s;
+}
+
+
 function extractStructuredAddressV1(addressComponents = []) {
   // v1 heeft addressComponents: [{ longText, shortText, types: [...] }, ...]
   const pick = (type) => addressComponents.find(c => Array.isArray(c.types) && c.types.includes(type));
@@ -63,7 +76,7 @@ export async function enrichFromDomain(queryString, ipLat, ipLon) {
       ].join(',')
     };
     const body = {
-      textQuery: String(queryString).replace(/^https?:\/\//, '').replace(/^www\./, '').trim(),
+textQuery: toTextQuery(queryString),
       languageCode: 'nl',
       regionCode: 'NL'
     };
