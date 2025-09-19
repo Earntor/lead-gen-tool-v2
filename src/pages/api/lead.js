@@ -303,6 +303,16 @@ async function emailSrvHints(domain, ip) {
   return { srvHosts, pointsToIp, scoreBoost: (srvHosts.length ? 0.05 : 0) + (pointsToIp ? 0.05 : 0) };
 }
 
+// === Category helpers (NL / "beter dan generic") ===
+const GENERIC_TYPES = new Set(['establishment','point_of_interest','premise','geocode','plus_code','store','finance','health','food','lodging','school','university']);
+
+function isBetterCategory(currentEn, currentNl, nextEn, nextNl) {
+  const curIsGeneric = !currentEn || GENERIC_TYPES.has(String(currentEn).toLowerCase());
+  const nextIsSpecific = !!nextEn && !GENERIC_TYPES.has(String(nextEn).toLowerCase());
+  if (nextIsSpecific && curIsGeneric) return true; // specifieker dan generic → beter
+  if (!currentNl && !!nextNl) return true;        // NL-vertaling ontbrak → beter
+  return false;
+}
 
 
 // --- CSP helpers ---
@@ -1157,6 +1167,10 @@ const isISP = KNOWN_ISPS.some(isp => asname.toLowerCase().includes(isp.toLowerCa
       let twitter_url = null;
       let meta_description = null;
       let category = null;
+      let category_nl = null;
+let place_id = null;
+let place_types = null;
+
 
       // 🔁 Stap 2 – Reverse DNS → SIGNAL
       try {
@@ -2747,43 +2761,71 @@ return res.status(200).json({ ignored: true, reason: 'no domain found' });
 
 
       if (domainEnrichment) {
-        domain_lat = domainEnrichment.lat || null;
-        domain_lon = domainEnrichment.lon || null;
-        company_name = domainEnrichment.name || null;
-        domain_address = domainEnrichment.domain_address || null;
-        domain_postal_code = domainEnrichment.domain_postal_code || null;
-        domain_city = domainEnrichment.domain_city || null;
-        domain_country = domainEnrichment.domain_country || null;
-        category = domainEnrichment.category || null;
-        enrichment_source = ENRICHMENT_SOURCES.GMAPS;
+  domain_lat = domainEnrichment.lat ?? null;
+  domain_lon = domainEnrichment.lon ?? null;
+  company_name = domainEnrichment.name ?? null;
+  domain_address = domainEnrichment.domain_address ?? null;
+  domain_postal_code = domainEnrichment.domain_postal_code ?? null;
+  domain_city = domainEnrichment.domain_city ?? null;
+  domain_country = domainEnrichment.domain_country ?? null;
 
-        // 👇 Override confidence op basis van frequentie (indien aanwezig)
-        const freqBoost = await calculateConfidenceByFrequency(ip_address, company_domain);
-        if (freqBoost) {
-          confidence = freqBoost.confidence;
-          confidence_reason = freqBoost.reason;
-        } else {
-          confidence = domainEnrichment.confidence || 0.65;
-          confidence_reason = domainEnrichment.confidence_reason || CONFIDENCE_REASONS.GMAPS;
-        }
+  // 👉 Places v1 velden
+  const nextCategoryEn  = domainEnrichment.category ?? null;       // bv "internet_marketing_service"
+  const nextCategoryNl  = domainEnrichment.category_nl ?? null;    // bv "Internetmarketingbureau"
+  place_id              = domainEnrichment.place_id ?? null;
+  place_types           = Array.isArray(domainEnrichment.place_types) ? domainEnrichment.place_types : null;
 
-        // Eén duidelijke call, geen dubbeling
-        await upsertDomainEnrichmentCache(company_domain, {
-          domain_lat,
-          domain_lon,
-          radius: null,
-          maps_result: domainEnrichment.raw || null,
-          confidence,
-          confidence_reason,
-          phone,
-          email,
-          linkedin_url,
-          facebook_url,
-          instagram_url,
-          twitter_url,
-          meta_description
-        });
-      }
+  // Bepaal of we categorie mogen overschrijven (alleen als 'beter')
+  const { data: curCatRow } = await supabaseAdmin
+    .from('ipapi_cache')
+    .select('category, category_nl')
+    .eq('ip_address', ip_address)
+    .maybeSingle();
+
+  const shouldUpdateCat = isBetterCategory(
+    curCatRow?.category ?? null,
+    curCatRow?.category_nl ?? null,
+    nextCategoryEn,
+    nextCategoryNl
+  );
+
+  if (shouldUpdateCat) {
+    category     = nextCategoryEn;
+    category_nl  = nextCategoryNl;
+  } else {
+    // behoud eventueel al bestaande waarden in cache / voorkom downgrade
+    category     = category ?? curCatRow?.category ?? null;
+    category_nl  = category_nl ?? curCatRow?.category_nl ?? null;
+  }
+
+  enrichment_source = ENRICHMENT_SOURCES.GMAPS;
+
+  // 👇 Confidence (zoals jij al had)
+  const freqBoost = await calculateConfidenceByFrequency(ip_address, company_domain);
+  if (freqBoost) {
+    confidence = freqBoost.confidence;
+    confidence_reason = freqBoost.reason;
+  } else {
+    confidence = domainEnrichment.confidence ?? 0.65;
+    confidence_reason = domainEnrichment.confidence_reason ?? CONFIDENCE_REASONS.GMAPS;
+  }
+
+  await upsertDomainEnrichmentCache(company_domain, {
+    domain_lat,
+    domain_lon,
+    radius: null,
+    maps_result: domainEnrichment.raw || null,
+    confidence,
+    confidence_reason,
+    phone,
+    email,
+    linkedin_url,
+    facebook_url,
+    instagram_url,
+    twitter_url,
+    meta_description
+  });
+}
     }
 
 
@@ -2934,7 +2976,10 @@ confidence: confidence, // clamped waarde uit stap 7
   instagram_url,
   twitter_url,
   meta_description,
-  category
+  category,
+  place_id,                       // <-- NIEUW
+  place_types,                    // <-- NIEUW (array in DB als jsonb)
+  category_nl 
 });
 
 // 🔒 Manual lock? Sla helemaal niets op/over.
@@ -2969,6 +3014,8 @@ if (manualLock && cached) {
     (!cached.twitter_url && cachePayload.twitter_url) ||
     (!cached.meta_description && cachePayload.meta_description) ||
     (!cached.category && cachePayload.category) ||
+    (!cached.category_nl && cachePayload.category_nl) || 
+    (!cached.place_id && cachePayload.place_id) || 
     ((!validNum(cached.domain_lat) || !validNum(cached.domain_lon)) &&
       validNum(cachePayload.domain_lat) && validNum(cachePayload.domain_lon));
 
@@ -2991,6 +3038,36 @@ if (manualLock && cached) {
 }
 
   }
+
+// --- (Optioneel) SYNC naar 'leads' zodat de NL-categorie direct zichtbaar is ---
+try {
+  if (company_domain && org_id) {
+    // Bouw alleen de velden die we daadwerkelijk hebben
+    const leadsUpdate = pruneEmpty({
+      place_id,                         // uit enrichFromDomain
+      place_types,                      // array → jsonb in DB
+      domain_address,
+      domain_postal_code,
+      domain_city,
+      domain_country,
+      domain_lat: (typeof domain_lat === 'number') ? domain_lat : undefined,
+      domain_lon: (typeof domain_lon === 'number') ? domain_lon : undefined,
+      // categorie-velden (we updaten alleen als we ze hebben)
+      category:     category     ?? undefined,
+      category_nl:  category_nl  ?? undefined
+    });
+
+    if (Object.keys(leadsUpdate).length > 0) {
+      await supabaseAdmin
+        .from('leads')
+        .update(leadsUpdate)
+        .eq('company_domain', company_domain)
+        .eq('org_id', org_id);
+    }
+  }
+} catch (e) {
+  console.warn('⚠️ leads update met NL-categorie faalde:', e.message);
+}
 
   // ⛔️ Belangrijk: geen insert in 'leads' vanuit /api/lead!
   // Deze endpoint verzorgt alleen enrichment + cache.

@@ -255,11 +255,12 @@ const [profile, setProfile] = useState(null);
     const leadsQ = supabase
       .from('leads')
       .select(`
-        *,
-        phone, email,
-        linkedin_url, facebook_url, instagram_url, twitter_url,
-        meta_description, category
-      `)
+  *,
+  phone, email,
+  linkedin_url, facebook_url, instagram_url, twitter_url,
+  meta_description, category, category_nl, place_id, place_types
+`)
+
       .eq('org_id', orgId)
       .not('company_name', 'is', null)
       .order('timestamp', { ascending: false })  // nieuwste eerst
@@ -280,8 +281,11 @@ const [profile, setProfile] = useState(null);
     if (cancelled) return;
 
     setAllLeads(leads || []);
-    const categoriesSet = new Set((leads || []).map(l => l.category).filter(Boolean));
-    setUniqueCategories(Array.from(categoriesSet).sort());
+    const categoriesSet = new Set(
+  (leads || []).map(l => (l.category_nl || l.category)).filter(Boolean)
+);
+setUniqueCategories(Array.from(categoriesSet).sort());
+
 
     // 🚀 Belangrijk: zet loading NU al uit → dashboard komt in beeld
     setLoading(false);
@@ -511,7 +515,7 @@ default:
  const filteredLeads = allLeads.filter((l) => {
 if (!l.timestamp || !isInDateRange(l.timestamp)) return false;
   if (minDuration && (!l.duration_seconds || l.duration_seconds < parseInt(minDuration))) return false;
-if (categoryFilter && l.category !== categoryFilter) return false;
+if (categoryFilter && ((l.category_nl || l.category) !== categoryFilter)) return false;
 
 
 if (labelFilter) {
@@ -1310,11 +1314,12 @@ if (leadRating >= 80) {
                   🌐 {company.company_domain}
                 </p>
               )}
-{company.category && (
+{(company.category_nl || company.category) && (
   <p className="text-xs text-gray-500 truncate">
-    🏷️ {company.category}
+    🏷️ {company.category_nl || company.category}
   </p>
 )}
+
 
 
             </div>
@@ -1339,12 +1344,6 @@ if (leadRating >= 80) {
  <div className="text-xs text-gray-500 mt-1">
   Lead score: {leadRating}/100
 </div>
-
-{company.confidence !== null && company.confidence !== undefined && (
-  <div className="text-[11px] text-gray-500 mt-1">
-    Confidence: {(company.confidence * 100).toFixed(0)}%
-  </div>
-)}
 
 </div>
 <div className="text-[10px] text-gray-400">

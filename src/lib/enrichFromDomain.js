@@ -3,121 +3,154 @@ import { chooseBestLocation } from "./googleMapsUtils.js";
 
 const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
-const GENERIC_TYPES = new Set([
-  'establishment', 'point_of_interest', 'premise', 'store', 'finance',
-  'health', 'food', 'lodging', 'school', 'university'
-]);
-
-function formatCategory(key) {
-  if (!key) return null;
-  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+// v1: hulpjes om velden veilig te lezen
+function getLocalizedText(x) {
+  if (!x) return null;
+  if (typeof x === 'string') return x;
+  return x.text ?? null;
 }
 
-function pickCategory(types = []) {
-  const specific = types.find(t => !GENERIC_TYPES.has(t));
-  return formatCategory(specific || types[0] || null);
-}
+function extractStructuredAddressV1(addressComponents = []) {
+  // v1 heeft addressComponents: [{ longText, shortText, types: [...] }, ...]
+  const pick = (type) => addressComponents.find(c => Array.isArray(c.types) && c.types.includes(type));
 
-function pickAddrObj(comp, type) {
-  return comp?.find(c => c.types?.includes(type)) || null;
-}
+  const streetNumber = getLocalizedText(pick('street_number')?.longText);
+  const route        = getLocalizedText(pick('route')?.longText);
+  const postal       = getLocalizedText(pick('postal_code')?.longText);
+  const city         =
+      getLocalizedText(pick('locality')?.longText)
+   || getLocalizedText(pick('postal_town')?.longText)
+   || getLocalizedText(pick('administrative_area_level_2')?.longText)
+   || null;
 
-function extractStructuredAddress(result) {
-  const comp = result.address_components || [];
+  const countryObj   = pick('country');
+  const countryLong  = getLocalizedText(countryObj?.longText) || null;
+  const countryShort = getLocalizedText(countryObj?.shortText) || null; // NL/BE/…
 
-  const streetNumber = pickAddrObj(comp, 'street_number')?.long_name || null;
-  const route        = pickAddrObj(comp, 'route')?.long_name || null;
-  const postal       = pickAddrObj(comp, 'postal_code')?.long_name || null;
-  const city         = pickAddrObj(comp, 'locality')?.long_name
-                    || pickAddrObj(comp, 'postal_town')?.long_name
-                    || pickAddrObj(comp, 'administrative_area_level_2')?.long_name
-                    || null;
-  const countryObj   = pickAddrObj(comp, 'country');
-  const countryLong  = countryObj?.long_name || null;
-  const countryShort = countryObj?.short_name || null; // <-- ISO code (NL/BE/…)
-
-  const formattedAddress = result.formatted_address || null;
+  // domain_address: “Straat 12” of fallback naar formattedAddress (doen we later)
   const domain_address = (route || streetNumber)
     ? [route, streetNumber].filter(Boolean).join(' ')
-    : (formattedAddress || null);
+    : null;
 
   return {
     domain_address,
     domain_postal_code: postal || null,
     domain_city: city || null,
     domain_country: countryLong || null,
-    domain_country_code: countryShort || null   // <-- nieuw
+    domain_country_code: countryShort || null,
   };
 }
 
 export async function enrichFromDomain(queryString, ipLat, ipLon) {
   try {
-    const textSearchUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(queryString)}&key=${GOOGLE_API_KEY}`;
-    const textSearchRes = await fetch(textSearchUrl);
-    const contentType = textSearchRes.headers.get("content-type");
+    if (!queryString) return null;
 
-    if (!textSearchRes.ok || !contentType?.includes("application/json")) {
-      const fallbackText = await textSearchRes.text();
-      console.error("❌ Google TextSearch API gaf geen JSON terug:", fallbackText.slice(0, 300));
+    // 1) SEARCH (v1) – Nederlands
+    const searchUrl = 'https://places.googleapis.com/v1/places:searchText';
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': GOOGLE_API_KEY,
+      // we willen id + basis velden uit search; details halen we per id
+      'X-Goog-FieldMask': [
+        'places.id',
+        'places.displayName',
+        'places.primaryType',
+        'places.primaryTypeDisplayName',
+        'places.formattedAddress',
+        'places.location',
+        'places.websiteUri',
+        'places.types'
+      ].join(',')
+    };
+    const body = {
+      textQuery: String(queryString).replace(/^https?:\/\//, '').replace(/^www\./, '').trim(),
+      languageCode: 'nl',
+      regionCode: 'NL'
+    };
+
+    const searchRes = await fetch(searchUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+    const searchCT  = searchRes.headers.get('content-type') || '';
+    if (!searchRes.ok || !searchCT.includes('application/json')) {
+      const txt = await searchRes.text().catch(() => '');
+      console.error('❌ places:searchText bad response:', searchRes.status, txt.slice(0, 300));
       return null;
     }
+    const searchJson = await searchRes.json();
+    const places = Array.isArray(searchJson?.places) ? searchJson.places.slice(0, 5) : [];
+    if (places.length === 0) return null;
 
-    const textSearchData = await textSearchRes.json();
-    if (!textSearchData.results || textSearchData.results.length === 0) {
-      console.warn("❌ Geen bedrijf gevonden via Text Search");
-      return null;
-    }
+    // 2) DETAILS (v1) – per kandidaat, voor telefoon + addressComponents (NL)
+    const detailFieldMask = [
+      'id',
+      'displayName',
+      'primaryType',
+      'primaryTypeDisplayName',
+      'types',
+      'formattedAddress',
+      'websiteUri',
+      'location',
+      'internationalPhoneNumber',
+      'nationalPhoneNumber',
+      'addressComponents'
+    ].join(',');
 
-    const rawResults = textSearchData.results.slice(0, 5);
     const enriched = [];
-
-    for (const r of rawResults) {
-      const placeDetailsUrl =
-        `https://maps.googleapis.com/maps/api/place/details/json` +
-        `?place_id=${r.place_id}` +
-        `&fields=name,formatted_address,formatted_phone_number,international_phone_number,website,types,address_components,geometry` +
-        `&key=${GOOGLE_API_KEY}`;
-
-      const placeDetailsRes = await fetch(placeDetailsUrl);
-      const detailsContentType = placeDetailsRes.headers.get("content-type");
-      if (!placeDetailsRes.ok || !detailsContentType?.includes("application/json")) {
-        const detailsText = await placeDetailsRes.text();
-        console.error("❌ Place Details gaf geen JSON terug:", detailsText.slice(0, 300));
+    for (const p of places) {
+      const id = p.id;
+      // GET https://places.googleapis.com/v1/places/{id}
+      const detailsUrl = `https://places.googleapis.com/v1/places/${encodeURIComponent(id)}?languageCode=nl&regionCode=NL`;
+      const detailsRes = await fetch(detailsUrl, {
+        method: 'GET',
+        headers: {
+          'X-Goog-Api-Key': GOOGLE_API_KEY,
+          'X-Goog-FieldMask': detailFieldMask
+        }
+      });
+      const detCT = detailsRes.headers.get('content-type') || '';
+      if (!detailsRes.ok || !detCT.includes('application/json')) {
+        const txt = await detailsRes.text().catch(() => '');
+        console.warn('⚠️ places/{id} bad response:', detailsRes.status, txt.slice(0, 250));
         continue;
       }
+      const d = await detailsRes.json();
 
-      const placeDetailsData = await placeDetailsRes.json();
-      const result = placeDetailsData.result;
-      if (!result) continue;
+      const displayName = getLocalizedText(d.displayName) || getLocalizedText(p.displayName) || null;
+      const primaryType = d.primaryType || p.primaryType || null;
+      const primaryTypeDisplayName = getLocalizedText(d.primaryTypeDisplayName) || getLocalizedText(p.primaryTypeDisplayName) || null;
 
-      const name = result.name || null;
-      const types = result.types || [];
-      const category = pickCategory(types);
+      const formattedAddress = d.formattedAddress || p.formattedAddress || null;
+      const websiteUri       = d.websiteUri || p.websiteUri || null;
+      const location         = d.location || p.location || null; // { latitude, longitude }
+      const lat = location?.latitude ?? null;
+      const lon = location?.longitude ?? null;
 
-      const addr = extractStructuredAddress(result);
-      const phone = result.international_phone_number || result.formatted_phone_number || null;
-      const website = result.website || null;
-
-      const lat = r.geometry?.location?.lat ?? result.geometry?.location?.lat ?? null;
-      const lon = r.geometry?.location?.lng ?? result.geometry?.location?.lng ?? null;
+      const addrStruct = extractStructuredAddressV1(d.addressComponents || []);
+      // Vul domain_address met fallback naar formattedAddress als straat+nummer ontbreken
+      const domain_address = addrStruct.domain_address || formattedAddress || null;
 
       enriched.push({
-        name,
-        address: result.formatted_address || null,
-        phone,
-        website,
-        category,
+        name: displayName,
+        address: formattedAddress,
+        phone: d.internationalPhoneNumber || d.nationalPhoneNumber || null,
+        website: websiteUri,
+        // ✨ Belangrijk: ruwe machine-key én NL weergave
+        category: primaryType || null,               // bv. "internet_marketing_service"
+        category_nl: primaryTypeDisplayName || null, // bv. "Internetmarketingbureau" (NL uit Google)
+        place_types: Array.isArray(d.types) ? d.types : (Array.isArray(p.types) ? p.types : []),
         lat,
         lon,
-        ...addr
+        // structured:
+        ...addrStruct,
+        domain_address
       });
     }
 
     if (enriched.length === 0) {
-      console.warn("⚠️ Geen verrijkte locaties beschikbaar.");
+      console.warn("⚠️ Geen verrijkte locaties beschikbaar (v1 details).");
       return null;
     }
 
+    // 3) Zelfde keuze-logica als bij jou
     if (typeof ipLat !== 'number' || typeof ipLon !== 'number') {
       const first = enriched[0];
       return {
@@ -138,7 +171,7 @@ export async function enrichFromDomain(queryString, ipLat, ipLon) {
       selected_random_match: !!selected_random_match
     };
   } catch (err) {
-    console.error("❌ Fout in enrichFromDomain():", err.message);
+    console.error("❌ Fout in enrichFromDomain(v1):", err?.message || err);
     return null;
   }
 }
