@@ -2696,7 +2696,7 @@ return res.status(200).json({ ignored: true, reason: 'no domain found' });
       let domainEnrichment = cachedDomainEnrichment || null;
 
       try {
-domainEnrichment = await enrichFromDomain(company_name || company_domain);
+domainEnrichment = await enrichFromDomain(company_domain);
         if (domainEnrichment?.domain) {
   const cleaned = cleanAndValidateDomain(
     domainEnrichment.domain,
