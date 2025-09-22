@@ -5,7 +5,7 @@ import { getUserFromRequest } from '../../../lib/getUserFromRequest'
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end()
 
-  const { user } = await getUserFromRequest(req)
+  const { user } = await getUserFromRequest(req, res)
   if (!user) return res.status(401).json({ error: 'not_authenticated' })
 
   const { token } = req.body || {}

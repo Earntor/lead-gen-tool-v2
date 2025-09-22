@@ -530,10 +530,10 @@ const HOSTING_DOMAINS = [
 
 // Extra blacklist voor reverse DNS (consumenten en irrelevante domeinen)
 const EXTRA_BLACKLIST_DOMAINS = [
-  'kpn.net', 'ziggo.nl', 'glasoperator.nl', 't-mobilethuis.nl', 'chello.nl',
+  'kpn.net', 'ziggo.nl', 'ziggozakelijk.nl', 'glasoperator.nl', 't-mobilethuis.nl', 'chello.nl', '',
   'dynamic.upc.nl', 'vodafone.nl', 'versatel.nl', 'msn.com', 'akamaitechnologies.com',
   'telenet.be', 'myaisfibre.com', 'filterplatform.nl', 'xs4all.nl', 'home.nl', 'digimobil.es', 'solcon.nl', 'avatel.es',
-  'weserve.nl', 'crawl.cloudflare.com', 'kabelnoord.net', 'googlebot.com','client.t-mobilethuis.nl', 'routit.net', 'starlinkisp.net', 'baremetal.scw.cloud','fbsv.net','sprious.com', 'your-server.de', 'vodafone.pt', 'ip.telfort.nl', 'amazonaws.com', 'dataproviderbot.com', 'apple.com', 'belgacom.be' 
+  'weserve.nl', '8.9p1', 'crawl.cloudflare.com', 'kabelnoord.net', 'googlebot.com','client.t-mobilethuis.nl', 'routit.net', 'starlinkisp.net', 'baremetal.scw.cloud','fbsv.net','sprious.com', 'your-server.de', 'vodafone.pt', 'ip.telfort.nl', 'amazonaws.com', 'dataproviderbot.com', 'apple.com', 'belgacom.be' 
 ];
 
 async function logBlockedSignal({

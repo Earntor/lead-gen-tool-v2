@@ -8,6 +8,15 @@ export default function AuthCallback() {
 
   useEffect(() => {
     async function handleCallback() {
+
+       const code = router.query?.code
+   if (code) {
+     const { error: exchErr } = await supabase.auth.exchangeCodeForSession(code)
+     if (exchErr) {
+       console.error('exchangeCodeForSession error:', exchErr.message)
+       return router.replace('/login')
+     }
+   }
       // 1) Haal de sessie op (werkt na password + na OAuth)
       const { data: { session }, error } = await supabase.auth.getSession()
 
@@ -18,7 +27,7 @@ export default function AuthCallback() {
       }
 
       // 2) Invite-token accepteren (alleen als die er is)
-      const inviteToken = router.query?.invite
+      const inviteToken = router.query?.invite || router.query?.token
       if (inviteToken) {
         try {
           const res = await fetch('/api/org/accept', {
