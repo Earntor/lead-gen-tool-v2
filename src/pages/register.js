@@ -69,13 +69,6 @@ const { data, error } = await supabase.auth.signUp({
 
     // 👉 Invite-token niet hier accepteren (werkt pas als user ingelogd is).
     // Gewoon redirecten naar de juiste pagina.
-    const next = router.query?.next
-    if (next && next.startsWith('/')) {
-      router.replace(next) // stuurt terug naar /invite/accept?token=...
-    } else {
-      router.replace('/dashboard')
-    }
-
     setLoading(false)
   }
 
