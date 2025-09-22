@@ -20,11 +20,11 @@ export default function AcceptInvitePage() {
         return
       }
 
-      // check sessie
+      // 1) Check sessie
       const { data: { session } } = await supabase.auth.getSession()
 
+      // 2) Niet ingelogd? Haal invite-info op en stuur naar register met next+email
       if (!session) {
-        // 👇 invite-info ophalen (incl. email)
         const res = await fetch('/api/org/invite-info', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -44,18 +44,22 @@ export default function AcceptInvitePage() {
           return
         }
 
-        // ✅ stuur door naar registratie met invite & email
         const next = encodeURIComponent(`/invite/accept?token=${rawToken}`)
         const email = encodeURIComponent(json.email)
         router.replace(`/register?invite=${rawToken}&email=${email}&next=${next}`)
         return
       }
 
-      // Als ingelogd → accepteer invite direct
+      // 3) Ingelogd → accepteer direct mét Authorization bearer
       try {
+        const accessToken = session?.access_token || null
+
         const res = await fetch('/api/org/accept', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          },
           body: JSON.stringify({ token: rawToken }),
         })
         const json = await res.json()
