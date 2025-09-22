@@ -8,46 +8,24 @@ export default function AuthCallback() {
 
   useEffect(() => {
     async function handleCallback() {
-
-       const code = router.query?.code
-   if (code) {
-     const { error: exchErr } = await supabase.auth.exchangeCodeForSession(code)
-     if (exchErr) {
-       console.error('exchangeCodeForSession error:', exchErr.message)
-       return router.replace('/login')
-     }
-   }
-      // 1) Haal de sessie op (werkt na password + na OAuth)
-      const { data: { session }, error } = await supabase.auth.getSession()
-
-      if (error || !session) {
-        console.error('Geen geldige sessie gevonden:', error?.message)
-        router.replace('/login')
-        return
-      }
-
-      // 2) Invite-token accepteren (alleen als die er is)
-      const inviteToken = router.query?.invite || router.query?.token
-      if (inviteToken) {
-        try {
-          const res = await fetch('/api/org/accept', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${session.access_token}`, // ✅ belangrijk
-  },
-  body: JSON.stringify({ token: inviteToken }),
-})
-
-          if (!res.ok) {
-            console.error('Invite accepteren mislukt:', await res.text())
-          }
-        } catch (e) {
-          console.error('Invite API error:', e)
+      // 1) Wissel de code om voor een sessie (OAuth / Magic Link)
+      const code = router.query?.code
+      if (code) {
+        const { error: exchErr } = await supabase.auth.exchangeCodeForSession(code)
+        if (exchErr) {
+          console.error('exchangeCodeForSession error:', exchErr.message)
+          return router.replace('/login')
         }
       }
 
-      // 3) Redirect naar next of dashboard
+      // 2) Controleer sessie
+      const { data: { session }, error } = await supabase.auth.getSession()
+      if (error || !session) {
+        console.error('Geen geldige sessie gevonden:', error?.message)
+        return router.replace('/login')
+      }
+
+      // 3) Stuur terug naar `next` (bv. /invite/accept?token=...) of dashboard
       const nextParam = router.query?.next
       if (nextParam && nextParam.startsWith('/')) {
         router.replace(nextParam)
