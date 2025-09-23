@@ -5,16 +5,21 @@ import { sendEmail, __mailInternals } from '../../../lib/mailer';
 const TZ = process.env.DIGEST_TZ || 'Europe/Amsterdam';
 
 function assertSecret(req) {
-  const headerSecret = req.headers['x-cron-secret'];
-  const querySecret  = req.query?.secret;
-  const ok = (headerSecret && headerSecret === process.env.CRON_SECRET)
-          || (querySecret  && querySecret  === process.env.CRON_SECRET);
+  const auth = req.headers['authorization'];
+  const querySecret = req.query?.secret;
+  const want = process.env.CRON_SECRET;
+
+  const ok =
+    (auth && want && auth === `Bearer ${want}`) || // Vercel Cron (automatisch)
+    (querySecret && want && querySecret === want); // handmatige test ?secret=...
+
   if (!ok) {
     const err = new Error('Unauthorized');
     err.statusCode = 401;
     throw err;
   }
 }
+
 
 function fmtNL(d) {
   try {
