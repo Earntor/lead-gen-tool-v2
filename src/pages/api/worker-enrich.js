@@ -16,10 +16,31 @@ const BASE_URL =
   process.env.NEXT_PUBLIC_TRACKING_DOMAIN ||
   (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
 
+// ✅ Cron-beveiliging met failsafe: als CRON_SECRET niet gezet is, blokkeer niks
+function assertSecret(req) {
+  const want = process.env.CRON_SECRET;
+  if (!want) return; // failsafe: niets blokkeren als secret ontbreekt
+
+  const auth = req.headers['authorization'];
+  const querySecret = req.query?.secret;
+
+  const ok =
+    (auth && auth === `Bearer ${want}`) || // Vercel Cron stuurt deze header automatisch mee
+    (querySecret && querySecret === want); // handmatige test via ?secret=...
+  if (!ok) {
+    const err = new Error('Unauthorized');
+    err.statusCode = 401;
+    throw err;
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'GET' && req.method !== 'POST') {
     return res.status(405).end();
   }
+
+  // 🔐 alleen Vercel Cron of jij met ?secret=
+  assertSecret(req);
 
   // 🔹 0) Opschonen van oude failed_permanent jobs
   try {
