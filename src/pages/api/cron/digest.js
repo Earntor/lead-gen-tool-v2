@@ -1,6 +1,6 @@
 // pages/api/cron/digest.js
 import { supabaseAdmin } from '../../../lib/supabaseAdminClient';
-import { sendEmail } from '../../../lib/mailer';
+import { sendEmail, __mailInternals } from '../../../lib/mailer';
 
 const TZ = process.env.DIGEST_TZ || 'Europe/Amsterdam';
 
@@ -48,19 +48,19 @@ async function getStrictBounds(frequency) {
 }
 
 function buildEmailHTML({ title, rangeText, leads, appUrl }) {
-  const rows = leads.slice(0, 10).map(l => `
+  const rows = (leads || []).slice(0, 10).map(l => `
     <tr>
       <td style="padding:8px;border-bottom:1px solid #eee;">
         ${l.company_name ?? '(onbekend)'}
         <br><small>${l.company_domain ?? ''}</small>
       </td>
       <td style="padding:8px;border-bottom:1px solid #eee;">${l.category ?? ''}</td>
-      <td style="padding:8px;border-bottom:1px solid #eee;">${typeof l.confidence === 'number' ? l.confidence.toFixed(2) : ''}</td>
+      <td style="padding:8px;border-bottom:1px solid #eee;">${typeof l.confidence === 'number' ? l.confidence.toFixed(2) : (l.confidence ?? '')}</td>
       <td style="padding:8px;border-bottom:1px solid #eee;">${fmtNL(l.created_at)}</td>
     </tr>
   `).join('');
 
-  const moreNote = leads.length > 10
+  const moreNote = (leads && leads.length > 10)
     ? `<p style="margin:16px 0 0 0;">+${leads.length - 10} extra leads in het dashboard.</p>`
     : '';
 
@@ -68,7 +68,7 @@ function buildEmailHTML({ title, rangeText, leads, appUrl }) {
     <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:720px;margin:0 auto;">
       <h1 style="margin:0 0 8px 0;">${title}</h1>
       <p style="margin:0 0 16px 0;color:#555;">Periode: ${rangeText}</p>
-      <p style="margin:0 0 16px 0;">Totaal nieuwe leads: <strong>${leads.length}</strong></p>
+      <p style="margin:0 0 16px 0;">Totaal nieuwe leads: <strong>${leads?.length || 0}</strong></p>
 
       <table cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;">
         <thead>
@@ -108,7 +108,6 @@ async function runFrequencyWithBounds(frequency, bounds) {
     .from('digest_subscriptions')
     .select('user_id, org_id')
     .eq(freqColumn, true);
-
   if (subsErr) throw subsErr;
 
   const results = [];
@@ -117,32 +116,33 @@ async function runFrequencyWithBounds(frequency, bounds) {
   for (const s of subs) {
     const { user_id, org_id } = s;
     let recipientEmail = null;
+
     try {
-      // E-mailadres
+      // 1) E-mailadres van de ontvanger
       const { data: profile, error: profileErr } = await supabaseAdmin
-  .from('profiles')
-  .select('email, full_name')
-  .eq('id', user_id)
-  .maybeSingle();
+        .from('profiles')
+        .select('email, full_name')
+        .eq('id', user_id)
+        .maybeSingle();
+      if (profileErr) throw profileErr;
 
-if (profileErr) throw profileErr;
-recipientEmail = profile?.email ?? null;
-if (!recipientEmail) {
-  await supabaseAdmin.from('email_log').insert({
-    user_id, org_id, frequency,
-    period_start_utc: periodStartISO,
-    period_end_utc:   periodEndISO,
-    lead_count: 0,
-    status: 'error',
-    error_msg: 'Geen e-mailadres gevonden voor user',
-    recipient_email: null, // 👈 nieuw
-  });
-  results.push({ user_id, org_id, status: 'error', error: 'no email' });
-  continue;
-}
+      recipientEmail = profile?.email ?? null;
+      if (!recipientEmail) {
+        await supabaseAdmin.from('email_log').insert({
+          user_id, org_id, frequency,
+          period_start_utc: periodStartISO,
+          period_end_utc:   periodEndISO,
+          lead_count: 0,
+          status: 'error',
+          error_msg: 'Geen e-mailadres gevonden voor user',
+          recipient_email: null,
+          resend_id: null
+        });
+        results.push({ user_id, org_id, status: 'error', error: 'no email' });
+        continue;
+      }
 
-
-      // Leads precies binnen de kalendergrenzen
+      // 2) Leads in de periode
       const { data: leads, error: leadsErr } = await supabaseAdmin
         .from('leads')
         .select('id, company_name, company_domain, category, confidence, created_at')
@@ -151,23 +151,9 @@ if (!recipientEmail) {
         .lt('created_at',  periodEndISO)
         .order('created_at', { ascending: false })
         .limit(1000);
-
       if (leadsErr) throw leadsErr;
 
-      if (!leads || leads.length === 0) {
-        await supabaseAdmin.from('email_log').insert({
-  user_id, org_id, frequency,
-  period_start_utc: periodStartISO,
-  period_end_utc:   periodEndISO,
-  lead_count: 0,
-  status: 'skipped_empty',
-  error_msg: null,
-  recipient_email: recipientEmail, // 👈 nieuw
-});
-        results.push({ user_id, org_id, status: 'skipped_empty' });
-        continue;
-      }
-
+      // 3) Mail voorbereiden
       const titleMap = {
         daily:   'Dagelijks leadoverzicht',
         weekly:  'Wekelijks leadoverzicht',
@@ -175,41 +161,77 @@ if (!recipientEmail) {
       };
       const title     = titleMap[frequency];
       const rangeText = `${fmtNL(periodStartISO)} — ${fmtNL(periodEndISO)}`;
-      const appUrl    = process.env.APP_URL || '#';
+      const appUrl    = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || '#';
+      const allowed   = __mailInternals.isAllowedRecipient(recipientEmail);
+      const isFree    = (process.env.RESEND_PLAN || '').toLowerCase() === 'free';
 
+     // ⚠️ Bij 0 leads: niet mailen, alleen loggen
+if (!leads || leads.length === 0) {
+  await supabaseAdmin.from('email_log').insert({
+    user_id, org_id, frequency,
+    period_start_utc: periodStartISO,
+    period_end_utc:   periodEndISO,
+    lead_count: 0,
+    status: 'skipped_empty',
+    error_msg: null,
+    recipient_email: recipientEmail,
+    resend_id: null
+  });
+
+  results.push({ user_id, org_id, status: 'skipped_empty', leads: 0 });
+  continue; // ga door met volgende subscription
+}
+
+
+      // 5) Wel leads → mailen of blokkeren (Free)
       const html = buildEmailHTML({ title, rangeText, leads, appUrl });
 
-      await sendEmail({
-  to: recipientEmail, // 👈
-  subject: `${title} • ${rangeText}`,
-  html
-});
+      if (!allowed && isFree) {
+        await supabaseAdmin.from('email_log').insert({
+          user_id, org_id, frequency,
+          period_start_utc: periodStartISO,
+          period_end_utc:   periodEndISO,
+          lead_count: leads.length,
+          status: 'blocked_free_plan',
+          error_msg: `Free plan allows only ${process.env.RESEND_ALLOWED_TO || '(unset)'}`,
+          recipient_email: recipientEmail,
+          resend_id: null
+        });
+        results.push({ user_id, org_id, status: 'blocked_free_plan' });
+      } else {
+        const sent = await sendEmail({
+          to: recipientEmail,
+          subject: `${title} • ${rangeText}`,
+          html
+        });
 
-await supabaseAdmin.from('email_log').insert({
-  user_id, org_id, frequency,
-  period_start_utc: periodStartISO,
-  period_end_utc:   periodEndISO,
-  lead_count: leads.length,
-  status: 'sent',
-  error_msg: null,
-  recipient_email: recipientEmail, // 👈 nieuw
-});
+        await supabaseAdmin.from('email_log').insert({
+          user_id, org_id, frequency,
+          period_start_utc: periodStartISO,
+          period_end_utc:   periodEndISO,
+          lead_count: leads.length,
+          status: 'sent',
+          error_msg: null,
+          recipient_email: recipientEmail,
+          resend_id: sent?.id || null
+        });
 
-
-      results.push({ user_id, org_id, status: 'sent', leads: leads.length });
+        results.push({ user_id, org_id, status: 'sent', leads: leads.length });
+      }
     } catch (innerErr) {
       console.error('digest error (per sub):', innerErr);
-     await supabaseAdmin.from('email_log').insert({
-  user_id: s.user_id,
-  org_id: s.org_id,
-  frequency,
-  period_start_utc: periodStartISO,
-  period_end_utc:   periodEndISO,
-  lead_count: 0,
-  status: 'error',
-  error_msg: String(innerErr?.message || innerErr),
-  recipient_email: recipientEmail, // 👈 kan null zijn
-});
+      await supabaseAdmin.from('email_log').insert({
+        user_id: s.user_id,
+        org_id: s.org_id,
+        frequency,
+        period_start_utc: periodStartISO,
+        period_end_utc:   periodEndISO,
+        lead_count: 0,
+        status: 'error',
+        error_msg: String(innerErr?.message || innerErr),
+        recipient_email: recipientEmail,
+        resend_id: null
+      });
       results.push({
         user_id: s.user_id,
         org_id: s.org_id,
@@ -226,19 +248,14 @@ export default async function handler(req, res) {
   try {
     assertSecret(req);
 
-    // Optioneel: forceer specifieke frequentie (?frequency=weekly/monthly) voor tests
-    const qf = req.query.frequency;
+    const qf = (req.query.frequency || '').toLowerCase();
     const now = new Date();
 
     const toRun = [];
-    // Daily: altijd
-    toRun.push('daily');
-    // Weekly: alleen op maandag in NL
-    if (isMondayInTZ(now, TZ)) toRun.push('weekly');
-    // Monthly: alleen op 1e van de maand in NL
-    if (isFirstOfMonthInTZ(now, TZ)) toRun.push('monthly');
+    toRun.push('daily');                       // daily altijd
+    if (isMondayInTZ(now, TZ)) toRun.push('weekly');       // weekly op maandag (NL)
+    if (isFirstOfMonthInTZ(now, TZ)) toRun.push('monthly'); // monthly op 1e (NL)
 
-    // Als query specifiek is: override
     if (['daily','weekly','monthly'].includes(qf)) {
       toRun.length = 0;
       toRun.push(qf);

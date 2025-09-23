@@ -32,7 +32,14 @@
     }
   ],
   "crons": [
-    { "path": "/api/worker-enrich", "schedule": "0 0 * * *" },
-    { "path": "/api/cron/digest?secret=JOUW_CRON_SECRET", "schedule": "30 5 * * *" }
+    {
+      "path": "/api/worker-enrich",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/digest",
+      "schedule": "0 6 * * *",
+      "headers": { "x-cron-secret": "@CRON_SECRET" }
+    }
   ]
 }

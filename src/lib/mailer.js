@@ -3,32 +3,55 @@ import { Resend } from 'resend';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// Kleine helper: kies afzender volgorde (DIGEST_FROM > EMAIL_FROM > fallback)
 function getFrom() {
   return (
-    process.env.DIGEST_FROM ||
-    process.env.EMAIL_FROM ||
-    'Lead Digest <noreply@example.com>'
+    process.env.RESEND_FROM ||                 // straks je geverifieerde domein
+    process.env.DIGEST_FROM ||                 // jouw huidige env-naam
+    process.env.EMAIL_FROM ||                  // evt. oudere naam
+    'Lead Digest <onboarding@resend.dev>'      // fallback bouwfase
   );
 }
 
+// Is ontvanger toegestaan in huidige modus?
+function isAllowedRecipient(email) {
+  const plan = (process.env.RESEND_PLAN || '').toLowerCase();
+  if (plan !== 'free') return true; // verified/pro: alles mag
+  const allowed = (process.env.RESEND_ALLOWED_TO || '').toLowerCase().trim();
+  return allowed && (email || '').toLowerCase().trim() === allowed;
+}
+
 /**
- * Stuur een e-mail via Resend.
+ * Stuur e-mail via Resend
  * @param {Object} opts
- * @param {string|string[]} opts.to - ontvanger(s)
+ * @param {string|string[]} opts.to
  * @param {string} opts.subject
  * @param {string} opts.html
+ * @param {string} [opts.text]
+ * @returns {Promise<{id?: string|null}>}
  */
-export async function sendEmail({ to, subject, html }) {
-  if (!process.env.RESEND_API_KEY) {
-    throw new Error('RESEND_API_KEY ontbreekt als env var');
-  }
+export async function sendEmail({ to, subject, html, text }) {
+  if (!process.env.RESEND_API_KEY) throw new Error('RESEND_API_KEY ontbreekt');
   const from = getFrom();
+  const toArr = (Array.isArray(to) ? to : [to]).filter(Boolean);
 
-  const result = await resend.emails.send({ from, to, subject, html });
-
-  if (result?.error) {
-    throw new Error(result.error?.message || 'Onbekende Resend-fout');
+  // Free-plan: filter alle niet-toegestane ontvangers weg
+  const filteredTo = toArr.filter(isAllowedRecipient);
+  if (filteredTo.length === 0) {
+    return { id: null }; // niets verstuurd; caller logt 'blocked_free_plan'
   }
-  return result;
+
+  const res = await resend.emails.send({
+    from,
+    to: filteredTo,
+    subject,
+    html,
+    text: text || (html ? html.replace(/<[^>]+>/g, ' ') : '')
+  });
+
+  if (res?.error) {
+    throw new Error(res.error?.message || 'Resend error');
+  }
+  return res?.data || { id: null };
 }
+
+export const __mailInternals = { isAllowedRecipient };
