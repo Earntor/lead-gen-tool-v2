@@ -33,6 +33,142 @@ function getFlagCodeFromLead(lead) {
   return code;
 }
 
+// === Bron-bepaling helpers ===============================================
+
+// Veilig hostnaam uit een URL halen
+function safeHost(url) {
+  try {
+    const u = new URL(url);
+    return u.hostname.replace(/^www\./i, '');
+  } catch {
+    return null;
+  }
+}
+
+// Querystring -> object
+function parseQuery(url) {
+  try {
+    const u = new URL(url);
+    const q = {};
+    u.searchParams.forEach((v, k) => (q[k.toLowerCase()] = v));
+    return q;
+  } catch {
+    return {};
+  }
+}
+
+// Is referrer intern (zelfde host als page_url)?
+function isInternalReferrer(referrer, pageUrl) {
+  const refHost = safeHost(referrer);
+  const pageHost = safeHost(pageUrl);
+  if (!refHost || !pageHost) return false;
+  return refHost === pageHost;
+}
+
+// Kanaal uit UTM (first-touch: UTM wint)
+function channelFromUtm(utm_source = '', utm_medium = '') {
+  const src = (utm_source || '').toLowerCase();
+  const med = (utm_medium || '').toLowerCase();
+
+  const has = (re) => re.test(med) || re.test(src);
+
+  if (has(/cpc|ppc|paidsearch|sem|ads|adwords|googleads|msads/)) return 'Paid Search';
+  if (has(/display|banner|gdn|programmatic/)) return 'Display';
+  if (has(/email|newsletter/)) return 'Email';
+  if (has(/paid.?social|paidsocial|sponsored/)) return 'Paid Social';
+  if (has(/social/) && !has(/paid/)) return 'Organic Social';
+  if (has(/affiliate|partner/)) return 'Affiliate';
+  if (has(/referral/)) return 'Referral';
+  if (has(/organic|seo/)) return 'Organic Search';
+
+  return 'Other (UTM)';
+}
+
+// Kanaal uit referrer host
+function channelFromReferrerHost(host = '') {
+  const h = (host || '').toLowerCase();
+
+  // Search engines
+  if (/(^|\.)google\./.test(h)
+   || /(^|\.)bing\./.test(h)
+   || /(^|\.)duckduckgo\./.test(h)
+   || /(^|\.)yahoo\./.test(h)
+   || /(^|\.)ecosia\./.test(h)
+   || /(^|\.)yandex\./.test(h)) {
+    return 'Organic Search';
+  }
+
+  // Social (zonder UTM aannemen: organic)
+  if (/(^|\.)facebook\.com$/.test(h)
+   || /(^|\.)instagram\.com$/.test(h)
+   || /(^|\.)linkedin\.com$/.test(h)
+   || /(^|\.)x\.com$/.test(h)
+   || /(^|\.)twitter\.com$/.test(h)
+   || /(^|\.)t\.co$/.test(h)
+   || /(^|\.)pinterest\./.test(h)
+   || /(^|\.)tiktok\.com$/.test(h)
+   || /(^|\.)reddit\.com$/.test(h)
+   || /(^|\.)youtube\.com$/.test(h)) {
+    return 'Social';
+  }
+
+  return 'Referral';
+}
+
+// Click-id heuristiek (als er geen UTM en geen bruikbare referrer is)
+function channelFromClickId(q = {}) {
+  if (q.gclid || q.gbraid || q.wbraid) return 'Paid Search';      // Google Ads
+  if (q.msclkid) return 'Paid Search';                             // Microsoft Ads
+  if (q.fbclid || q.ttclid || q.igshid) return 'Paid Social';      // Meta/TikTok/IG
+  return null;
+}
+
+// Bepaalt de bron van de EERSTE sessie van deze bezoeker
+function deriveVisitorSource(sessions = []) {
+  if (!sessions || sessions.length === 0) return 'Direct';
+
+  // Sorteer oplopend op tijd (oudste eerst)
+  const sortedAsc = [...sessions].sort(
+    (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+  );
+  const first = sortedAsc[0];
+
+  const utm_source = first.utm_source || '';
+  const utm_medium = first.utm_medium || '';
+  const utm_campaign = first.utm_campaign || '';
+  const referrer = first.referrer || '';
+  const pageUrl = first.page_url || '';
+
+  // 1) UTM wint altijd (mits gevuld)
+  if (utm_source || utm_medium) {
+    const channel = channelFromUtm(utm_source, utm_medium);
+    const detail = `${utm_source || 'onbekend'}/${utm_medium || 'onbekend'}${
+      utm_campaign ? ` (${utm_campaign})` : ''
+    }`;
+    return `🎯 Bron: ${channel} — ${detail}`;
+  }
+
+  // 2) Referrer (extern)
+  const refHost = safeHost(referrer);
+  if (refHost && !isInternalReferrer(referrer, pageUrl)) {
+    const channel = channelFromReferrerHost(refHost);
+    return `🎯 Bron: ${channel} — ${refHost}`;
+  }
+
+  // 3) Click-IDs in de landings-URL
+  const q = parseQuery(pageUrl);
+  const clickChannel = channelFromClickId(q);
+  if (clickChannel) {
+    const idKey = Object.keys(q).find((k) =>
+      ['gclid','gbraid','wbraid','msclkid','fbclid','ttclid','igshid'].includes(k)
+    );
+    return `🎯 Bron: ${clickChannel} — ${idKey || 'click-id'}`;
+  }
+
+  // 4) Anders direct
+  return '🎯 Bron: Direct';
+}
+
 
 // Skeletons loading
 function FiltersSkeleton() {
@@ -1911,6 +2047,10 @@ body: JSON.stringify({ company_domain: openNoteFor, deleteAllForDomain: true }),
                 Bezoeker {index + 1}
                 <span>{isOpen ? "▲" : "▼"}</span>
               </button>
+      <div className="mt-2 text-xs text-gray-600">
+        {deriveVisitorSource(sessions)}
+      </div>
+
               {isOpen && (
                 <div className="mt-3 space-y-2">
                   

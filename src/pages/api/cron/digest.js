@@ -77,21 +77,21 @@ function buildSubject(frequency, count, periodStartISO, timeZone) {
     const wd = weekdayNameNL(periodStartISO, timeZone);      // maandag
     const day = dayOfMonthNL(periodStartISO, timeZone);      // 23
     const mon = monthNameNL(periodStartISO, timeZone);       // september
-    return `${count} bezoekers op ${wd} ${day} ${mon}`;
+    return `${count} bedrijven op ${wd} ${day} ${mon}`;
   }
   if (frequency === 'weekly') {
     // {aantal} bezoekers in week {weeknummer}
     const localYMD = getLocalYMD(periodStartISO, timeZone);
     const wk = isoWeekNumber(localYMD);
-    return `${count} bezoekers in week ${wk}`;
+    return `${count} bedrijven in week ${wk}`;
   }
   if (frequency === 'monthly') {
     // {aantal} bezoekers in {maand}
     const mon = monthNameNL(periodStartISO, timeZone);
-    return `${count} bezoekers in ${mon}`;
+    return `${count} bedrijven in ${mon}`;
   }
   // fallback (zou niet moeten gebeuren)
-  return `${count} bezoekers`;
+  return `${count} bedrijven`;
 }
 // ------------------- EINDE SUBJECT HELPERS -------------------
 
@@ -268,9 +268,9 @@ const uniqueCompanies = companies || [];
 
       // 3) Mail voorbereiden
       const titleMap = {
-        daily:   'Dagelijks bezoekersoverzicht',
-        weekly:  'Wekelijks bezoekersoverzicht',
-        monthly: 'Maandelijks bezoekersoverzicht'
+        daily:   'Dagelijks bedrijvenoverzicht',
+        weekly:  'Wekelijks bedrijvenoverzicht',
+        monthly: 'Maandelijks bedrijvenoverzicht'
       };
       const title     = titleMap[frequency];
       const rangeText = `${fmtNL(periodStartISO)} — ${fmtNL(periodEndISO)}`;
