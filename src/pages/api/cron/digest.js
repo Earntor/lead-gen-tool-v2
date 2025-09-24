@@ -29,6 +29,116 @@ function fmtNL(d) {
   }
 }
 
+// --------------------- SUBJECT HELPERS ---------------------
+function getLocalYMD(iso, timeZone) {
+  // Haal Y-M-D op in de gewenste timezone en maak er een "datum zonder tijdzone" van
+  const d = new Date(iso);
+  const parts = new Intl.DateTimeFormat('nl-NL', {
+    timeZone, year: 'numeric', month: 'numeric', day: 'numeric'
+  }).formatToParts(d).reduce((acc, p) => (acc[p.type] = p.value, acc), {});
+  const y = Number(parts.year), m = Number(parts.month), day = Number(parts.day);
+  // Gebruik UTC om tijdzone-ruis te voorkomen (we rekenen alleen met datum)
+  return new Date(Date.UTC(y, m - 1, day));
+}
+
+function isoWeekNumber(dateUTC) {
+  // dateUTC is een Date op middernacht UTC van de lokale datum
+  const tmp = new Date(Date.UTC(
+    dateUTC.getUTCFullYear(), dateUTC.getUTCMonth(), dateUTC.getUTCDate()
+  ));
+  // Donderdag is in week 1 volgens ISO-8601
+  const day = tmp.getUTCDay() || 7;
+  tmp.setUTCDate(tmp.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((tmp - yearStart) / 86400000) + 1) / 7);
+  return weekNo;
+}
+
+function monthNameNL(iso, timeZone) {
+  return new Intl.DateTimeFormat('nl-NL', { timeZone, month: 'long' })
+    .format(new Date(iso))
+    .toLowerCase();
+}
+
+function weekdayNameNL(iso, timeZone) {
+  return new Intl.DateTimeFormat('nl-NL', { timeZone, weekday: 'long' })
+    .format(new Date(iso))
+    .toLowerCase();
+}
+
+function dayOfMonthNL(iso, timeZone) {
+  return new Intl.DateTimeFormat('nl-NL', { timeZone, day: 'numeric' })
+    .format(new Date(iso));
+}
+
+function buildSubject(frequency, count, periodStartISO, timeZone) {
+  if (frequency === 'daily') {
+    // {aantal} bezoekers op {maandag} {23} {september}
+    const wd = weekdayNameNL(periodStartISO, timeZone);      // maandag
+    const day = dayOfMonthNL(periodStartISO, timeZone);      // 23
+    const mon = monthNameNL(periodStartISO, timeZone);       // september
+    return `${count} bezoekers op ${wd} ${day} ${mon}`;
+  }
+  if (frequency === 'weekly') {
+    // {aantal} bezoekers in week {weeknummer}
+    const localYMD = getLocalYMD(periodStartISO, timeZone);
+    const wk = isoWeekNumber(localYMD);
+    return `${count} bezoekers in week ${wk}`;
+  }
+  if (frequency === 'monthly') {
+    // {aantal} bezoekers in {maand}
+    const mon = monthNameNL(periodStartISO, timeZone);
+    return `${count} bezoekers in ${mon}`;
+  }
+  // fallback (zou niet moeten gebeuren)
+  return `${count} bezoekers`;
+}
+// ------------------- EINDE SUBJECT HELPERS -------------------
+
+// --------------------- PERIODE-LABEL HELPER ---------------------
+function buildPeriodLabel(frequency, periodStartISO, timeZone) {
+  const src = new Date(periodStartISO);
+
+  if (frequency === 'daily') {
+    const wd = new Intl.DateTimeFormat('nl-NL', { timeZone, weekday: 'long' })
+      .format(src).toLowerCase();          // maandag
+    const day = new Intl.DateTimeFormat('nl-NL', { timeZone, day: 'numeric' })
+      .format(src);                         // 22
+    const mon = new Intl.DateTimeFormat('nl-NL', { timeZone, month: 'long' })
+      .format(src).toLowerCase();          // september
+    return `${wd} ${day} ${mon}`;
+  }
+
+  if (frequency === 'weekly') {
+    // Pak de lokale datum (Y-M-D) in gewenste TZ om correcte ISO-week te krijgen
+    const parts = new Intl.DateTimeFormat('nl-NL', {
+      timeZone, year: 'numeric', month: 'numeric', day: 'numeric'
+    }).formatToParts(src).reduce((acc, p) => (acc[p.type] = p.value, acc), {});
+    const y = Number(parts.year), m = Number(parts.month), d = Number(parts.day);
+    const localUTC = new Date(Date.UTC(y, m - 1, d));
+
+    // ISO weeknummer (week met eerste donderdag is week 1)
+    const tmp = new Date(Date.UTC(localUTC.getUTCFullYear(), localUTC.getUTCMonth(), localUTC.getUTCDate()));
+    const dayOfWeek = tmp.getUTCDay() || 7;
+    tmp.setUTCDate(tmp.getUTCDate() + 4 - dayOfWeek);
+    const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil((((tmp - yearStart) / 86400000) + 1) / 7);
+
+    return `week ${weekNo}`;
+  }
+
+  if (frequency === 'monthly') {
+    const mon = new Intl.DateTimeFormat('nl-NL', { timeZone, month: 'long' })
+      .format(src).toLowerCase();          // augustus
+    return mon;
+  }
+
+  // fallback
+  return '';
+}
+// ------------------- EINDE PERIODE-LABEL HELPER -------------------
+
+
 function isMondayInTZ(date = new Date(), timeZone = TZ) {
   const wd = new Intl.DateTimeFormat('nl-NL', { timeZone, weekday: 'short' }).format(date).toLowerCase();
   return wd.startsWith('ma'); // maandag
@@ -52,7 +162,7 @@ async function getStrictBounds(frequency) {
   return { start: row.period_start_utc, end: row.period_end_utc };
 }
 
-function buildEmailHTML({ title, rangeText, leads, appUrl }) {
+function buildEmailHTML({ title, periodLabel, leads, appUrl }) {
   const rows = (leads || []).slice(0, 10).map(l => `
     <tr>
       <td style="padding:8px;border-bottom:1px solid #eee;">
@@ -72,7 +182,7 @@ function buildEmailHTML({ title, rangeText, leads, appUrl }) {
   return `
     <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:720px;margin:0 auto;">
       <h1 style="margin:0 0 8px 0;">${title}</h1>
-      <p style="margin:0 0 16px 0;color:#555;">Periode: ${rangeText}</p>
+      <p style="margin:0 0 16px 0;color:#555;">Periode: ${periodLabel}</p>
       <p style="margin:0 0 16px 0;">Totaal nieuwe leads: <strong>${leads?.length || 0}</strong></p>
 
       <table cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;">
@@ -98,6 +208,7 @@ function buildEmailHTML({ title, rangeText, leads, appUrl }) {
     </div>
   `;
 }
+
 
 async function runFrequencyWithBounds(frequency, bounds) {
   const periodStartISO = bounds.start;
@@ -160,15 +271,21 @@ async function runFrequencyWithBounds(frequency, bounds) {
 
       // 3) Mail voorbereiden
       const titleMap = {
-        daily:   'Dagelijks leadoverzicht',
-        weekly:  'Wekelijks leadoverzicht',
-        monthly: 'Maandelijks leadoverzicht'
+        daily:   'Dagelijks bezoekersoverzicht',
+        weekly:  'Wekelijks bezoekersoverzicht',
+        monthly: 'Maandelijks bezoekersoverzicht'
       };
       const title     = titleMap[frequency];
       const rangeText = `${fmtNL(periodStartISO)} — ${fmtNL(periodEndISO)}`;
       const appUrl    = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || '#';
       const allowed   = __mailInternals.isAllowedRecipient(recipientEmail);
       const isFree    = (process.env.RESEND_PLAN || '').toLowerCase() === 'free';
+      const periodLabel = buildPeriodLabel(frequency, periodStartISO, TZ);
+
+
+      // ✉️ Nieuw subject op basis van frequentie + aantal leads
+const subject = buildSubject(frequency, (leads?.length || 0), periodStartISO, TZ);
+
 
      // ⚠️ Bij 0 leads: niet mailen, alleen loggen
 if (!leads || leads.length === 0) {
@@ -189,7 +306,7 @@ if (!leads || leads.length === 0) {
 
 
       // 5) Wel leads → mailen of blokkeren (Free)
-      const html = buildEmailHTML({ title, rangeText, leads, appUrl });
+const html = buildEmailHTML({ title, periodLabel, leads, appUrl });
 
       if (!allowed && isFree) {
         await supabaseAdmin.from('email_log').insert({
@@ -204,11 +321,12 @@ if (!leads || leads.length === 0) {
         });
         results.push({ user_id, org_id, status: 'blocked_free_plan' });
       } else {
-        const sent = await sendEmail({
-          to: recipientEmail,
-          subject: `${title} • ${rangeText}`,
-          html
-        });
+       const sent = await sendEmail({
+  to: recipientEmail,
+  subject, // nieuw dynamisch subject
+  html
+});
+
 
         await supabaseAdmin.from('email_log').insert({
           user_id, org_id, frequency,
