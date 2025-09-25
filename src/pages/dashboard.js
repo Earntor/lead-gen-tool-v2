@@ -870,7 +870,9 @@ const visibleCompanyDomains = useMemo(() => {
 
 // Refs zodat realtime callbacks altijd de nieuwste sets zien
 const visibleDomainsRef = useRef(new Set());
-useEffect(() => { visibleDomainsRef.current = visibleCompanyDomains; }, [visibleCompanyDomains]);
+useEffect(() => {
+  visibleDomainsRef.current = visibleCompanyDomains;
+}, [visibleCompanyDomains]);
 
 function companyWouldBeVisibleAfterAddingLead(newLead) {
   // 1) Per-lead filters (zoals in filteredLeads)
@@ -939,12 +941,10 @@ function companyWouldBeVisibleAfterAddingLead(newLead) {
 
 // Eén centrale handler voor INSERT events (realtime + gap-fill)
 function handleIncomingLead(lead, { silent = false } = {}) {
+    console.log('[RT] incoming lead', { lead, silent });
   if (!lead?.company_domain || !lead?.company_name) return;
 
-  // Alleen events na sessiestart (serverkolom created_at)
-  const createdAt = lead.created_at ? new Date(lead.created_at).getTime() : 0;
-  const sessionStart = new Date(sessionStartRef.current).getTime();
-  if (!createdAt || createdAt < sessionStart) return;
+// Realtime: accepteer alle INSERTS (gap-fill dekt oud spul af)
 
   // Als al zichtbaar onder de huidige filters, of al als override getoond → niets doen
   if (visibleDomainsRef.current.has(lead.company_domain)) return;
@@ -977,15 +977,14 @@ useEffect(() => {
       (payload) => {
         const lead = payload?.new;
         if (!lead) return;
-
-        // Confidence-drempel respecteren als je 'm aanzet
-        const conf = getConfidence(lead);
-        if (typeof CONFIDENCE_MIN === 'number' && (conf == null || conf < CONFIDENCE_MIN)) return;
-
-        handleIncomingLead(lead, { silent: false });
-      }
-    )
-    .subscribe();
+if (!lead.company_domain /* of company_name verplicht? kies jij */) return;
+      if (visibleDomainsRef.current.has(lead.company_domain)) return;
+      if (overrideDomainsRef.current.has(lead.company_domain)) return;
+      setPendingByDomain(prev => prev.has(lead.company_domain) ? prev : new Map(prev).set(lead.company_domain, lead));
+      pingSound(soundOn);
+    }
+  )
+  .subscribe();
 
   // GAP-FILL: alles tussen sessieStart en subscribe-tijd alsnog toevoegen (stil, geen ping)
   (async () => {
