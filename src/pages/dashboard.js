@@ -942,7 +942,32 @@ function companyWouldBeVisibleAfterAddingLead(newLead) {
 // Eén centrale handler voor INSERT events (realtime + gap-fill)
 function handleIncomingLead(lead, { silent = false } = {}) {
     console.log('[RT] incoming lead', { lead, silent });
-  if (!lead?.company_domain || !lead?.company_name) return;
+ if (!lead?.company_domain) return;
+ // Alleen tonen als verrijkt (company_name aanwezig)
+ const isEnriched = !!lead.company_name;
+ if (!isEnriched) return; // wachten op UPDATE
+
+// Bedrijf staat al in de lijst → pulse badge i.p.v. pending
+  if (visibleDomainsRef.current.has(lead.company_domain)) {
+    setPulseDomains(prev => {
+      const next = new Set(prev); next.add(lead.company_domain); return next;
+    });
+    setTimeout(() => {
+      setPulseDomains(prev => {
+        const next = new Set(prev); next.delete(lead.company_domain); return next;
+      });
+    }, 4000);
+    if (!silent) pingSound(soundOn);
+    return;
+  }
+
+  if (overrideDomainsRef.current.has(lead.company_domain)) return;
+
+  setPendingByDomain(prev =>
+    prev.has(lead.company_domain) ? prev : new Map(prev).set(lead.company_domain, lead)
+  );
+  if (!silent) pingSound(soundOn);
+}
 
 // Realtime: accepteer alle INSERTS (gap-fill dekt oud spul af)
 
@@ -966,26 +991,34 @@ useEffect(() => {
   const orgId = profile?.current_org_id;
   if (!orgId) return;
 
-  // Vastleggen: alles t/m dit moment valt in gap-fill
   const subscribedAtIso = new Date().toISOString();
 
-  const channel = supabase
+  const ch = supabase
     .channel(`leads:org:${orgId}:newCompanies`)
+    // INSERT: alleen doorgeven als al verrijkt; anders wachten we op UPDATE
     .on(
       'postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'leads', filter: `org_id=eq.${orgId}` },
       (payload) => {
-        const lead = payload?.new;
-        if (!lead) return;
-if (!lead.company_domain /* of company_name verplicht? kies jij */) return;
-      if (visibleDomainsRef.current.has(lead.company_domain)) return;
-      if (overrideDomainsRef.current.has(lead.company_domain)) return;
-      setPendingByDomain(prev => prev.has(lead.company_domain) ? prev : new Map(prev).set(lead.company_domain, lead));
-      pingSound(soundOn);
-    }
-  )
-  .subscribe();
-
+        const row = payload?.new;
+        if (!row?.company_domain) return;
+        if (row.company_name) handleIncomingLead(row, { silent: false });
+      }
+    )
+    // UPDATE: pak ‘m op zodra verrijkt (company_name ging van null → waarde)
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'leads', filter: `org_id=eq.${orgId}` },
+      (payload) => {
+        const oldRow = payload?.old;
+        const row    = payload?.new;
+        if (!row?.company_domain) return;
+        const becameEnriched = !oldRow?.company_name && !!row.company_name;
+        if (becameEnriched) handleIncomingLead(row, { silent: false });
+      }
+    )
+    .subscribe();
+    
   // GAP-FILL: alles tussen sessieStart en subscribe-tijd alsnog toevoegen (stil, geen ping)
   (async () => {
     try {
