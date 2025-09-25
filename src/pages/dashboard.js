@@ -1,6 +1,6 @@
 import { useRouter } from "next/router";
 import { supabase } from "../lib/supabaseClient";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { formatDutchDateTime } from '../lib/formatTimestamp';
@@ -145,14 +145,14 @@ function deriveVisitorSource(sessions = []) {
     const detail = `${utm_source || 'onbekend'}/${utm_medium || 'onbekend'}${
       utm_campaign ? ` (${utm_campaign})` : ''
     }`;
-    return `🎯 Bron: ${channel} — ${detail}`;
+    return `🎯 Bron: ${channel} / ${detail}`;
   }
 
   // 2) Referrer (extern)
   const refHost = safeHost(referrer);
   if (refHost && !isInternalReferrer(referrer, pageUrl)) {
     const channel = channelFromReferrerHost(refHost);
-    return `🎯 Bron: ${channel} — ${refHost}`;
+    return `🎯 Bron: ${channel} / ${refHost}`;
   }
 
   // 3) Click-IDs in de landings-URL
@@ -162,7 +162,7 @@ function deriveVisitorSource(sessions = []) {
     const idKey = Object.keys(q).find((k) =>
       ['gclid','gbraid','wbraid','msclkid','fbclid','ttclid','igshid'].includes(k)
     );
-    return `🎯 Bron: ${clickChannel} — ${idKey || 'click-id'}`;
+    return `🎯 Bron: ${clickChannel} / ${idKey || 'click-id'}`;
   }
 
   // 4) Anders direct
@@ -248,6 +248,55 @@ function withTimeout(promise, ms = 8000) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+// === Realtime helpers voor nieuwe bedrijven ===
+const CONFIDENCE_MIN = null; // pas aan naar wens
+
+function getConfidence(lead) {
+  const c = lead?.confidence;
+  const a = lead?.auto_confidence;
+  if (c != null) return Number(c);
+  if (a != null) return Number(a);
+  return null;
+}
+
+// Korte 'ping' zonder assets
+async function pingSound(enabled) {
+  if (!enabled || typeof window === 'undefined') return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.value = 880;
+    o.connect(g); g.connect(ctx.destination);
+    g.gain.setValueAtTime(0.0001, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.05, ctx.currentTime + 0.01);
+    o.start();
+    o.stop(ctx.currentTime + 0.12);
+  } catch {}
+}
+
+// Compacte knop boven de cards
+function NewCompaniesButton({ count, onApply }) {
+  if (!count || count <= 0) return null;
+  return (
+    <div className="sticky top-0 z-20 mb-3">
+      <div className="mx-auto px-2">
+        <div className="flex items-center justify-between rounded-xl border border-blue-500 bg-blue-50 px-3 py-2 shadow-sm">
+          <button
+            onClick={onApply}
+            className="text-sm font-semibold text-blue-800 hover:underline"
+            aria-label={`${count} nieuwe bedrijven tonen`}
+            title="Klik om de nieuwe bedrijven bovenaan te tonen"
+          >
+            {count} nieuwe {count === 1 ? 'bezoeker' : 'bezoekers'}!
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 
 export default function Dashboard() {
@@ -290,6 +339,21 @@ const [authToken, setAuthToken] = useState(null);
 const [notesByDomain, setNotesByDomain] = useState({}); // { [domain]: "note text" }
 const geocodeCacheRef = useRef(new Map()); // key: adres-string → { lat, lon }
 const [profile, setProfile] = useState(null);
+// Sessie-start: alleen events vanaf dit moment tellen
+const sessionStartRef = useRef(new Date().toISOString());
+
+// Buffer: nieuwe bedrijven die nog niet zijn toegepast (Map: domain -> lead)
+const [pendingByDomain, setPendingByDomain] = useState(() => new Map());
+
+// Geluid: uit profiel-voorkeuren (default true; zetten we in run() correct)
+const [soundOn, setSoundOn] = useState(true);
+
+// ❇️ Tijdelijke overrides voor bedrijven buiten de huidige filters
+const [overrideDomains, setOverrideDomains] = useState(new Set());
+
+
+const overrideDomainsRef = useRef(new Set());
+useEffect(() => { overrideDomainsRef.current = overrideDomains; }, [overrideDomains]);
 
 
   useEffect(() => {
@@ -361,7 +425,7 @@ const [profile, setProfile] = useState(null);
     // 3) Profiel (org) + alvast in parallel starten
     const profileP = supabase
       .from('profiles')
-      .select('current_org_id')
+      .select('current_org_id, preferences')
       .eq('id', user.id)
       .single();
 
@@ -384,8 +448,14 @@ const [profile, setProfile] = useState(null);
       return;
     }
 
-    if (!cancelled) setProfile(profileRow);
-    const orgId = profileRow.current_org_id;
+    if (!cancelled) {
+  setProfile(profileRow);
+  // Init geluid uit profiel (default = true als niet gezet)
+  const prefSound = profileRow?.preferences?.newLeadSoundOn;
+  setSoundOn(prefSound == null ? true : !!prefSound);
+}
+const orgId = profileRow.current_org_id;
+
 
     // 4) Data-parallel: LEADS (kritiek) + LABELS (mag later)
     const leadsQ = supabase
@@ -433,27 +503,7 @@ setUniqueCategories(Array.from(categoriesSet).sort());
     });
 
     // 5) Realtime subscriptions (blokkeert niet)
-    const leadsCh = supabase
-      .channel(`leads:org:${orgId}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'leads', filter: `org_id=eq.${orgId}` },
-        (payload) => {
-          const lead = payload.new;
-          const isValidVisitor =
-            lead.org_id === orgId &&
-            lead.source === 'tracker' &&
-            !!lead.ip_address &&
-            !!lead.page_url &&
-            !!lead.timestamp &&
-            !lead.page_url.includes(window.location.host);
-
-          if (isValidVisitor) {
-            setAllLeads(prev => [lead, ...prev]);
-          }
-        }
-      )
-      .subscribe();
+    
 
     const labelsCh = supabase
       .channel(`labels:org:${orgId}`)
@@ -475,7 +525,6 @@ setUniqueCategories(Array.from(categoriesSet).sort());
 
     // 6) Cleanup vanuit run (als effect opnieuw draait)
     return () => {
-      supabase.removeChannel(leadsCh);
       supabase.removeChannel(labelsCh);
     };
   };
@@ -488,6 +537,28 @@ setUniqueCategories(Array.from(categoriesSet).sort());
     if (typeof unsub === 'function') try { unsub(); } catch {}
   };
 }, [router]);
+
+// 🔔 Houd soundOn live in sync met profiel-voorkeuren uit Account
+// ⬇️ Realtime: volg profiel-voorkeuren (newLeadSoundOn) live
+useEffect(() => {
+  if (!user?.id) return;
+
+  const ch = supabase
+    .channel(`profiles:preferences:${user.id}`)
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${user.id}` },
+      (payload) => {
+        const pref = payload?.new?.preferences || {};
+        const v = pref.newLeadSoundOn;
+        // zelfde default als bij initial load: true indien niet gezet
+        setSoundOn(v == null ? true : !!v);
+      }
+    )
+    .subscribe();
+
+  return () => { supabase.removeChannel(ch); };
+}, [user?.id]);
 
 
   // ⬇️ Batch: alle notities in één keer (géén N+1 meer)
@@ -763,6 +834,238 @@ const groupedCompanies = filteredLeads.reduce((acc, lead) => {
   ? allCompanies.find((c) => c.company_name === selectedCompany)
   : null;
 
+  // Domein → company (lookup)
+const domainToCompany = useMemo(() => {
+  const m = new Map();
+  for (const c of allCompanies) {
+    if (c?.company_domain) m.set(c.company_domain, c);
+  }
+  return m;
+}, [allCompanies]);
+
+// Bovenaan te tonen bedrijven die buiten je filters vallen (met badge)
+const overrideCompanies = useMemo(() => {
+  const arr = Array.from(overrideDomains)
+    .map(d => domainToCompany.get(d))
+    .filter(Boolean);
+  // Sorteer zoals 'recent'
+  arr.sort((a, b) => {
+    const lastA = fullVisitMap[a.company_name]?.[0]?.timestamp || '';
+    const lastB = fullVisitMap[b.company_name]?.[0]?.timestamp || '';
+    return new Date(lastB) - new Date(lastA);
+  });
+  return arr;
+}, [overrideDomains, domainToCompany, fullVisitMap]);
+
+
+  // Domeinen van bedrijven die nu (met filters) zichtbaar zijn
+const visibleCompanyDomains = useMemo(() => {
+  const s = new Set();
+  for (const c of companies) {
+    if (c?.company_domain) s.add(c.company_domain);
+  }
+  return s;
+}, [companies]);
+
+
+// Refs zodat realtime callbacks altijd de nieuwste sets zien
+const visibleDomainsRef = useRef(new Set());
+useEffect(() => { visibleDomainsRef.current = visibleCompanyDomains; }, [visibleCompanyDomains]);
+
+function companyWouldBeVisibleAfterAddingLead(newLead) {
+  // 1) Per-lead filters (zoals in filteredLeads)
+  if (!newLead?.timestamp || !isInDateRange(newLead.timestamp)) return false;
+  if (categoryFilter && ((newLead.category_nl || newLead.category) !== categoryFilter)) return false;
+  if (minDuration && (!newLead.duration_seconds || newLead.duration_seconds < parseInt(minDuration))) return false;
+
+  // Label-filter op bedrijfsniveau
+  if (labelFilter) {
+    const hasLabel = labels.find(
+      (lab) => lab.company_name === newLead.company_name && lab.label === labelFilter
+    );
+    if (!hasLabel) return false;
+  }
+
+  // 2) Bestaande sessies binnen filter + nieuwe lead toevoegen
+  const existingInRange = (allLeads || []).filter((l) => {
+    if (l.company_name !== newLead.company_name) return false;
+    if (!l.timestamp || !isInDateRange(l.timestamp)) return false;
+    if (categoryFilter && ((l.category_nl || l.category) !== categoryFilter)) return false;
+    if (minDuration && (!l.duration_seconds || l.duration_seconds < parseInt(minDuration))) return false;
+    return true;
+  });
+  const augmented = [...existingInRange, newLead];
+
+  // 3) Minimaal aantal bezoeken
+  if (minVisits && augmented.length < parseInt(minVisits)) return false;
+
+  // 4) Bezoekersgedrag (zelfde logica als in je lijst)
+  if (visitorTypeFilter.length > 0) {
+    const uniqueVisitors = new Set(
+      augmented.map((v) => v.anon_id || `onbekend-${v.id}`)
+    );
+
+    const match = visitorTypeFilter.some((type) => {
+      if (type === "first") return uniqueVisitors.size === 1;
+      if (type === "returning") return uniqueVisitors.size > 1;
+      if (type === "highEngagement") {
+        const totalDuration = augmented.reduce((sum, v) => sum + (v.duration_seconds || 0), 0);
+        const latestTs = augmented
+          .map(v => v.timestamp ? new Date(v.timestamp).getTime() : 0)
+          .reduce((a, b) => Math.max(a, b), 0);
+        const now = Date.now();
+        const recencyDays = latestTs ? (now - latestTs) / (1000 * 60 * 60 * 24) : 999;
+
+        const visitsScore = Math.min(augmented.length / 10, 1);
+        const durationScore = Math.min(totalDuration / 600, 1);
+        const recencyScore =
+          recencyDays < 1 ? 1 :
+          recencyDays < 7 ? 0.7 :
+          recencyDays < 30 ? 0.4 : 0.1;
+
+        const leadRating = Math.round(
+          (visitsScore * 0.4 + durationScore * 0.3 + recencyScore * 0.3) * 100
+        );
+        return leadRating >= 60;
+      }
+      return false;
+    });
+
+    if (!match) return false;
+  }
+
+  return true;
+}
+
+// Eén centrale handler voor INSERT events (realtime + gap-fill)
+function handleIncomingLead(lead, { silent = false } = {}) {
+  if (!lead?.company_domain || !lead?.company_name) return;
+
+  // Alleen events na sessiestart (serverkolom created_at)
+  const createdAt = lead.created_at ? new Date(lead.created_at).getTime() : 0;
+  const sessionStart = new Date(sessionStartRef.current).getTime();
+  if (!createdAt || createdAt < sessionStart) return;
+
+  // Als al zichtbaar onder de huidige filters, of al als override getoond → niets doen
+  if (visibleDomainsRef.current.has(lead.company_domain)) return;
+  if (overrideDomainsRef.current.has(lead.company_domain)) return;
+
+  // Dedupe in pending
+  setPendingByDomain(prev => {
+    if (prev.has(lead.company_domain)) return prev;
+    const next = new Map(prev);
+    next.set(lead.company_domain, lead);
+    return next;
+  });
+
+  if (!silent) pingSound(soundOn);
+}
+
+
+useEffect(() => {
+  const orgId = profile?.current_org_id;
+  if (!orgId) return;
+
+  // Vastleggen: alles t/m dit moment valt in gap-fill
+  const subscribedAtIso = new Date().toISOString();
+
+  const channel = supabase
+    .channel(`leads:org:${orgId}:newCompanies`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'leads', filter: `org_id=eq.${orgId}` },
+      (payload) => {
+        const lead = payload?.new;
+        if (!lead) return;
+
+        // Confidence-drempel respecteren als je 'm aanzet
+        const conf = getConfidence(lead);
+        if (typeof CONFIDENCE_MIN === 'number' && (conf == null || conf < CONFIDENCE_MIN)) return;
+
+        handleIncomingLead(lead, { silent: false });
+      }
+    )
+    .subscribe();
+
+  // GAP-FILL: alles tussen sessieStart en subscribe-tijd alsnog toevoegen (stil, geen ping)
+  (async () => {
+    try {
+      const { data } = await supabase
+        .from('leads')
+        .select('id, company_name, company_domain, timestamp, created_at, duration_seconds, confidence, auto_confidence')
+        .eq('org_id', orgId)
+        .gte('created_at', sessionStartRef.current)
+        .lte('created_at', subscribedAtIso);
+      (data || []).forEach(l => handleIncomingLead(l, { silent: true }));
+    } catch {}
+  })();
+
+  return () => { supabase.removeChannel(channel); };
+}, [profile?.current_org_id, soundOn]);
+
+
+// Verwijder pending domeinen die inmiddels al zichtbaar zijn geworden in de lijst
+useEffect(() => {
+  if (pendingByDomain.size === 0) return;
+
+  setPendingByDomain((prev) => {
+    let changed = false;
+    const next = new Map(prev);
+    for (const domain of Array.from(next.keys())) {
+      if (visibleCompanyDomains.has(domain)) {
+        next.delete(domain);
+        changed = true;
+      }
+    }
+    return changed ? next : prev;
+  });
+}, [visibleCompanyDomains, pendingByDomain.size]);
+
+// === Nieuwe-bedrijven knop: teller + handlers ===
+const newCompaniesCount = pendingByDomain.size;
+
+function applyPendingNewCompanies() {
+  if (pendingByDomain.size === 0) return;
+
+  const pendingLeads = Array.from(pendingByDomain.values());
+
+  // Nieuwste eerst
+  pendingLeads.sort((a, b) => {
+    const ta = new Date(a.timestamp || a.created_at || 0).getTime();
+    const tb = new Date(b.timestamp || b.created_at || 0).getTime();
+    return tb - ta;
+  });
+
+  // Voeg alles toe aan allLeads (ook buiten filter)
+  setAllLeads(prev => [...pendingLeads, ...prev]);
+
+  // Bepaal welke (nog) buiten je filters vallen → tijdelijk overriden met badge
+  const outside = pendingLeads.filter(l => !companyWouldBeVisibleAfterAddingLead(l));
+  if (outside.length > 0) {
+    setOverrideDomains(prev => {
+      const next = new Set(prev);
+      outside.forEach(l => next.add(l.company_domain));
+      return next;
+    });
+  }
+
+  // Buffer leeg → knop verdwijnt
+  setPendingByDomain(new Map());
+}
+
+// Badge weghalen zodra een override-domein door de filters zichtbaar is
+useEffect(() => {
+  if (overrideDomains.size === 0) return;
+  setOverrideDomains(prev => {
+    if (prev.size === 0) return prev;
+    const next = new Set(prev);
+    for (const d of Array.from(next)) {
+      if (visibleCompanyDomains.has(d)) next.delete(d);
+    }
+    return next;
+  });
+}, [visibleCompanyDomains, overrideDomains.size]);
+
   // boven in je component: een kleine cache is handig
 // const geocodeCacheRef = useRef(new Map());  // heb je deze nog niet, voeg 'm toe
 
@@ -832,9 +1135,12 @@ useEffect(() => {
 
 
 
-const filteredActivities = filteredLeads.filter(
-  (l) => l.company_name === selectedCompany
-);
+const isSelectedOverride =
+  !!(selectedCompanyData?.company_domain && overrideDomains.has(selectedCompanyData.company_domain));
+
+const filteredActivities = (isSelectedOverride ? allLeads : filteredLeads)
+  .filter(l => l.company_name === selectedCompany);
+
 
 const groupedByVisitor = filteredActivities.reduce((acc, activity) => {
   const key = activity.anon_id || `onbekend-${activity.id}`;
@@ -922,6 +1228,12 @@ const resetFilters = () => {
             <div className="h-3 w-36 bg-blue-100 rounded" />
           </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <NewCompaniesButton
+  count={newCompaniesCount}
+  onApply={applyPendingNewCompanies}
+/>
+
+
             {Array.from({ length: 10 }).map((_, i) => (
               <LeadCardSkeleton key={i} />
             ))}
@@ -1298,12 +1610,96 @@ const handleDeleteGlobalLabel = async (labelId) => {
 
 
 <div className="flex-1 overflow-y-auto p-4 space-y-4">
+<NewCompaniesButton
+  count={newCompaniesCount}
+  onApply={applyPendingNewCompanies}
+/>
 
-  {companies.length === 0 && (
-    <p className="text-sm text-gray-500 col-span-full">
-      Geen bezoekers binnen dit filter.
-    </p>
-  )}
+{/* ── Overrides: buiten filter, altijd bovenaan met badge ───────── */}
+{overrideCompanies.map((company) => {
+  const leads = fullVisitMap[company.company_name] || [];
+  const uniqueVisitorCount = new Set(leads.map(l => l.anon_id || `onbekend-${l.id}`)).size;
+  const totalDuration = leads.reduce((s,l)=> s+(l.duration_seconds||0), 0);
+  const minutes = Math.floor(totalDuration / 60);
+  const seconds = totalDuration % 60;
+
+  const latestVisit = leads[0]?.timestamp ? new Date(leads[0].timestamp) : null;
+  const now = new Date();
+  const recencyDays = latestVisit ? (now - latestVisit) / (1000*60*60*24) : 999;
+  const visitsScore   = Math.min(leads.length / 10, 1);
+  const durationScore = Math.min(totalDuration / 600, 1);
+  const recencyScore  = recencyDays < 1 ? 1 : recencyDays < 7 ? 0.7 : recencyDays < 30 ? 0.4 : 0.1;
+  const leadRating    = Math.round((visitsScore*0.4 + durationScore*0.3 + recencyScore*0.3) * 100);
+  let ratingColor = "#ef4444"; if (leadRating >= 80) ratingColor="#22c55e"; else if (leadRating >= 61) ratingColor="#eab308"; else if (leadRating >= 31) ratingColor="#f97316";
+
+  return (
+    <div
+      key={`override-${company.company_name}`}
+      onClick={() => { setSelectedCompany(company.company_name); setInitialVisitorSet(false); }}
+      className="cursor-pointer bg-white border border-amber-300 rounded-xl p-4 shadow hover:shadow-lg hover:scale-[1.02] transition-transform duration-200 ring-1 ring-amber-300"
+      title="Tijdelijk getoond buiten je filter"
+    >
+      <div className="flex justify-between items-start">
+        <div>
+          <div className="flex items-center gap-2">
+            {company.company_domain && (
+              <img
+                src={`https://img.logo.dev/${company.company_domain}?token=pk_R_r8ley_R_C7tprVCpFASQ`}
+                alt="logo"
+                className="w-6 h-6 object-contain rounded"
+                onError={(e)=> (e.currentTarget.style.display='none')}
+              />
+            )}
+            {(() => { const flagCode = getFlagCodeFromLead(company); return flagCode ? (
+              <img
+                src={`https://flagcdn.com/w20/${flagCode}.png`}
+                alt={company.domain_country || flagCode.toUpperCase()}
+                className="w-5 h-3 rounded shadow-sm"
+                onError={(e)=> (e.currentTarget.style.display='none')}
+                loading="lazy"
+              />
+            ) : null; })()}
+            <h3 className="text-base font-semibold text-gray-800">{company.company_name}</h3>
+            <span className="ml-1 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-300">
+              Buiten je filter
+            </span>
+          </div>
+
+          {company.kvk_city && <p className="text-xs text-gray-500 mt-0.5">📍 {company.kvk_city}</p>}
+          {company.company_domain && <p className="text-xs text-gray-500 truncate">🌐 {company.company_domain}</p>}
+          {(company.category_nl || company.category) && (
+            <p className="text-xs text-gray-500 truncate">🏷️ {company.category_nl || company.category}</p>
+          )}
+        </div>
+
+        <div className="text-right">
+          <p className="text-xs text-gray-500">{uniqueVisitorCount} {uniqueVisitorCount === 1 ? 'bezoeker' : 'bezoekers'}</p>
+          <p className="text-xs text-gray-500">{minutes}m {seconds}s</p>
+          <div className="mt-3">
+            <div className="w-full bg-gray-200 rounded-full h-2 relative">
+              <div className="h-2 rounded-full" style={{ width: `${leadRating}%`, backgroundColor: ratingColor }} />
+            </div>
+            <div className="text-xs text-gray-500 mt-1">Lead score: {leadRating}/100</div>
+            <div className="text-[10px] text-gray-400">
+              {leadRating < 31 && "Laag"}
+              {leadRating >= 31 && leadRating <= 60 && "Gemiddeld"}
+              {leadRating >= 61 && leadRating <= 79 && "Hoog"}
+              {leadRating >= 80 && "Zeer hoog"}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+})}
+
+
+  {companies.length === 0 && overrideCompanies.length === 0 && (
+  <p className="text-sm text-gray-500 col-span-full">
+    Geen bezoekers binnen dit filter.
+  </p>
+)}
+
   {companies
   .filter((c) => {
   const naam = (c.company_name || "").toLowerCase();
@@ -1437,6 +1833,12 @@ if (leadRating >= 80) {
   <h3 className="text-base font-semibold text-gray-800">
     {company.company_name}
   </h3>
+
+  {overrideDomains.has(company.company_domain) && (
+    <span className="ml-1 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-300">
+      Buiten je filter
+    </span>
+  )}
 </div>
 
 

@@ -224,6 +224,34 @@ useEffect(() => {
     setPreferences((prev) => ({ ...prev, [key]: value }))
   }
 
+// === Nieuw: voorkeur direct in profiel opslaan ===
+async function saveProfilePreference(key, value) {
+  if (!user?.id) return;
+
+  // Nieuwe preferences opbouwen (optimistic UI)
+  const next = { ...(preferences || {}), [key]: value };
+  setPreferences(next);
+
+  try {
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        preferences: next,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', user.id);
+
+    if (error) throw error;
+
+    setGeneralMessage({ type: 'success', text: 'Instelling opgeslagen.' });
+  } catch (e) {
+    setGeneralMessage({
+      type: 'error',
+      text: 'Opslaan mislukt: ' + (e?.message || e),
+    });
+  }
+}
+
   const handlePasswordReset = async () => {
     if (!email) {
       setGeneralMessage({ type: 'error', text: 'Vul een geldig e-mailadres in.' })
@@ -497,7 +525,6 @@ async function saveDigest(changes) {
   </span>
 </div>
 
-
       {(digestLoading || digestSaving) && (
         <div className="text-sm text-gray-500">Opslaan…</div>
       )}
@@ -508,6 +535,24 @@ async function saveDigest(changes) {
       <p className="text-xs text-gray-500 mt-2">
         We sturen alleen een mail als er bezoekers zijn binnen de periode (max 10). De mail toont exact dezelfde bedrijven als je dashboard.
       </p>
+
+      {/* Realtime meldingen (geluid) */}
+<div className="mt-6 border-t pt-4">
+  <h3 className="text-lg font-semibold mb-2">Realtime meldingen</h3>
+  <div className="flex items-center gap-3">
+    <Toggle
+  checked={!!(preferences?.newLeadSoundOn ?? true)}
+  disabled={!user?.id}
+  onChange={(val) => saveProfilePreference('newLeadSoundOn', val)}
+  label="Geluid bij nieuwe bedrijven"
+/>
+    <span>Geluid bij nieuwe bedrijven</span>
+  </div>
+  <p className="text-xs text-gray-500 mt-1">
+    Korte ping zodra er tijdens je sessie nieuwe bedrijven binnenkomen.
+  </p>
+</div>
+
     </div>
   </div>
 )}
