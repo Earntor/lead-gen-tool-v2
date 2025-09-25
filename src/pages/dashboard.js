@@ -353,6 +353,8 @@ const [overrideDomains, setOverrideDomains] = useState(new Set());
 
 
 const overrideDomainsRef = useRef(new Set());
+const [pulseDomains, setPulseDomains] = useState(new Set());
+
 useEffect(() => { overrideDomainsRef.current = overrideDomains; }, [overrideDomains]);
 
 
@@ -941,41 +943,34 @@ function companyWouldBeVisibleAfterAddingLead(newLead) {
 
 // Eén centrale handler voor INSERT events (realtime + gap-fill)
 function handleIncomingLead(lead, { silent = false } = {}) {
-    console.log('[RT] incoming lead', { lead, silent });
- if (!lead?.company_domain) return;
- // Alleen tonen als verrijkt (company_name aanwezig)
- const isEnriched = !!lead.company_name;
- if (!isEnriched) return; // wachten op UPDATE
+  console.log('[RT] incoming lead', { lead, silent });
+  if (!lead?.company_domain) return;
 
-// Bedrijf staat al in de lijst → pulse badge i.p.v. pending
+  // Alleen tonen als verrijkt (company_name aanwezig)
+  if (!lead.company_name) return; // wachten op UPDATE
+
+  // 🔔 Bedrijf is al zichtbaar → toon pulse-badge + geluid, klaar
   if (visibleDomainsRef.current.has(lead.company_domain)) {
     setPulseDomains(prev => {
-      const next = new Set(prev); next.add(lead.company_domain); return next;
+      const next = new Set(prev);
+      next.add(lead.company_domain);
+      return next;
     });
     setTimeout(() => {
       setPulseDomains(prev => {
-        const next = new Set(prev); next.delete(lead.company_domain); return next;
+        const next = new Set(prev);
+        next.delete(lead.company_domain);
+        return next;
       });
     }, 4000);
     if (!silent) pingSound(soundOn);
     return;
   }
 
+  // Al als override zichtbaar? Dan niets doen.
   if (overrideDomainsRef.current.has(lead.company_domain)) return;
 
-  setPendingByDomain(prev =>
-    prev.has(lead.company_domain) ? prev : new Map(prev).set(lead.company_domain, lead)
-  );
-  if (!silent) pingSound(soundOn);
-}
-
-// Realtime: accepteer alle INSERTS (gap-fill dekt oud spul af)
-
-  // Als al zichtbaar onder de huidige filters, of al als override getoond → niets doen
-  if (visibleDomainsRef.current.has(lead.company_domain)) return;
-  if (overrideDomainsRef.current.has(lead.company_domain)) return;
-
-  // Dedupe in pending
+  // Nieuw bedrijf dat (nog) niet zichtbaar is → buffer naar "Nieuwe bezoekers" knop
   setPendingByDomain(prev => {
     if (prev.has(lead.company_domain)) return prev;
     const next = new Map(prev);
@@ -1032,7 +1027,7 @@ useEffect(() => {
     } catch {}
   })();
 
-  return () => { supabase.removeChannel(channel); };
+ return () => { supabase.removeChannel(ch); };
 }, [profile?.current_org_id, soundOn]);
 
 
@@ -1692,9 +1687,19 @@ const handleDeleteGlobalLabel = async (labelId) => {
               />
             ) : null; })()}
             <h3 className="text-base font-semibold text-gray-800">{company.company_name}</h3>
-            <span className="ml-1 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-300">
-              Buiten je filter
-            </span>
+
+{pulseDomains.has(company.company_domain) && (
+  <span className="ml-1 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-800 border border-blue-300">
+    Nieuw bezoek
+  </span>
+)}
+
+{overrideDomains.has(company.company_domain) && (
+  <span className="ml-1 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-300">
+    Buiten je filter
+  </span>
+)}
+
           </div>
 
           {company.kvk_city && <p className="text-xs text-gray-500 mt-0.5">📍 {company.kvk_city}</p>}
