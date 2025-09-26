@@ -942,43 +942,46 @@ function companyWouldBeVisibleAfterAddingLead(newLead) {
 }
 
 // Eén centrale handler voor INSERT events (realtime + gap-fill)
+// Eén centrale handler voor binnenkomende leads (INSERT/UPDATE)
 function handleIncomingLead(lead, { silent = false } = {}) {
   console.log('[RT] incoming lead', { lead, silent });
+
+  // We hebben minimaal een domein nodig
   if (!lead?.company_domain) return;
 
-  // Alleen tonen als verrijkt (company_name aanwezig)
-  if (!lead.company_name) return; // wachten op UPDATE
+  // Alleen tonen als verrijkt (bedrijf bekend)
+  if (!lead.company_name) return; // wachten op UPDATE met company_name
 
-  // 🔔 Bedrijf is al zichtbaar → toon pulse-badge + geluid, klaar
-  if (visibleDomainsRef.current.has(lead.company_domain)) {
-    setPulseDomains(prev => {
-      const next = new Set(prev);
-      next.add(lead.company_domain);
-      return next;
-    });
-    setTimeout(() => {
-      setPulseDomains(prev => {
-        const next = new Set(prev);
-        next.delete(lead.company_domain);
-        return next;
-      });
-    }, 4000);
-    if (!silent) pingSound(soundOn);
-    return;
-  }
-
-  // Al als override zichtbaar? Dan niets doen.
-  if (overrideDomainsRef.current.has(lead.company_domain)) return;
-
-  // Nieuw bedrijf dat (nog) niet zichtbaar is → buffer naar "Nieuwe bezoekers" knop
-  setPendingByDomain(prev => {
-    if (prev.has(lead.company_domain)) return prev;
+  // ➊ Altijd eerst aan de banner-buffer toevoegen (één keer per domein)
+  setPendingByDomain((prev) => {
+    if (prev.has(lead.company_domain)) return prev; // al in de teller
     const next = new Map(prev);
     next.set(lead.company_domain, lead);
     return next;
   });
 
+  // ➋ Als het bedrijf al zichtbaar is, laat dan óók een korte “pulse”-badge zien.
+  if (visibleDomainsRef.current.has(lead.company_domain)) {
+    setPulseDomains((prev) => {
+      const next = new Set(prev);
+      next.add(lead.company_domain);
+      return next;
+    });
+    setTimeout(() => {
+      setPulseDomains((prev) => {
+        const next = new Set(prev);
+        next.delete(lead.company_domain);
+        return next;
+      });
+    }, 4000);
+  }
+
+  // ➌ Geluidje (optioneel)
   if (!silent) pingSound(soundOn);
+
+  // 🔎 Belangrijk: we stoppen hier NIET meer vroegtijdig.
+  // Ook als het bedrijf al zichtbaar is of al in override staat,
+  // blijft het in de banner-buffer staan tot de gebruiker klikt.
 }
 
 
@@ -1008,7 +1011,7 @@ useEffect(() => {
         const oldRow = payload?.old;
         const row    = payload?.new;
         if (!row?.company_domain) return;
-        const becameEnriched = !oldRow?.company_name && !!row.company_name;
+        const becameEnriched = (!oldRow || !oldRow.company_name) && !!row.company_name;
         if (becameEnriched) handleIncomingLead(row, { silent: false });
       }
     )
