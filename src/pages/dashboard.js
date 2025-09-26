@@ -1034,23 +1034,6 @@ useEffect(() => {
 }, [profile?.current_org_id, soundOn]);
 
 
-// Verwijder pending domeinen die inmiddels al zichtbaar zijn geworden in de lijst
-useEffect(() => {
-  if (pendingByDomain.size === 0) return;
-
-  setPendingByDomain((prev) => {
-    let changed = false;
-    const next = new Map(prev);
-    for (const domain of Array.from(next.keys())) {
-      if (visibleCompanyDomains.has(domain)) {
-        next.delete(domain);
-        changed = true;
-      }
-    }
-    return changed ? next : prev;
-  });
-}, [visibleCompanyDomains, pendingByDomain.size]);
-
 // === Nieuwe-bedrijven knop: teller + handlers ===
 const newCompaniesCount = pendingByDomain.size;
 
