@@ -1996,7 +1996,6 @@ try {
   const totalPages = Math.max(1, Math.ceil(companies.length / itemsPerPage));
   const safeCurrent = Math.min(Math.max(1, currentPage), totalPages);
 
-  // Compacte window van max 5 zichtbare paginalinks: ... 3 [4] 5 ...
   const windowSize = 5;
   const pages = [];
   let start = Math.max(1, safeCurrent - Math.floor(windowSize / 2));
@@ -2010,20 +2009,26 @@ try {
         <PaginationContent className="justify-center">
           <PaginationItem>
             <PaginationPrevious
-              asChild
               aria-disabled={safeCurrent === 1}
               className={safeCurrent === 1 ? "pointer-events-none opacity-50" : ""}
-            >
-              <button onClick={() => safeCurrent > 1 && setCurrentPage(safeCurrent - 1)} />
-            </PaginationPrevious>
+              onClick={(e) => {
+                e.preventDefault();
+                if (safeCurrent > 1) setCurrentPage(safeCurrent - 1);
+              }}
+            />
           </PaginationItem>
 
-          {/* Eerste pagina + linker ellipsis */}
           {start > 1 && (
             <>
               <PaginationItem>
-                <PaginationLink asChild isActive={safeCurrent === 1}>
-                  <button onClick={() => setCurrentPage(1)}>1</button>
+                <PaginationLink
+                  isActive={safeCurrent === 1}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setCurrentPage(1);
+                  }}
+                >
+                  1
                 </PaginationLink>
               </PaginationItem>
               {start > 2 && (
@@ -2034,16 +2039,20 @@ try {
             </>
           )}
 
-          {/* Middensectie */}
           {pages.map((p) => (
             <PaginationItem key={p}>
-              <PaginationLink asChild isActive={p === safeCurrent}>
-                <button onClick={() => setCurrentPage(p)}>{p}</button>
+              <PaginationLink
+                isActive={p === safeCurrent}
+                onClick={(e) => {
+                  e.preventDefault();
+                  setCurrentPage(p);
+                }}
+              >
+                {p}
               </PaginationLink>
             </PaginationItem>
           ))}
 
-          {/* Rechter ellipsis + laatste pagina */}
           {end < totalPages && (
             <>
               {end < totalPages - 1 && (
@@ -2052,8 +2061,14 @@ try {
                 </PaginationItem>
               )}
               <PaginationItem>
-                <PaginationLink asChild isActive={safeCurrent === totalPages}>
-                  <button onClick={() => setCurrentPage(totalPages)}>{totalPages}</button>
+                <PaginationLink
+                  isActive={safeCurrent === totalPages}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setCurrentPage(totalPages);
+                  }}
+                >
+                  {totalPages}
                 </PaginationLink>
               </PaginationItem>
             </>
@@ -2061,12 +2076,13 @@ try {
 
           <PaginationItem>
             <PaginationNext
-              asChild
               aria-disabled={safeCurrent === totalPages}
               className={safeCurrent === totalPages ? "pointer-events-none opacity-50" : ""}
-            >
-              <button onClick={() => safeCurrent < totalPages && setCurrentPage(safeCurrent + 1)} />
-            </PaginationNext>
+              onClick={(e) => {
+                e.preventDefault();
+                if (safeCurrent < totalPages) setCurrentPage(safeCurrent + 1);
+              }}
+            />
           </PaginationItem>
         </PaginationContent>
       </Pagination>
@@ -2077,6 +2093,7 @@ try {
     </div>
   );
 })()}
+
 
 
 </div>
