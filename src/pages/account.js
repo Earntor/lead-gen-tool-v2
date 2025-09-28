@@ -261,7 +261,7 @@ async function saveProfilePreference(key, value) {
     if (error) {
       setGeneralMessage({ type: 'error', text: error.message })
     } else {
-      setGeneralMessage({ type: 'success', text: 'Wachtwoord-reset e-mail verzonden.' })
+      setGeneralMessage({ type: 'success', text: 'Wachtwoord reset e-mail verzonden.' })
     }
   }
 
