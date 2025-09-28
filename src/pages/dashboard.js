@@ -7,16 +7,6 @@ import { formatDutchDateTime } from '../lib/formatTimestamp';
 import { isToday, isYesterday, isWithinInterval, subDays } from 'date-fns';
 import { utcToZonedTime } from 'date-fns-tz';
 import { countryNameToCode } from "../lib/countryNameToCode";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationLink,
-  PaginationItem,
-  PaginationPrevious,
-  PaginationNext,
-  PaginationEllipsis,
-} from "@/components/ui/pagination";
-
 
 // Normaliseer landcode voor FlagCDN: twee letters, lowercase, met uitzonderingen.
 // ⛔️ Alleen domain_country gebruiken (géén ip_country fallback)
@@ -366,20 +356,6 @@ const overrideDomainsRef = useRef(new Set());
 const [pulseDomains, setPulseDomains] = useState(new Set());
 
 useEffect(() => { overrideDomainsRef.current = overrideDomains; }, [overrideDomains]);
-
-useEffect(() => {
-  setCurrentPage(1);
-}, [
-  filterType,
-  customRange,
-  labelFilter,
-  minVisits,
-  minDuration,
-  sortOrder,
-  globalSearch,
-  categoryFilter,
-  visitorTypeFilter.join(","), // array als string
-]);
 
 
   useEffect(() => {
@@ -1992,109 +1968,35 @@ try {
         </div>
       );
     })}
- {(() => {
-  const totalPages = Math.max(1, Math.ceil(companies.length / itemsPerPage));
-  const safeCurrent = Math.min(Math.max(1, currentPage), totalPages);
-
-  const windowSize = 5;
-  const pages = [];
-  let start = Math.max(1, safeCurrent - Math.floor(windowSize / 2));
-  let end = Math.min(totalPages, start + windowSize - 1);
-  if (end - start + 1 < windowSize) start = Math.max(1, end - windowSize + 1);
-  for (let p = start; p <= end; p++) pages.push(p);
-
-  return (
-    <div className="mt-6">
-      <Pagination>
-        <PaginationContent className="justify-center">
-          <PaginationItem>
-            <PaginationPrevious
-              aria-disabled={safeCurrent === 1}
-              className={safeCurrent === 1 ? "pointer-events-none opacity-50" : ""}
-              onClick={(e) => {
-                e.preventDefault();
-                if (safeCurrent > 1) setCurrentPage(safeCurrent - 1);
-              }}
-            />
-          </PaginationItem>
-
-          {start > 1 && (
-            <>
-              <PaginationItem>
-                <PaginationLink
-                  isActive={safeCurrent === 1}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setCurrentPage(1);
-                  }}
-                >
-                  1
-                </PaginationLink>
-              </PaginationItem>
-              {start > 2 && (
-                <PaginationItem>
-                  <PaginationEllipsis />
-                </PaginationItem>
-              )}
-            </>
-          )}
-
-          {pages.map((p) => (
-            <PaginationItem key={p}>
-              <PaginationLink
-                isActive={p === safeCurrent}
-                onClick={(e) => {
-                  e.preventDefault();
-                  setCurrentPage(p);
-                }}
-              >
-                {p}
-              </PaginationLink>
-            </PaginationItem>
-          ))}
-
-          {end < totalPages && (
-            <>
-              {end < totalPages - 1 && (
-                <PaginationItem>
-                  <PaginationEllipsis />
-                </PaginationItem>
-              )}
-              <PaginationItem>
-                <PaginationLink
-                  isActive={safeCurrent === totalPages}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setCurrentPage(totalPages);
-                  }}
-                >
-                  {totalPages}
-                </PaginationLink>
-              </PaginationItem>
-            </>
-          )}
-
-          <PaginationItem>
-            <PaginationNext
-              aria-disabled={safeCurrent === totalPages}
-              className={safeCurrent === totalPages ? "pointer-events-none opacity-50" : ""}
-              onClick={(e) => {
-                e.preventDefault();
-                if (safeCurrent < totalPages) setCurrentPage(safeCurrent + 1);
-              }}
-            />
-          </PaginationItem>
-        </PaginationContent>
-      </Pagination>
-
-      <p className="mt-2 text-center text-xs text-gray-500">
-        Pagina {safeCurrent} van {totalPages}
-      </p>
-    </div>
-  );
-})()}
-
-
+ <div className="flex justify-center items-center gap-2 mt-6">
+  <button
+    onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+    disabled={currentPage === 1}
+    className={`flex items-center gap-1 px-3 py-1.5 rounded-full border shadow-sm text-sm transition ${
+      currentPage === 1
+        ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+        : "bg-white hover:bg-gray-50 text-gray-700"
+    }`}
+  >
+    ◀
+    <span className="hidden md:inline">Vorige</span>
+  </button>
+  <span className="px-3 py-1.5 text-sm text-gray-600 border rounded-full bg-gray-50 shadow-sm">
+    Pagina {currentPage}
+  </span>
+  <button
+    onClick={() => setCurrentPage((prev) => prev + 1)}
+    disabled={currentPage * itemsPerPage >= companies.length}
+    className={`flex items-center gap-1 px-3 py-1.5 rounded-full border shadow-sm text-sm transition ${
+      currentPage * itemsPerPage >= companies.length
+        ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+        : "bg-white hover:bg-gray-50 text-gray-700"
+    }`}
+  >
+    <span className="hidden md:inline">Volgende</span>
+    ▶
+  </button>
+</div>
 
 </div>
 </div>
