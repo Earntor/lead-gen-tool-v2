@@ -31,6 +31,15 @@ import { ChevronDown } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableFooter,
+  TableHead,
+  TableRow,
+  TableCell,
+} from "@/components/ui/table";
 
 
 // Normaliseer landcode voor FlagCDN: twee letters, lowercase, met uitzonderingen.
@@ -151,6 +160,15 @@ function channelFromClickId(q = {}) {
 // Bepaalt de bron van de EERSTE sessie van deze bezoeker
 function deriveVisitorSource(sessions = []) {
   if (!sessions || sessions.length === 0) return 'Direct';
+
+const formatDuration = (sec) => {
+  const s = Number(sec || 0);
+  if (!s) return "–";
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m ? `${m}m ${r}s` : `${r}s`;
+};
+
 
   // Sorteer oplopend op tijd (oudste eerst)
   const sortedAsc = [...sessions].sort(
@@ -2679,42 +2697,74 @@ try {
         {deriveVisitorSource(sessions)}
       </div>
 
-              {isOpen && (
-                <div className="mt-3 space-y-2">
-                  
-                  <ul className="divide-y divide-gray-200 text-sm">
-  {[...sessions].reverse().map((s, idx) => (
-    <li key={s.id} className="py-3">
-      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-2">
-        <div className="truncate">
-          <span className="text-gray-800 text-sm">
-  🔗 {s.page_url}
-</span>
+              {(() => {
+  const sessionsOrdered = [...sessions].reverse(); // zelfde volgorde als je had
+  const totalSeconds = sessions.reduce((sum, s) => sum + (Number(s.duration_seconds) || 0), 0);
 
+  return isOpen ? (
+    <div className="mt-3">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Bezochte pagina&apos;s</TableHead>
+            <TableHead>Tijdstip</TableHead>
+            <TableHead className="text-right">Duur</TableHead>
+          </TableRow>
+        </TableHeader>
 
-          {/* Toon UTM onder de oorspronkelijk eerste pagina (nu laatste in reversed lijst) */}
-          {idx === sessions.length - 1 && (s.utm_source || s.utm_medium) && (
-            <div className="text-xs text-gray-500 mt-1">
-              🎯 via{" "}
-              <span className="font-medium text-gray-700">
-                {s.utm_source || "onbekend"}
-              </span>
-              {s.utm_medium && (
-                <span className="text-gray-400"> / {s.utm_medium}</span>
-              )}
-            </div>
-          )}
-        </div>
-        <div className="flex flex-col md:flex-row md:gap-4 text-gray-500 text-xs text-right md:text-left">
-{formatDutchDateTime(s.timestamp)}
-          <span>{s.duration_seconds ?? "-"} sec</span>
-        </div>
-      </div>
-    </li>
-  ))}
-</ul>
+        <TableBody>
+          {sessionsOrdered.map((s, idx) => (
+            <TableRow key={s.id}>
+              <TableCell className="max-w-[420px]">
+                <div className="truncate">
+                  <a
+                    href={s.page_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-blue-600 hover:underline break-all"
+                    title={s.page_url}
+                  >
+                    {s.page_url}
+                  </a>
                 </div>
-              )}
+
+                {/* UTM tonen bij de oorspronkelijk eerste pagina (nu: laatste rij in de reversed lijst) */}
+                {idx === sessionsOrdered.length - 1 && (s.utm_source || s.utm_medium) && (
+                  <div className="text-xs text-gray-500 mt-1">
+                    🎯 via{" "}
+                    <span className="font-medium text-gray-700">
+                      {s.utm_source || "onbekend"}
+                    </span>
+                    {s.utm_medium && <span className="text-gray-400"> / {s.utm_medium}</span>}
+                  </div>
+                )}
+              </TableCell>
+
+              <TableCell className="whitespace-nowrap">
+                {formatDutchDateTime(s.timestamp)}
+              </TableCell>
+
+              <TableCell className="text-right whitespace-nowrap">
+                {formatDuration(s.duration_seconds)}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+
+        <TableFooter>
+          <TableRow>
+            {/* laatste rij: alleen info in 3e kolom (som van alle duren) */}
+            <TableCell colSpan={2}></TableCell>
+            <TableCell className="text-right font-semibold">
+              Totaal: {formatDuration(totalSeconds)}
+            </TableCell>
+          </TableRow>
+        </TableFooter>
+      </Table>
+    </div>
+  ) : null;
+})()}
+
             </div>
           );
         })
