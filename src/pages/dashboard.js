@@ -28,6 +28,8 @@ import {
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu";
 import { ChevronDown } from "lucide-react";
+import { Input } from "@/components/ui/input";
+
 
 
 // Normaliseer landcode voor FlagCDN: twee letters, lowercase, met uitzonderingen.
@@ -1630,27 +1632,29 @@ const handleDeleteGlobalLabel = async (labelId) => {
   );
 })()}
 
-
-
-
-
-
-
       
-          <input
-            type="number"
-            placeholder="Minimaal bezoeken"
-            value={minVisits}
-            onChange={(e) => setMinVisits(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
-          />
-          <input
-            type="number"
-            placeholder="Minimale duur (s)"
-            value={minDuration}
-            onChange={(e) => setMinDuration(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
-          />
+          <Input
+  type="number"
+  inputMode="numeric"
+  min={0}
+  step={1}
+  placeholder="Minimaal bezoeken"
+  aria-label="Minimaal bezoeken"
+  value={minVisits}
+  onChange={(e) => setMinVisits(e.target.value)}
+/>
+
+          <Input
+  type="number"
+  inputMode="numeric"
+  min={0}
+  step={1}
+  placeholder="Minimale duur (s)"
+  aria-label="Minimale duur (seconden)"
+  value={minDuration}
+  onChange={(e) => setMinDuration(e.target.value)}
+/>
+
           <DropdownMenu>
   <DropdownMenuTrigger asChild>
     <Button

@@ -3,6 +3,8 @@ import { useRouter } from 'next/router'
 import dynamic from 'next/dynamic'
 import { supabase } from '../lib/supabaseClient'
 import { formatDutchDateTime } from '../lib/formatTimestamp'
+import { Input } from "@/components/ui/input";
+
 
 // ⬅️ nieuw: TeamTab alleen client-side laden (voorkomt SSR/hydration errors)
 const TeamTab = dynamic(() => import('../components/TeamTab'), {
@@ -423,30 +425,37 @@ async function saveDigest(changes) {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm mb-1">E-mailadres</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full border px-3 py-2 rounded"
-                />
+                <Input
+  type="email"
+  autoComplete="email"
+  aria-label="E-mailadres"
+  value={email}
+  onChange={(e) => setEmail(e.target.value)}
+/>
+
               </div>
               <div>
                 <label className="block text-sm mb-1">Volledige naam</label>
-                <input
-                  type="text"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  className="w-full border px-3 py-2 rounded"
-                />
+                <Input
+  type="text"
+  autoComplete="name"
+  aria-label="Volledige naam"
+  value={fullName}
+  onChange={(e) => setFullName(e.target.value)}
+/>
+
               </div>
               <div>
                 <label className="block text-sm mb-1">Telefoonnummer</label>
-                <input
-                  type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="w-full border px-3 py-2 rounded"
-                />
+                <Input
+  type="tel"
+  inputMode="tel"
+  autoComplete="tel"
+  aria-label="Telefoonnummer"
+  value={phone}
+  onChange={(e) => setPhone(e.target.value)}
+/>
+
               </div>
               <fieldset>
                 <legend className="text-sm font-medium mb-2">Voorkeuren</legend>

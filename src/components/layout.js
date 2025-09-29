@@ -2,6 +2,8 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
+import { Input } from "@/components/ui/input";
+
 
 export default function Layout({ children }) {
   const router = useRouter();
@@ -51,9 +53,10 @@ export default function Layout({ children }) {
           </Link>
 
           {router.pathname === "/dashboard" && (
-  <input
+  <Input
     type="text"
     placeholder="Zoek bedrijf, locatie of pagina..."
+    aria-label="Zoek bedrijf, locatie of pagina"
     defaultValue={router.query.search || ""}
     onChange={(e) => {
       const term = e.target.value;
@@ -66,11 +69,9 @@ export default function Layout({ children }) {
         { shallow: true }
       );
     }}
-    className="border px-3 py-2 rounded text-sm w-full max-w-xs"
+    className="w-full max-w-xs"
   />
 )}
-
-
 
           {user && (
             <div className="flex items-center gap-4">

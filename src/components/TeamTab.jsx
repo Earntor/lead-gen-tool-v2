@@ -1,6 +1,18 @@
 // src/components/TeamTab.jsx
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+} from "@/components/ui/dropdown-menu";
+import { ChevronDown } from "lucide-react";
+
 
 const ROLES = [
   { value: 'admin', label: 'Admin' },
@@ -425,13 +437,16 @@ export default function TeamTab() {
           {!canAdmin && <span className="text-xs text-gray-500">Alleen admin kan wijzigen</span>}
         </div>
         <div className="mt-3 flex flex-col sm:flex-row gap-2">
-          <input
-            className="flex-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black/10"
-            placeholder="Organisatienaam"
-            value={orgName}
-            onChange={(e) => setOrgName(e.target.value)}
-            disabled={!canAdmin}
-          />
+          <Input
+  type="text"
+  aria-label="Organisatienaam"
+  placeholder="Organisatienaam"
+  value={orgName}
+  onChange={(e) => setOrgName(e.target.value)}
+  disabled={!canAdmin}
+  className="flex-1"
+/>
+
           <button
             className="px-4 py-2 rounded-lg bg-black text-white disabled:opacity-50"
             disabled={savingName || !orgName.trim() || !canAdmin}
@@ -450,12 +465,16 @@ export default function TeamTab() {
               <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400">
                 <IconSearch />
               </span>
-              <input
-                className="border rounded-lg pl-8 pr-3 py-2 w-[240px] focus:outline-none focus:ring-2 focus:ring-black/10"
-                placeholder="Zoek op naam, e-mail of rol…"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-              />
+              <Input
+  type="text"
+  aria-label="Zoek op naam, e-mail of rol"
+  placeholder="Zoek op naam, e-mail of rol…"
+  value={q}
+  onChange={(e) => setQ(e.target.value)}
+  autoComplete="off"
+  className="pl-8 pr-3 w-[240px]"
+/>
+
             </div>
             <button
   onClick={() => { loadMembers(); if (orgId && canAdmin) loadInvites(); }}
@@ -514,14 +533,40 @@ export default function TeamTab() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <select
-                      value={m.role}
-                      onChange={(e) => changeRole(m.user_id, e.target.value)}
-                      className="border rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-black/10"
-                      disabled={!canAdmin || isLastAdmin(m.user_id)}
-                    >
-                      {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                    </select>
+                    <DropdownMenu>
+  <DropdownMenuTrigger asChild>
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="justify-between min-w-[9rem]"
+      disabled={!canAdmin || isLastAdmin(m.user_id)}
+      aria-label="Wijzig rol"
+    >
+      {ROLES.find(r => r.value === m.role)?.label ?? m.role}
+      <ChevronDown className="w-4 h-4 opacity-60" />
+    </Button>
+  </DropdownMenuTrigger>
+
+  <DropdownMenuContent align="end" className="w-[180px]">
+    <DropdownMenuLabel>Rol</DropdownMenuLabel>
+    <DropdownMenuRadioGroup
+      value={m.role}
+      onValueChange={(val) => changeRole(m.user_id, val)}
+    >
+      {ROLES.map((r) => (
+        <DropdownMenuRadioItem
+          key={r.value}
+          value={r.value}
+          disabled={isLastAdmin(m.user_id) && r.value !== "admin"}
+        >
+          {r.label}
+        </DropdownMenuRadioItem>
+      ))}
+    </DropdownMenuRadioGroup>
+  </DropdownMenuContent>
+</DropdownMenu>
+
                     <button
                       onClick={() => removeMember(m.user_id)}
                       className="text-red-600 text-sm px-3 py-1.5 rounded-lg border hover:bg-red-50 disabled:opacity-50"
@@ -547,23 +592,46 @@ export default function TeamTab() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <input
-            type="email"
-            required
-            className="border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black/10"
-            placeholder="email@bedrijf.nl"
-            value={inviteEmail}
-            onChange={(e) => setInviteEmail(e.target.value)}
-            disabled={!canAdmin || atLimit}
-          />
-          <select
-            value={inviteRole}
-            onChange={(e) => setInviteRole(e.target.value)}
-            className="border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black/10"
-            disabled={!canAdmin || atLimit}
-          >
-            {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-          </select>
+          <Input
+  type="email"
+  required
+  aria-label="E-mailadres uitnodiging"
+  placeholder="email@bedrijf.nl"
+  value={inviteEmail}
+  onChange={(e) => setInviteEmail(e.target.value)}
+  disabled={!canAdmin || atLimit}
+  autoComplete="email"
+/>
+
+          <DropdownMenu>
+  <DropdownMenuTrigger asChild>
+    <Button
+      type="button"
+      variant="outline"
+      className="w-full justify-between"
+      disabled={!canAdmin || atLimit}
+      aria-label="Kies rol"
+    >
+      {ROLES.find(r => r.value === inviteRole)?.label ?? "Rol"}
+      <ChevronDown className="w-4 h-4 opacity-60" />
+    </Button>
+  </DropdownMenuTrigger>
+
+  <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
+    <DropdownMenuLabel>Rol</DropdownMenuLabel>
+    <DropdownMenuRadioGroup
+      value={inviteRole}
+      onValueChange={(val) => setInviteRole(val)}
+    >
+      {ROLES.map((r) => (
+        <DropdownMenuRadioItem key={r.value} value={r.value}>
+          {r.label}
+        </DropdownMenuRadioItem>
+      ))}
+    </DropdownMenuRadioGroup>
+  </DropdownMenuContent>
+</DropdownMenu>
+
           <button
             className="px-4 py-2 rounded-lg bg-black text-white disabled:opacity-50"
             disabled={!canAdmin || atLimit}
@@ -576,7 +644,7 @@ export default function TeamTab() {
           <div className="bg-gray-50 border rounded-lg p-3 text-sm">
             <div className="mb-2">Uitnodigingslink (7 dagen geldig):</div>
             <div className="flex gap-2">
-              <input className="flex-1 border rounded-lg px-2 py-1" value={inviteLink} readOnly />
+              <Input className="flex-1" value={inviteLink} readOnly aria-label="Uitnodigingslink" />
               <button
                 type="button"
                 onClick={() => copyToClipboard(inviteLink)}
