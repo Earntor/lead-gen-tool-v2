@@ -1,4 +1,4 @@
-// _app.js
+// src/pages/_app.js
 import "@/styles/globals.css";
 import Layout from "../components/layout";
 import { createBrowserClient } from "@supabase/ssr";
@@ -13,7 +13,7 @@ export default function App({ Component, pageProps }) {
     )
   );
 
-  // ⛔ Blokkeer elke client-call naar /api/lead op de app zelf
+  // ⛔ Blokkeer alleen exact /api/lead (tracker), laat andere endpoints met "lead" met rust
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -33,8 +33,10 @@ export default function App({ Component, pageProps }) {
     const origFetch = window.fetch;
     window.fetch = async (input, init) => {
       try {
-        const url = typeof input === "string" ? input : input?.url || "";
-        if (typeof url === "string" && url.includes("/api/lead")) {
+        const urlStr = typeof input === "string" ? input : input?.url || "";
+        const u = new URL(urlStr, window.location.origin);
+        // 🔒 Alleen /api/lead blokkeren
+        if (u.pathname === "/api/lead" || u.pathname === "/api/lead/") {
           return new Response(
             JSON.stringify({
               ignored: true,
@@ -43,7 +45,9 @@ export default function App({ Component, pageProps }) {
             { status: 200, headers: { "Content-Type": "application/json" } }
           );
         }
-      } catch {}
+      } catch {
+        // bij parse-fout gewoon doorlaten
+      }
       return origFetch(input, init);
     };
 
@@ -52,10 +56,14 @@ export default function App({ Component, pageProps }) {
     if (origBeacon) {
       navigator.sendBeacon = (url, data) => {
         try {
-          if (typeof url === "string" && url.includes("/api/lead")) {
+          const u = new URL(url, window.location.origin);
+          // 🔒 Alleen /api/lead blokkeren
+          if (u.pathname === "/api/lead" || u.pathname === "/api/lead/") {
             return true; // noop, doe alsof het gelukt is
           }
-        } catch {}
+        } catch {
+          // parse-fout → normale beacon
+        }
         return origBeacon(url, data);
       };
     }
