@@ -1582,31 +1582,33 @@ const handleDeleteGlobalLabel = async (labelId) => {
       </div>
 
       {editingLabelId === "new" && (
-        <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 shadow-inner mb-4">
-          <input
-            type="text"
-            placeholder="Labelnaam"
-            value={newLabel}
-            onChange={(e) => setNewLabel(e.target.value)}
-            className="w-full border border-gray-300 px-3 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <div className="flex justify-end gap-2 mt-3">
-            <button
-              onClick={handleSaveNewLabel}
-              className="bg-blue-600 text-white px-4 py-1.5 text-sm rounded-lg hover:bg-blue-700 transition"
-              disabled={!orgId}
-            >
-              Opslaan
-            </button>
-            <button
-              onClick={() => { setNewLabel(""); setEditingLabelId(null); }}
-              className="border border-gray-300 px-4 py-1.5 text-sm rounded-lg hover:bg-gray-100 transition"
-            >
-              Annuleren
-            </button>
-          </div>
-        </div>
-      )}
+  <div className="mb-4">
+    <Input
+      type="text"
+      placeholder="Labelnaam"
+      aria-label="Labelnaam"
+      value={newLabel}
+      onChange={(e) => setNewLabel(e.target.value)}
+      autoFocus
+    />
+    <div className="mt-2 flex gap-2">
+      <button
+        onClick={handleSaveNewLabel}
+        className="bg-blue-600 text-white px-4 py-1.5 text-sm rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+        disabled={!orgId}
+      >
+        Opslaan
+      </button>
+      <button
+        onClick={() => { setNewLabel(""); setEditingLabelId(null); }}
+        className="border border-gray-300 px-4 py-1.5 text-sm rounded-lg hover:bg-gray-100 transition"
+      >
+        Annuleren
+      </button>
+    </div>
+  </div>
+)}
+
 
       <div className="flex flex-wrap gap-2 mt-2">
         {(labels || [])
