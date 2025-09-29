@@ -2710,74 +2710,60 @@ try {
           </AccordionTrigger>
 
           <AccordionContent className="px-4 pb-4">
-            {/* Boven de tabel: titel + bron, buiten de tabel houden */}
-            <div className="mb-2">
-              <div className="text-sm font-medium text-gray-800">
-                Bezoeker {index + 1}
-              </div>
-              <div className="mt-1 text-xs text-gray-600">
-                {deriveVisitorSource(sessions)}
-              </div>
+  <Table>
+    <TableHeader>
+      <TableRow>
+        <TableHead>Bezochte pagina&apos;s</TableHead>
+        <TableHead>Tijdstip</TableHead>
+        <TableHead className="text-right">Duur</TableHead>
+      </TableRow>
+    </TableHeader>
+
+    <TableBody>
+      {sessionsOrdered.map((s, idx) => (
+        <TableRow key={s.id}>
+          <TableCell className="max-w-[420px]">
+            <div className="truncate">
+              <span className="break-all text-gray-800" title={s.page_url}>
+                {s.page_url}
+              </span>
             </div>
+            {idx === sessionsOrdered.length - 1 &&
+              (s.utm_source || s.utm_medium) && (
+                <div className="text-xs text-gray-500 mt-1">
+                  🎯 via{" "}
+                  <span className="font-medium text-gray-700">
+                    {s.utm_source || "onbekend"}
+                  </span>
+                  {s.utm_medium && (
+                    <span className="text-gray-400"> / {s.utm_medium}</span>
+                  )}
+                </div>
+              )}
+          </TableCell>
 
-            {/* Tabel: 3 kolommen + totalenrij, URL niet-klikbaar */}
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Bezochte pagina&apos;s</TableHead>
-                  <TableHead>Tijdstip</TableHead>
-                  <TableHead className="text-right">Duur</TableHead>
-                </TableRow>
-              </TableHeader>
+          <TableCell className="whitespace-nowrap">
+            {formatDutchDateTime(s.timestamp)}
+          </TableCell>
 
-              <TableBody>
-                {sessionsOrdered.map((s, idx) => (
-                  <TableRow key={s.id}>
-                    <TableCell className="max-w-[420px]">
-                      <div className="truncate">
-                        <span className="break-all text-gray-800" title={s.page_url}>
-                          {s.page_url}
-                        </span>
-                      </div>
+          <TableCell className="text-right whitespace-nowrap">
+            {formatDuration(s.duration_seconds)}
+          </TableCell>
+        </TableRow>
+      ))}
+    </TableBody>
 
-                      {/* UTM tonen bij de oorspronkelijke landingspagina
-                          (nu laatste rij in de reversed lijst) */}
-                      {idx === sessionsOrdered.length - 1 &&
-                        (s.utm_source || s.utm_medium) && (
-                          <div className="text-xs text-gray-500 mt-1">
-                            🎯 via{" "}
-                            <span className="font-medium text-gray-700">
-                              {s.utm_source || "onbekend"}
-                            </span>
-                            {s.utm_medium && (
-                              <span className="text-gray-400"> / {s.utm_medium}</span>
-                            )}
-                          </div>
-                        )}
-                    </TableCell>
+    <TableFooter>
+      <TableRow>
+        <TableCell colSpan={2}></TableCell>
+        <TableCell className="text-right font-semibold">
+          Totaal: {formatDuration(totalSeconds)}
+        </TableCell>
+      </TableRow>
+    </TableFooter>
+  </Table>
+</AccordionContent>
 
-                    <TableCell className="whitespace-nowrap">
-                      {formatDutchDateTime(s.timestamp)}
-                    </TableCell>
-
-                    <TableCell className="text-right whitespace-nowrap">
-                      {formatDuration(s.duration_seconds)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-
-              <TableFooter>
-                <TableRow>
-                  {/* laatste rij: alleen kolom 3 gevuld met som */}
-                  <TableCell colSpan={2}></TableCell>
-                  <TableCell className="text-right font-semibold">
-                    Totaal: {formatDuration(totalSeconds)}
-                  </TableCell>
-                </TableRow>
-              </TableFooter>
-            </Table>
-          </AccordionContent>
         </AccordionItem>
       );
     })}
