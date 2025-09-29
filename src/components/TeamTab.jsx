@@ -585,7 +585,7 @@ export default function TeamTab() {
       {/* Uitnodigen (card) */}
       <form onSubmit={sendInvite} className="rounded-2xl border p-4 bg-white shadow-sm space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="font-semibold">Gebruiker uitnodigen</h3>
+          <h3 className="font-semibold">Teamlid uitnodigen</h3>
           <span className="text-xs text-gray-500">
             {atLimit ? `Limiet bereikt (${members.length}/${SEAT_LIMIT})` : `Beschikbaar: ${SEAT_LIMIT - members.length}`}
           </span>
