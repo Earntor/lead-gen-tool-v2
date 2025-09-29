@@ -161,15 +161,6 @@ function channelFromClickId(q = {}) {
 function deriveVisitorSource(sessions = []) {
   if (!sessions || sessions.length === 0) return 'Direct';
 
-const formatDuration = (sec) => {
-  const s = Number(sec || 0);
-  if (!s) return "–";
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return m ? `${m}m ${r}s` : `${r}s`;
-};
-
-
   // Sorteer oplopend op tijd (oudste eerst)
   const sortedAsc = [...sessions].sort(
     (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
@@ -212,6 +203,13 @@ const formatDuration = (sec) => {
   return '🎯 Bron: Direct';
 }
 
+function formatDuration(sec) {
+  const s = Number(sec) || 0;
+  if (!s) return "–";
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m ? `${m}m ${r}s` : `${r}s`;
+}
 
 // Skeletons loading
 function FiltersSkeleton() {
