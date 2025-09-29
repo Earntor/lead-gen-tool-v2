@@ -2497,103 +2497,101 @@ try {
 {/* ─────────────────────────────────────────────── */}
 
        {/* ─── Texteer-veld als openNoteFor gelijk is ───────────────── */}
-        {openNoteFor === selectedCompanyData.company_domain && (
-          <div className="mt-2 border border-gray-200 rounded-lg p-4">
-            <Textarea
-  rows={4}
-  value={noteDraft}
-  onChange={(e) => setNoteDraft(e.target.value)}
-  placeholder="Typ hier je notitie…"
-  className="min-h-[120px] resize-y"
-/>
+{openNoteFor === selectedCompanyData.company_domain && (
+  <div className="mt-2">
+    <Textarea
+      rows={4}
+      value={noteDraft}
+      onChange={(e) => setNoteDraft(e.target.value)}
+      placeholder="Typ hier je notitie…"
+      className="min-h-[120px] resize-y"
+    />
 
-            <div className="mt-2 flex gap-2">
-              <button
-  onClick={async () => {
-    try {
-  const res = await fetch('/api/lead-note', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-    },
-    body: JSON.stringify({
-      company_domain: openNoteFor,
-      note: noteDraft,
-    }),
-  });
+    <div className="mt-2 flex gap-2">
+      <button
+        onClick={async () => {
+          try {
+            const res = await fetch('/api/lead-note', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+              },
+              body: JSON.stringify({
+                company_domain: openNoteFor,
+                note: noteDraft,
+              }),
+            });
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    alert(`Opslaan mislukt: ${err.error || res.status}`);
-    return;
-  }
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({}));
+              alert(`Opslaan mislukt: ${err.error || res.status}`);
+              return;
+            }
 
-const json = await res.json();
-const saved = json?.note || json; // nieuwe API: { note: {...} } – oud: top-level
-const updated_at = saved?.updated_at ?? null;
+            const json = await res.json();
+            const saved = json?.note || json;
+            const updated_at = saved?.updated_at ?? null;
 
+            setNotesByDomain((prev) => ({ ...prev, [openNoteFor]: noteDraft }));
+            setNoteUpdatedAt((prev) => ({ ...prev, [openNoteFor]: updated_at }));
 
-  // Update maps, niet allLeads
-  setNotesByDomain(prev => ({ ...prev, [openNoteFor]: noteDraft }));
-  setNoteUpdatedAt(prev => ({ ...prev, [openNoteFor]: updated_at }));
+            setOpenNoteFor(null);
+          } catch (e) {
+            alert(`Opslaan mislukt: ${e?.message || e}`);
+          }
+        }}
+        className="bg-blue-600 text-white px-4 py-1.5 text-sm rounded-lg hover:bg-blue-700 transition"
+      >
+        Opslaan
+      </button>
 
-  setOpenNoteFor(null);
-} catch (e) {
-  alert(`Opslaan mislukt: ${e?.message || e}`);
-}
+      <button
+        onClick={async () => {
+          try {
+            const delRes = await fetch('/api/lead-note', {
+              method: 'DELETE',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+              },
+              body: JSON.stringify({
+                company_domain: openNoteFor,
+                deleteAllForDomain: true,
+              }),
+            });
 
-  }}
-  className="bg-blue-600 text-white px-4 py-1.5 rounded-lg hover:bg-blue-700 transition"
->
-  Opslaan
-</button>
+            if (!delRes.ok) {
+              const err = await delRes.json().catch(() => ({}));
+              alert(`Verwijderen mislukt: ${err.error || delRes.status}`);
+              return;
+            }
 
-             <button
-  onClick={async () => {
-    try {
-  const delRes = await fetch('/api/lead-note', {
-    method: 'DELETE',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-    },
-body: JSON.stringify({ company_domain: openNoteFor, deleteAllForDomain: true }),
-  });
+            setNotesByDomain((prev) => {
+              const next = { ...prev };
+              delete next[openNoteFor];
+              return next;
+            });
 
-  if (!delRes.ok) {
-    const err = await delRes.json().catch(() => ({}));
-    alert(`Verwijderen mislukt: ${err.error || delRes.status}`);
-    return;
-  }
+            setNoteUpdatedAt((prev) => {
+              const next = { ...prev };
+              delete next[openNoteFor];
+              return next;
+            });
 
-  // Maps opschonen
-  setNotesByDomain(prev => {
-    const next = { ...prev };
-    delete next[openNoteFor];
-    return next;
-  });
+            setOpenNoteFor(null);
+          } catch (e) {
+            alert(`Verwijderen mislukt: ${e?.message || e}`);
+          }
+        }}
+        className="border border-gray-300 px-4 py-1.5 text-sm rounded-lg hover:bg-gray-100 transition"
+      >
+        Verwijderen
+      </button>
+    </div>
+  </div>
+)}
 
-  setNoteUpdatedAt(prev => {
-    const next = { ...prev };
-    delete next[openNoteFor];
-    return next;
-  });
-
-  setOpenNoteFor(null);
-} catch (e) {
-  alert(`Verwijderen mislukt: ${e?.message || e}`);
-}
-
-  }}
-  className="border border-gray-300 px-4 py-1.5 rounded-lg hover:bg-gray-100 transition"
->
-  Verwijderen
-</button>
-
-            </div>
-          </div>
-        )}
         {/* ────────────────────────────────────────────────────── */}
 
 </div>
