@@ -17,7 +17,17 @@ import {
   PaginationPrevious,
 } from "@/components/ui/pagination";
 import { Textarea } from "@/components/ui/textarea";
-
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+} from "@/components/ui/dropdown-menu";
+import { ChevronDown } from "lucide-react";
 
 
 // Normaliseer landcode voor FlagCDN: twee letters, lowercase, met uitzonderingen.
@@ -1363,24 +1373,50 @@ return (
 
 
           <h2 className="text-xl font-semibold text-gray-700 mb-2">Filters</h2>
-          <select
-            value={filterType}
-            onChange={(e) => {
-              setFilterType(e.target.value);
-              setSelectedCompany(null);
-              setInitialVisitorSet(false);
-            }}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
-          >
-            <option value="alles">Alles</option>
-            <option value="vandaag">Vandaag</option>
-            <option value="gisteren">Gisteren</option>
-            <option value="deze-week">Deze week</option>
-            <option value="vorige-week">Vorige week</option>
-            <option value="vorige-maand">Vorige maand</option>
-            <option value="dit-jaar">Dit jaar</option>
-            <option value="aangepast">Aangepast</option>
-          </select>
+          <DropdownMenu>
+  <DropdownMenuTrigger asChild>
+    <Button
+      variant="outline"
+      className="w-full justify-between"
+      aria-label="Kies periode"
+    >
+      {({
+        alles: "Alles",
+        vandaag: "Vandaag",
+        gisteren: "Gisteren",
+        "deze-week": "Deze week",
+        "vorige-week": "Vorige week",
+        "vorige-maand": "Vorige maand",
+        "dit-jaar": "Dit jaar",
+        aangepast: "Aangepast",
+      }[filterType] ?? "Periode")}
+      <ChevronDown className="w-4 h-4 opacity-60" />
+    </Button>
+  </DropdownMenuTrigger>
+
+  <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
+    <DropdownMenuLabel>Periode</DropdownMenuLabel>
+    <DropdownMenuSeparator />
+    <DropdownMenuRadioGroup
+      value={filterType}
+      onValueChange={(val) => {
+        setFilterType(val);
+        setSelectedCompany(null);
+        setInitialVisitorSet(false);
+      }}
+    >
+      <DropdownMenuRadioItem value="alles">Alles</DropdownMenuRadioItem>
+      <DropdownMenuRadioItem value="vandaag">Vandaag</DropdownMenuRadioItem>
+      <DropdownMenuRadioItem value="gisteren">Gisteren</DropdownMenuRadioItem>
+      <DropdownMenuRadioItem value="deze-week">Deze week</DropdownMenuRadioItem>
+      <DropdownMenuRadioItem value="vorige-week">Vorige week</DropdownMenuRadioItem>
+      <DropdownMenuRadioItem value="vorige-maand">Vorige maand</DropdownMenuRadioItem>
+      <DropdownMenuRadioItem value="dit-jaar">Dit jaar</DropdownMenuRadioItem>
+      <DropdownMenuRadioItem value="aangepast">Aangepast</DropdownMenuRadioItem>
+    </DropdownMenuRadioGroup>
+  </DropdownMenuContent>
+</DropdownMenu>
+
           {filterType === "aangepast" && (
   <DatePicker
     selectsRange
@@ -1615,27 +1651,67 @@ const handleDeleteGlobalLabel = async (labelId) => {
             onChange={(e) => setMinDuration(e.target.value)}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
           />
-          <select
-  value={categoryFilter}
-  onChange={(e) => setCategoryFilter(e.target.value)}
-  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
->
-  <option value="">Alle categorieën</option>
-  {uniqueCategories.map((cat) => (
-    <option key={cat} value={cat}>
-      {cat}
-    </option>
-  ))}
-</select>
+          <DropdownMenu>
+  <DropdownMenuTrigger asChild>
+    <Button
+      variant="outline"
+      className="w-full justify-between"
+      aria-label="Kies categorie"
+    >
+      {categoryFilter ? categoryFilter : "Alle categorieën"}
+      <ChevronDown className="w-4 h-4 opacity-60" />
+    </Button>
+  </DropdownMenuTrigger>
 
-          <select
-  value={sortOrder}
-  onChange={(e) => setSortOrder(e.target.value)}
-  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
->
-  <option value="recent">Sorteer op laatst bezocht</option>
-  <option value="aantal">Sorteer op aantal bezoeken</option>
-</select>
+  <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
+    <DropdownMenuLabel>Categorie</DropdownMenuLabel>
+    <DropdownMenuSeparator />
+    <DropdownMenuRadioGroup
+      value={categoryFilter ?? ""}
+      onValueChange={(val) => setCategoryFilter(val)}
+    >
+      <div className="max-h-72 overflow-auto">
+        <DropdownMenuRadioItem value="">Alle categorieën</DropdownMenuRadioItem>
+        {uniqueCategories.map((cat) => (
+          <DropdownMenuRadioItem key={cat} value={cat}>
+            {cat}
+          </DropdownMenuRadioItem>
+        ))}
+      </div>
+    </DropdownMenuRadioGroup>
+  </DropdownMenuContent>
+</DropdownMenu>
+
+
+          <DropdownMenu>
+  <DropdownMenuTrigger asChild>
+    <Button
+      variant="outline"
+      className="w-full justify-between"
+      aria-label="Kies sortering"
+    >
+      {sortOrder === "aantal" ? "Sorteer op aantal bezoeken" : "Sorteer op laatst bezocht"}
+      <ChevronDown className="w-4 h-4 opacity-60" />
+    </Button>
+  </DropdownMenuTrigger>
+
+  <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
+    <DropdownMenuLabel>Sorteer op</DropdownMenuLabel>
+    <DropdownMenuSeparator />
+    <DropdownMenuRadioGroup
+      value={sortOrder}
+      onValueChange={(val) => setSortOrder(val)}
+    >
+      <DropdownMenuRadioItem value="recent">
+        Sorteer op laatst bezocht
+      </DropdownMenuRadioItem>
+      <DropdownMenuRadioItem value="aantal">
+        Sorteer op aantal bezoeken
+      </DropdownMenuRadioItem>
+    </DropdownMenuRadioGroup>
+  </DropdownMenuContent>
+</DropdownMenu>
+
 
 <div className="space-y-2">
   <label className="block text-sm font-bold text-gray-700">
