@@ -4,6 +4,8 @@ import dynamic from 'next/dynamic'
 import { supabase } from '../lib/supabaseClient'
 import { formatDutchDateTime } from '../lib/formatTimestamp'
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 
 
 // ⬅️ nieuw: TeamTab alleen client-side laden (voorkomt SSR/hydration errors)
@@ -458,18 +460,21 @@ async function saveDigest(changes) {
 
               </div>
               <fieldset>
-                <legend className="text-sm font-medium mb-2">Voorkeuren</legend>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={preferences.emailNotifications || false}
-                    onChange={(e) =>
-                      handlePreferenceChange('emailNotifications', e.target.checked)
-                    }
-                  />
-                  E-mail notificaties ontvangen
-                </label>
-              </fieldset>
+  <legend className="text-sm font-medium mb-2">Voorkeuren</legend>
+  <div className="flex items-center gap-2">
+    <Checkbox
+      id="pref-email"
+      checked={!!preferences.emailNotifications}
+      onCheckedChange={(val) =>
+        handlePreferenceChange("emailNotifications", !!val)
+      }
+    />
+    <Label htmlFor="pref-email" className="text-sm">
+      E-mail notificaties ontvangen
+    </Label>
+  </div>
+</fieldset>
+
               <button
                 onClick={handleUpdate}
                 disabled={updating}

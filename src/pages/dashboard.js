@@ -29,7 +29,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ChevronDown } from "lucide-react";
 import { Input } from "@/components/ui/input";
-
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 
 
 // Normaliseer landcode voor FlagCDN: twee letters, lowercase, met uitzonderingen.
@@ -1721,32 +1722,38 @@ const handleDeleteGlobalLabel = async (labelId) => {
   <label className="block text-sm font-bold text-gray-700">
     Bezoekersgedrag
   </label>
-  <div className="flex flex-col gap-1">
+
+  <div className="flex flex-col gap-2">
     {[
-      { value: "first", label: "Eerste keer bezocht" },
-      { value: "returning", label: "Terugkerende bezoeker" },
+      { value: "first",          label: "Eerste keer bezocht" },
+      { value: "returning",      label: "Terugkerende bezoeker" },
       { value: "highEngagement", label: "Hoge betrokkenheid" },
-    ].map((option) => (
-      <label key={option.value} className="inline-flex items-center gap-2">
-        <input
-          type="checkbox"
-          value={option.value}
-          checked={visitorTypeFilter.includes(option.value)}
-          onChange={(e) => {
-            if (e.target.checked) {
-              setVisitorTypeFilter([...visitorTypeFilter, option.value]);
-            } else {
-              setVisitorTypeFilter(visitorTypeFilter.filter((v) => v !== option.value));
-            }
-          }}
-          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-        />
-        <span className="text-sm text-gray-700">{option.label}</span>
-      </label>
-    ))}
+    ].map((option) => {
+      const id = `visitor-${option.value}`;
+      const checked = visitorTypeFilter.includes(option.value);
+
+      return (
+        <div key={option.value} className="flex items-center gap-2">
+          <Checkbox
+            id={id}
+            checked={checked}
+            // Radix geeft boolean | "indeterminate" → cast naar boolean
+            onCheckedChange={(ch) => {
+              const on = !!ch;
+              setVisitorTypeFilter((prev) => {
+                if (on) return prev.includes(option.value) ? prev : [...prev, option.value];
+                return prev.filter((v) => v !== option.value);
+              });
+            }}
+          />
+          <Label htmlFor={id} className="text-sm text-gray-700">
+            {option.label}
+          </Label>
+        </div>
+      );
+    })}
   </div>
 </div>
-
 
 
 <button
