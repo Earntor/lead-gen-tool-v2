@@ -533,22 +533,42 @@ setUniqueCategories(Array.from(categoriesSet).sort());
     
 
     const labelsCh = supabase
-      .channel(`labels:org:${orgId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'labels', filter: `org_id=eq.${orgId}` },
-        (payload) => {
-          if (cancelled) return;
-          if (payload.eventType === 'INSERT') {
-            setLabels(prev => [...(prev || []), payload.new]);
-          } else if (payload.eventType === 'UPDATE') {
-            setLabels(prev => (prev || []).map(l => (l.id === payload.new.id ? payload.new : l)));
-          } else if (payload.eventType === 'DELETE') {
-            setLabels(prev => (prev || []).filter(l => l.id !== payload.old.id));
-          }
+  .channel(`labels:org:${orgId}`)
+  .on(
+    'postgres_changes',
+    { event: '*', schema: 'public', table: 'labels', filter: `org_id=eq.${orgId}` },
+    (payload) => {
+      setLabels((prev = []) => {
+        const p = Array.isArray(prev) ? prev : [];
+        const row = payload.new ?? payload.old;
+
+        // helper: vervang of voeg toe
+        const upsert = (arr, item) => {
+          const exists = arr.some(l => l.id === item.id);
+          return exists
+            ? arr.map(l => (l.id === item.id ? item : l))
+            : [item, ...arr];
+        };
+
+        if (payload.eventType === 'INSERT') {
+          // ⛔️ voorkom dubbele invoeging als we al optimistic of via select(*) hebben toegevoegd
+          return upsert(p, payload.new);
         }
-      )
-      .subscribe();
+
+        if (payload.eventType === 'UPDATE') {
+          return p.map(l => (l.id === payload.new.id ? payload.new : l));
+        }
+
+        if (payload.eventType === 'DELETE') {
+          return p.filter(l => l.id !== payload.old.id);
+        }
+
+        return p;
+      });
+    }
+  )
+  .subscribe();
+
 
     // 6) Cleanup vanuit run (als effect opnieuw draait)
     return () => {
@@ -2313,8 +2333,7 @@ try {
 }
 
 
-                    refreshLabels();
-                    setOpenLabelMenus({});
+                
                   }}
                   className="w-full flex items-center justify-start text-xs px-2 py-1 mb-1 rounded hover:bg-gray-100 transition"
                   style={{ backgroundColor: label.color }}
@@ -2488,11 +2507,6 @@ try {
   {notesByDomain[selectedCompanyData.company_domain] ? 'Notitie bewerken' : 'Notitie toevoegen'}
 </button>
 
-{notesByDomain[selectedCompanyData.company_domain] && (
-  <p className="text-xs text-gray-500 mt-1 line-clamp-1">
-    {notesByDomain[selectedCompanyData.company_domain]}
-  </p>
-)}
 
 {/* ─────────────────────────────────────────────── */}
 
