@@ -7,6 +7,16 @@ import { formatDutchDateTime } from '../lib/formatTimestamp';
 import { isToday, isYesterday, isWithinInterval, subDays } from 'date-fns';
 import { utcToZonedTime } from 'date-fns-tz';
 import { countryNameToCode } from "../lib/countryNameToCode";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
+
 
 // Normaliseer landcode voor FlagCDN: twee letters, lowercase, met uitzonderingen.
 // ⛔️ Alleen domain_country gebruiken (géén ip_country fallback)
@@ -832,6 +842,74 @@ const groupedCompanies = filteredLeads.reduce((acc, lead) => {
   const companies = allCompanies.filter((c) =>
     activeCompanyNames.includes(c.company_name)
   );
+
+// ── PAGINATION HELPERS ──────────────────────────────────────────
+const pageCount = Math.max(1, Math.ceil(companies.length / itemsPerPage) || 1);
+
+const goToPage = (n) => {
+  const next = Math.min(Math.max(n, 1), pageCount);
+  setCurrentPage(next);
+
+  // list (middenkolom) naar boven scrollen voor nette UX
+  const listEl = columnRefs.current?.[1];
+  if (listEl?.scrollTo) listEl.scrollTo({ top: 0, behavior: "smooth" });
+};
+
+// Toon compacte reeks paginanummers met ellipses (max ±5 zichtbaar)
+const pages = useMemo(() => {
+  const total = pageCount;
+  const cur = currentPage;
+  const delta = 2;
+  const range = [];
+  const withDots = [];
+  let last;
+
+  if (total <= 7) {
+    for (let i = 1; i <= total; i++) range.push(i);
+  } else {
+    range.push(1);
+    for (let i = cur - delta; i <= cur + delta; i++) {
+      if (i > 1 && i < total) range.push(i);
+    }
+    range.push(total);
+  }
+
+  range.sort((a, b) => a - b);
+  for (const i of range) {
+    if (last) {
+      if (i - last === 2) withDots.push(last + 1);
+      else if (i - last > 2) withDots.push("ellipsis");
+    }
+    withDots.push(i);
+    last = i;
+  }
+  return withDots;
+}, [currentPage, pageCount]);
+
+// Clampen als dataset kleiner wordt (bijv. door filters)
+useEffect(() => {
+  if (currentPage > pageCount) setCurrentPage(pageCount);
+}, [pageCount]); // eslint-disable-line react-hooks/exhaustive-deps
+
+// Reset naar pagina 1 bij wijzigingen die de lijst beïnvloeden
+useEffect(() => {
+  setCurrentPage(1);
+}, [
+  filterType,
+  customRange[0],
+  customRange[1],
+  labelFilter,
+  minVisits,
+  minDuration,
+  categoryFilter,
+  globalSearch,
+  sortOrder,
+  // array → string zodat de dep stabiel triggert bij inhoudswijziging
+  useMemo(() => visitorTypeFilter.slice().sort().join(","), [visitorTypeFilter]),
+]); // eslint-disable-line react-hooks/exhaustive-deps
+// ────────────────────────────────────────────────────────────────
+
+
   const selectedCompanyData = selectedCompany
   ? allCompanies.find((c) => c.company_name === selectedCompany)
   : null;
@@ -1734,7 +1812,7 @@ const handleDeleteGlobalLabel = async (labelId) => {
     naam.includes(globalSearch) ||
     stad.includes(globalSearch) ||
     heeftPage
-  );
+  ); 
 })
 
   .sort((a, b) => {
@@ -1968,35 +2046,56 @@ try {
         </div>
       );
     })}
- <div className="flex justify-center items-center gap-2 mt-6">
-  <button
-    onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-    disabled={currentPage === 1}
-    className={`flex items-center gap-1 px-3 py-1.5 rounded-full border shadow-sm text-sm transition ${
-      currentPage === 1
-        ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-        : "bg-white hover:bg-gray-50 text-gray-700"
-    }`}
-  >
-    ◀
-    <span className="hidden md:inline">Vorige</span>
-  </button>
-  <span className="px-3 py-1.5 text-sm text-gray-600 border rounded-full bg-gray-50 shadow-sm">
-    Pagina {currentPage}
-  </span>
-  <button
-    onClick={() => setCurrentPage((prev) => prev + 1)}
-    disabled={currentPage * itemsPerPage >= companies.length}
-    className={`flex items-center gap-1 px-3 py-1.5 rounded-full border shadow-sm text-sm transition ${
-      currentPage * itemsPerPage >= companies.length
-        ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-        : "bg-white hover:bg-gray-50 text-gray-700"
-    }`}
-  >
-    <span className="hidden md:inline">Volgende</span>
-    ▶
-  </button>
-</div>
+ <Pagination className="mt-6">
+  <PaginationContent>
+    <PaginationItem>
+      <PaginationPrevious
+        href="#"
+        onClick={(e) => {
+          e.preventDefault();
+          goToPage(currentPage - 1);
+        }}
+        aria-disabled={currentPage === 1}
+        className={currentPage === 1 ? "pointer-events-none opacity-50" : ""}
+      />
+    </PaginationItem>
+
+    {pages.map((p, idx) =>
+      p === "ellipsis" ? (
+        <PaginationItem key={`dots-${idx}`} className="hidden sm:list-item">
+          <PaginationEllipsis />
+        </PaginationItem>
+      ) : (
+        <PaginationItem key={p} className="hidden sm:list-item">
+          <PaginationLink
+            href="#"
+            onClick={(e) => {
+              e.preventDefault();
+              goToPage(p);
+            }}
+            isActive={p === currentPage}
+            aria-label={`Ga naar pagina ${p}`}
+          >
+            {p}
+          </PaginationLink>
+        </PaginationItem>
+      )
+    )}
+
+    <PaginationItem>
+      <PaginationNext
+        href="#"
+        onClick={(e) => {
+          e.preventDefault();
+          goToPage(currentPage + 1);
+        }}
+        aria-disabled={currentPage === pageCount}
+        className={currentPage === pageCount ? "pointer-events-none opacity-50" : ""}
+      />
+    </PaginationItem>
+  </PaginationContent>
+</Pagination>
+
 
 </div>
 </div>
