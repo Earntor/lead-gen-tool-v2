@@ -1,6 +1,8 @@
 import { useRouter } from "next/router";
 import { supabase } from "../lib/supabaseClient";
 import { useEffect, useRef, useState, useMemo } from "react";
+import DatePicker from "react-datepicker";
+import "react-datepicker/dist/react-datepicker.css";
 import { formatDutchDateTime } from '../lib/formatTimestamp';
 import { isToday, isYesterday, isWithinInterval, subDays } from 'date-fns';
 import { utcToZonedTime } from 'date-fns-tz';
@@ -29,7 +31,6 @@ import { ChevronDown } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Calendar } from "@/components/ui/calendar";
 
 
 // Normaliseer landcode voor FlagCDN: twee letters, lowercase, met uitzonderingen.
@@ -271,17 +272,6 @@ function withTimeout(promise, ms = 8000) {
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
-
-// Format helper voor NL-datum (alleen voor tekstje onder de kalender)
-const fmtNL = (d) =>
-  d
-    ? d.toLocaleDateString("nl-NL", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-      })
-    : "";
-
 
 // === Realtime helpers voor nieuwe bedrijven ===
 const CONFIDENCE_MIN = null; // pas aan naar wens
@@ -1451,43 +1441,19 @@ return (
 </DropdownMenu>
 
           {filterType === "aangepast" && (
-  <div className="w-full rounded-md border border-gray-200 p-2">
-    <Calendar
-      mode="range"
-      /* 🔽 hier was het 2 */
-      numberOfMonths={1}
-      /* optioneel weghalen voor extra clean look: */
-      // showOutsideDays
-      captionLayout="dropdown"
-      selected={{
-        from: customRange[0] || undefined,
-        to: customRange[1] || undefined,
-      }}
-      onSelect={(range) => {
-        const from = range?.from ?? null;
-        const to = range?.to ?? null;
-        setCustomRange([from, to]);
-      }}
-      className="mx-auto"
-    />
-    <div className="mt-2 flex items-center gap-2">
-      <Button
-        type="button"
-        variant="outline"
-        className="text-sm"
-        onClick={() => setCustomRange([null, null])}
-      >
-        Wissen
-      </Button>
-      {customRange[0] && customRange[1] && (
-        <span className="text-xs text-gray-600">
-          Geselecteerd: {fmtNL(customRange[0])} – {fmtNL(customRange[1])}
-        </span>
-      )}
-    </div>
-  </div>
+  <DatePicker
+    selectsRange
+    startDate={customRange[0]}
+    endDate={customRange[1]}
+    onChange={(update) => setCustomRange(update)}
+    isClearable
+    placeholderText="Selecteer datumrange"
+    dateFormat="dd-MM-yyyy"
+    className="w-full border rounded px-3 py-2 text-sm"
+    popperClassName="!z-50 custom-datepicker"
+    calendarClassName="rounded-lg shadow-lg border border-gray-200"
+  />
 )}
-
 
 
 
