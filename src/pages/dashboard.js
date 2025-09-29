@@ -1454,8 +1454,10 @@ return (
   <div className="w-full rounded-md border border-gray-200 p-2">
     <Calendar
       mode="range"
-      numberOfMonths={2}
-      showOutsideDays
+      /* 🔽 hier was het 2 */
+      numberOfMonths={1}
+      /* optioneel weghalen voor extra clean look: */
+      // showOutsideDays
       captionLayout="dropdown"
       selected={{
         from: customRange[0] || undefined,
