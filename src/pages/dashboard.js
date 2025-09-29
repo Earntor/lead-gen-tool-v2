@@ -16,6 +16,8 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
+import { Textarea } from "@/components/ui/textarea";
+
 
 
 // Normaliseer landcode voor FlagCDN: twee letters, lowercase, met uitzonderingen.
@@ -2407,14 +2409,15 @@ try {
 
        {/* ─── Texteer-veld als openNoteFor gelijk is ───────────────── */}
         {openNoteFor === selectedCompanyData.company_domain && (
-          <div className="mt-2 bg-gray-50 border border-gray-200 rounded-lg p-4">
-            <textarea
-              rows={4}
-              value={noteDraft}
-              onChange={e => setNoteDraft(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-              placeholder="Typ hier je notitie…"
-            />
+          <div className="mt-2 border border-gray-200 rounded-lg p-4">
+            <Textarea
+  rows={4}
+  value={noteDraft}
+  onChange={(e) => setNoteDraft(e.target.value)}
+  placeholder="Typ hier je notitie…"
+  className="min-h-[120px] resize-y"
+/>
+
             <div className="mt-2 flex gap-2">
               <button
   onClick={async () => {
