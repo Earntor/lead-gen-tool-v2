@@ -46,9 +46,7 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from "@/components/ui/accordion";
-import { ArrowLeft, Menu } from "lucide-react";
-
-
+import { ArrowLeft, Menu, User } from "lucide-react";
 
 
 // Normaliseer landcode voor FlagCDN: twee letters, lowercase, met uitzonderingen.
@@ -347,8 +345,6 @@ function NewCompaniesButton({ count, onApply }) {
   );
 }
 
-
-
 export default function Dashboard() {
   const router = useRouter();
   const [user, setUser] = useState(null);
@@ -406,6 +402,13 @@ const [overrideDomains, setOverrideDomains] = useState(new Set());
 
 const overrideDomainsRef = useRef(new Set());
 const [pulseDomains, setPulseDomains] = useState(new Set());
+
+const handleLogout = async () => {
+  try {
+    await supabase.auth.signOut();
+    router.push("/login");
+  } catch {}
+};
 
 useEffect(() => { overrideDomainsRef.current = overrideDomains; }, [overrideDomains]);
 
@@ -1376,14 +1379,52 @@ const resetFilters = () => {
     {selectedCompany ? "Activiteiten" : "Bedrijven"}
   </div>
 
-  {/* Terugknop RECHTS (alleen in detail) */}
+  {/* Rechts: back in detail, anders profielmenu */}
+{selectedCompany ? (
   <button
     onClick={() => setSelectedCompany(null)}
-    className={`p-2 -mr-2 rounded hover:bg-gray-100 ${selectedCompany ? "" : "invisible"}`}
+    className="p-2 -mr-2 rounded hover:bg-gray-100"
     aria-label="Terug naar bedrijven"
   >
     <ArrowLeft className="w-5 h-5" />
   </button>
+) : (
+  <DropdownMenu>
+    <DropdownMenuTrigger asChild>
+      <button
+        className="p-2 -mr-2 rounded hover:bg-gray-100"
+        aria-label="Profielmenu"
+      >
+        <User className="w-5 h-5" />
+      </button>
+    </DropdownMenuTrigger>
+
+    <DropdownMenuContent align="end" className="w-48">
+      <DropdownMenuLabel className="text-xs">
+        {user?.email || "Mijn account"}
+      </DropdownMenuLabel>
+      <DropdownMenuSeparator />
+      <a href="/account#account" className="block px-3 py-2 text-sm hover:bg-gray-50">
+        Account
+      </a>
+      <a href="/account#instellingen" className="block px-3 py-2 text-sm hover:bg-gray-50">
+        Instellingen
+      </a>
+      <a href="/account#facturen" className="block px-3 py-2 text-sm hover:bg-gray-50">
+        Facturen
+      </a>
+      <a href="/account#betaling" className="block px-3 py-2 text-sm hover:bg-gray-50">
+        Betaalmethode
+      </a>
+      <button
+        onClick={handleLogout}
+        className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+      >
+        Uitloggen
+      </button>
+    </DropdownMenuContent>
+  </DropdownMenu>
+)}
 </div>
 
 
@@ -1939,25 +1980,6 @@ const handleDeleteGlobalLabel = async (labelId) => {
 >
   Export
 </button>
-
-{/* Snelle links (onderaan je drawer) */}
-<div className="mt-3 pt-3 border-t space-y-2 text-sm">
-  <a href="/account#account" className="block hover:underline">Account</a>
-  <a href="/account#instellingen" className="block hover:underline">Instellingen</a>
-  <a href="/account#team" className="block hover:underline">Team</a>
-  <button
-    onClick={async () => {
-      try {
-        await supabase.auth.signOut();
-        router.push("/login");
-      } catch {}
-    }}
-    className="block text-left w-full hover:underline text-red-600"
-  >
-    Uitloggen
-  </button>
-</div>
-
 
         </div>
 
