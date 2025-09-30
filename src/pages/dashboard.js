@@ -1359,7 +1359,7 @@ const resetFilters = () => {
 
   if (loading) {
   return (
-    <div className="w-full">
+    <div className="w-full min-h-[100svh] bg-white">
       {/* Mobile top bar (alleen mobiel zichtbaar) */}
 <div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white/95 backdrop-blur border-b px-3 py-2 flex items-center justify-between">
   {/* Hamburger LINKS */}
@@ -1387,7 +1387,17 @@ const resetFilters = () => {
 </div>
 
 
-        <div className="flex w-full md:h-[calc(100vh-6rem)] h-[calc(100vh-3.5rem)] md:pt-0 pt-14">
+        <div
+  className="
+    flex w-full
+    md:pt-0 pt-14
+    md:h-[calc(100vh-6rem)] h-[calc(100svh-3.5rem)]
+    supports-[height:100dvh]:md:h-[calc(100dvh-6rem)]
+    supports-[height:100dvh]:h-[calc(100dvh-3.5rem)]
+    bg-white
+  "
+>
+
         {/* Linker kolom: Filters skeleton */}
         <FiltersSkeleton />
 
@@ -1435,7 +1445,7 @@ const resetFilters = () => {
 
 
 return (
-  <div className="w-full">
+  <div className="w-full min-h-[100svh] bg-white">
     {/* Mobile top bar (alleen mobiel zichtbaar) */}
 <div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white/95 backdrop-blur border-b px-3 py-2 flex items-center justify-between">
   {/* Hamburger LINKS */}
@@ -1467,7 +1477,17 @@ return (
       <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
     </div>*/}
 
-    <div className="flex w-full md:h-[calc(100vh-6rem)] h-[calc(100vh-3.5rem)] md:pt-0 pt-14">
+    <div
+  className="
+    flex w-full
+    md:pt-0 pt-14
+    md:h-[calc(100vh-6rem)] h-[calc(100svh-3.5rem)]
+    supports-[height:100dvh]:md:h-[calc(100dvh-6rem)]
+    supports-[height:100dvh]:h-[calc(100dvh-3.5rem)]
+    bg-white
+  "
+>
+
 
         <div
   ref={(el) => (columnRefs.current[0] = el)}

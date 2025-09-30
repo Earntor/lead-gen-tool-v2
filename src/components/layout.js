@@ -36,7 +36,7 @@ export default function Layout({ children }) {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-[100svh] md:min-h-[100dvh] bg-white text-gray-900">
       {/* Header tonen op dashboard en account */}
       {(router.pathname === "/dashboard" || router.pathname === "/account") && (
 <header

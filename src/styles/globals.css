@@ -81,10 +81,13 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    /* blijf licht, ook als het toestel donker staat */
+    --background: oklch(1 0 0);
+    --foreground: oklch(0.145 0 0);
+    color-scheme: light;
   }
 }
+
 
 body {
   background: var(--background);
@@ -157,11 +160,8 @@ input:focus {
 }
 
 @layer base {
-  * {
-    @apply border-border outline-ring/50;
-  }
-  body {
-    @apply bg-background text-foreground;
-  }
+  * { @apply border-border outline-ring/50; }
+  body { @apply bg-white text-gray-900; } /* forceer licht */
 }
+
 
