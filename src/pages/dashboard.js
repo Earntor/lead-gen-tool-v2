@@ -1391,12 +1391,14 @@ const resetFilters = () => {
   className="
     flex w-full
     md:pt-0 pt-14
-    md:h-[calc(100vh-6rem)] h-[calc(100svh-3.5rem)]
+    md:h-[calc(100vh-6rem)] h:[calc(100svh-3.5rem)]
     supports-[height:100dvh]:md:h-[calc(100dvh-6rem)]
     supports-[height:100dvh]:h-[calc(100dvh-3.5rem)]
     bg-white
+    min-h-0 overflow-hidden
   "
 >
+
 
         {/* Linker kolom: Filters skeleton */}
         <FiltersSkeleton />
@@ -1409,9 +1411,10 @@ const resetFilters = () => {
 
         {/* Midden kolom: lijst met 10 skeleton cards */}
         <div
-          className="flex flex-col h-full bg-white border border-gray-200 shadow"
-          style={{ flexBasis: "500px", flexShrink: 0 }}
-        >
+  className="flex flex-col h-full min-h-0 bg-white border border-gray-200 shadow"
+  style={{ flexBasis: "500px", flexShrink: 0 }}
+>
+
           <div className="bg-blue-50 border-b border-blue-200 p-3 space-y-2 animate-pulse">
             <div className="h-4 w-48 bg-blue-100 rounded" />
             <div className="h-3 w-40 bg-blue-100 rounded" />
@@ -1481,12 +1484,14 @@ return (
   className="
     flex w-full
     md:pt-0 pt-14
-    md:h-[calc(100vh-6rem)] h-[calc(100svh-3.5rem)]
+    md:h-[calc(100vh-6rem)] h:[calc(100svh-3.5rem)]
     supports-[height:100dvh]:md:h-[calc(100dvh-6rem)]
     supports-[height:100dvh]:h-[calc(100dvh-3.5rem)]
     bg-white
+    min-h-0 overflow-hidden
   "
 >
+
 
 
         <div
@@ -1974,12 +1979,13 @@ const handleDeleteGlobalLabel = async (labelId) => {
 
 <div
   ref={(el) => (columnRefs.current[1] = el)}
-  className={`h-full bg-white border border-gray-200 shadow
+  className={`h-full min-h-0 bg-white border border-gray-200 shadow
   ${selectedCompany ? "hidden md:flex" : "flex"}
   flex-col
 `}
   style={{ flexBasis: "500px", flexShrink: 0 }}
 >
+
 
   <div className="bg-blue-50 border-b border-blue-200 p-3 space-y-1">
   <h2 className="text-base font-semibold text-gray-800">Websitebezoekers</h2>
@@ -2405,7 +2411,7 @@ try {
 ></div>
 
 
-<div className={`${selectedCompany ? "flex" : "hidden md:flex"} flex-col flex-grow overflow-y-auto bg-white border border-gray-200 p-4 shadow`}>
+<div className={`${selectedCompany ? "flex" : "hidden md:flex"} flex-col flex-grow min-h-0 overflow-y-auto bg-white border border-gray-200 p-4 shadow`}>
   {selectedCompany ? (
     <div className="bg-white border border-gray-200 rounded-xl p-4 shadow">
       {selectedCompanyData && (

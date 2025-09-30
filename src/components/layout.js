@@ -36,7 +36,7 @@ export default function Layout({ children }) {
   }, []);
 
   return (
-    <div className="min-h-[100svh] md:min-h-[100dvh] bg-white text-gray-900">
+    <div className="min-h-[100svh] md:min-h-[100dvh] bg-white text-gray-900 flex flex-col">
       {/* Header tonen op dashboard en account */}
       {(router.pathname === "/dashboard" || router.pathname === "/account") && (
 <header
@@ -171,7 +171,7 @@ export default function Layout({ children }) {
       )}
 
       {/* Page content */}
-      <main>{children}</main>
+  <main className="flex-1 min-h-0">{children}</main>
     </div>
   );
 }
