@@ -1543,7 +1543,7 @@ return (
   className="
     flex w-full
     md:pt-0 pt-14
-    md:h-[calc(100vh-6rem)] h:[calc(100svh-3.5rem)]
+    md:h-[calc(100vh-6rem)] h-[calc(100svh-3.5rem)]
     supports-[height:100dvh]:md:h-[calc(100dvh-6rem)]
     supports-[height:100dvh]:h-[calc(100dvh-3.5rem)]
     bg-white
@@ -2450,7 +2450,7 @@ try {
 ></div>
 
 
-<div className={`${selectedCompany ? "flex" : "hidden md:flex"} flex-col flex-grow min-h-0 overflow-y-auto bg-white border border-gray-200 p-4 shadow`}>
+<section className={`${selectedCompany ? "flex" : "hidden md:flex"} flex-col flex-grow min-h-0 overflow-y-auto`}>
   {selectedCompany ? (
     <div className="bg-white border border-gray-200 rounded-xl p-4 shadow">
       {selectedCompanyData && (
@@ -2883,20 +2883,20 @@ try {
 )}
        {/* ──────────────────────────────────────────────── */}
 
-      <h2 className="text-lg font-semibold text-gray-800 mb-2">
-  Activiteiten
-</h2>
+      <div className="px-4 md:px-6">
+  <h2 className="text-lg font-semibold text-gray-800 mb-2">
+    Activiteiten
+  </h2>
 
-
-      {sortedVisitors.length === 0 ? (
-  <p className="text-sm text-gray-500">Geen activiteiten gevonden.</p>
-) : (
-  <Accordion
-    type="multiple"
-    value={[...openVisitors]}                           // open items vanuit je Set
-    onValueChange={(vals) => setOpenVisitors(new Set(vals))} // sync terug naar Set
-    className="space-y-3"
-  >
+  {sortedVisitors.length === 0 ? (
+    <p className="text-sm text-gray-500">Geen activiteiten gevonden.</p>
+  ) : (
+    <Accordion
+      type="multiple"
+      value={[...openVisitors]}
+      onValueChange={(vals) => setOpenVisitors(new Set(vals))}
+      className="space-y-3"
+    >
     {sortedVisitors.map(([visitorId, sessions], index) => {
       const itemValue = String(visitorId);
       const sessionsOrdered = [...sessions].reverse();
@@ -2980,15 +2980,17 @@ try {
     })}
   </Accordion>
 )}
+</div>
 
     </div>
   ) : (
     <div className="bg-white border p-4 rounded text-gray-500">
       Selecteer een bedrijf om activiteiten te bekijken.
     </div>
-  )}
-</div>
-      </div>
-    </div>
-  );
+   )}
+</section>
+
+  </div>
+</div>    
+);
 }
