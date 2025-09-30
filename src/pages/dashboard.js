@@ -1581,7 +1581,7 @@ return (
 
 <h2 className="hidden md:block text-xl font-semibold text-gray-700 mb-2">Filters</h2>
 
-          {/* Globale zoekbalk (zelfde werking als in layout.js) */}
+          {/* Mobiel: zoekveld in drawer; op desktop staat hij al in de header */}
 <Input
   type="text"
   placeholder="Zoek bedrijf, locatie of pagina..."
@@ -1595,8 +1595,9 @@ return (
       { shallow: true }
     );
   }}
-  className="w-full mb-3"
+  className="w-full mb-3 md:hidden"
 />
+
 
           <DropdownMenu>
   <DropdownMenuTrigger asChild>

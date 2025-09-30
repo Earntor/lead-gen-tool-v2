@@ -6,6 +6,7 @@ import { formatDutchDateTime } from '../lib/formatTimestamp'
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 
 // ⬅️ nieuw: TeamTab alleen client-side laden (voorkomt SSR/hydration errors)
@@ -13,6 +14,7 @@ const TeamTab = dynamic(() => import('../components/TeamTab'), {
   ssr: false,
   loading: () => <p>Team laden…</p>,
 })
+
 
 function getTodayDomNL() {
   const now = new Date();
@@ -41,6 +43,11 @@ function Toggle({ checked, disabled, onChange, label }) {
   );
 }
 
+const TAB_KEYS = ['account','instellingen','facturen','betaling','team','tracking'];
+function normalizeTab(v) {
+  const key = String(v || '').toLowerCase();
+  return TAB_KEYS.includes(key) ? key : 'account';
+}
 
 export default function Account() {
   const router = useRouter()
@@ -143,35 +150,33 @@ if (!profile) {
 
 useEffect(() => {
   const onHashChange = () => {
-    const newHash = window.location.hash.replace('#', '')
-    setActiveTab(newHash || 'account')
-    setGeneralMessage(null)
-    setTrackingMessage(null)
+    const newHash = window.location.hash.replace('#', '');
+    const tab = normalizeTab(newHash || 'account');
+    setActiveTab(tab);
+    setGeneralMessage(null);
+    setTrackingMessage(null);
 
-   if ((newHash || 'account') === 'tracking' && user?.id && currentOrgId) {
-  supabase
-    .from('organizations')
-    .select('last_tracking_ping')
-    .eq('id', currentOrgId)
-    .single()
-    .then(({ data }) => {
-      if (data?.last_tracking_ping) {
-        setLastTrackingPing(data.last_tracking_ping)
-      }
-    })
-}
+    if (tab === 'tracking' && user?.id && currentOrgId) {
+      supabase
+        .from('organizations')
+        .select('last_tracking_ping')
+        .eq('id', currentOrgId)
+        .single()
+        .then(({ data }) => {
+          if (data?.last_tracking_ping) setLastTrackingPing(data.last_tracking_ping);
+        });
+    }
+  };
 
-  }
-
-  const hash = window.location.hash.replace('#', '')
+  const hash = window.location.hash.replace('#', '');
   if (hash) {
-    setActiveTab(hash)
-    onHashChange() // ✅ Nu bestaat hij al
+    setActiveTab(normalizeTab(hash));
+    onHashChange();
   }
 
-  window.addEventListener('hashchange', onHashChange)
-  return () => window.removeEventListener('hashchange', onHashChange)
-}, [user, currentOrgId])
+  window.addEventListener('hashchange', onHashChange);
+  return () => window.removeEventListener('hashchange', onHashChange);
+}, [user, currentOrgId]);
 
 
     useEffect(() => {
@@ -348,286 +353,314 @@ async function saveDigest(changes) {
   }
 
   return (
-    <div className="w-full grid grid-cols-1 md:grid-cols-4 gap-6 px-4 py-10">
-      <aside className="space-y-2">
-        {[
-  { key: 'account', label: 'Account' },
-  { key: 'instellingen', label: 'Instellingen' },
-  { key: 'facturen', label: 'Facturen' },
-  { key: 'betaling', label: 'Betaalmethode' },
-  { key: 'team', label: 'Team' }, // ⬅️ nieuw
-  {
-    key: 'tracking',
-    label: (
-      <span className="flex items-center justify-between w-full">
-        <span>Tracking script</span>
-        {getTrackingStatusBadge()}
-      </span>
-    ),
-  },
-].map((tab) => (
-  <button
-    key={tab.key}
-    onClick={() => {
-      setActiveTab(tab.key)
-      window.location.hash = tab.key
-      setGeneralMessage(null)
-      setTrackingMessage(null)
-    }}
-    className={`block w-full text-left px-4 py-2 rounded ${
-      activeTab === tab.key
-        ? 'bg-blue-100 text-blue-700 font-medium'
-        : 'hover:bg-gray-100 text-gray-700'
-    }`}
-  >
-    {tab.label}
-  </button>
-))}
+  <div className="max-w-4xl mx-auto w-full px-4 py-10">
+    <h1 className="text-xl md:text-2xl font-semibold mb-4">Mijn account</h1>
 
-        <button
-          onClick={handleLogout}
-          className="block w-full text-left px-4 py-2 rounded hover:bg-red-100 text-red-600 mt-4"
-        >
-          Uitloggen
-        </button>
-      </aside>
-
-      <main className="md:col-span-3 bg-white border rounded-xl p-6 shadow space-y-4">
-        {activeTab !== 'tracking' && generalMessage && (
-          <div
-            className={`p-3 rounded ${
-              generalMessage.type === 'success'
-                ? 'bg-green-100 text-green-700'
-                : generalMessage.type === 'info'
-                ? 'bg-blue-100 text-blue-700'
-                : 'bg-red-100 text-red-700'
-            }`}
+    <Tabs
+      value={activeTab}
+      onValueChange={(val) => {
+        const next = normalizeTab(val);
+        setActiveTab(next);
+        window.location.hash = next; // deeplink behouden
+        setGeneralMessage(null);
+        setTrackingMessage(null);
+      }}
+    >
+      {/* Horizontale, scrollbare tabbar (mobile friendly) */}
+      <TabsList
+        className={[
+          "w-full bg-transparent p-0 border-b md:border rounded-none",
+          "sticky top-0 z-20 bg-white/90 backdrop-blur",
+          "overflow-x-auto whitespace-nowrap",
+          "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        ].join(" ")}
+      >
+        <div className="flex gap-2 px-1 py-2">
+          <TabsTrigger
+            value="account"
+            className="px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
           >
-            {generalMessage.text}
-          </div>
-        )}
+            Account
+          </TabsTrigger>
 
-        {activeTab === 'tracking' && trackingMessage && (
-          <div
-            className={`p-3 rounded ${
-              trackingMessage.type === 'success'
-                ? 'bg-green-100 text-green-700'
-                : trackingMessage.type === 'info'
-                ? 'bg-blue-100 text-blue-700'
-                : 'bg-red-100 text-red-700'
-            }`}
+          <TabsTrigger
+            value="instellingen"
+            className="px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
           >
-            {trackingMessage.text}
-          </div>
-        )}
+            Instellingen
+          </TabsTrigger>
 
-        {activeTab === 'account' && (
-          <>
-            <h2 className="text-xl font-semibold mb-4">Accountgegevens</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm mb-1">E-mailadres</label>
-                <Input
-  type="email"
-  autoComplete="email"
-  aria-label="E-mailadres"
-  value={email}
-  onChange={(e) => setEmail(e.target.value)}
-/>
+          <TabsTrigger
+            value="facturen"
+            className="px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
+          >
+            Facturen
+          </TabsTrigger>
 
-              </div>
-              <div>
-                <label className="block text-sm mb-1">Volledige naam</label>
-                <Input
-  type="text"
-  autoComplete="name"
-  aria-label="Volledige naam"
-  value={fullName}
-  onChange={(e) => setFullName(e.target.value)}
-/>
+          <TabsTrigger
+            value="betaling"
+            className="px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
+          >
+            Betaalmethode
+          </TabsTrigger>
 
-              </div>
-              <div>
-                <label className="block text-sm mb-1">Telefoonnummer</label>
-                <Input
-  type="tel"
-  inputMode="tel"
-  autoComplete="tel"
-  aria-label="Telefoonnummer"
-  value={phone}
-  onChange={(e) => setPhone(e.target.value)}
-/>
+          <TabsTrigger
+            value="team"
+            className="px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
+          >
+            Team
+          </TabsTrigger>
 
-              </div>
-              <fieldset>
-  <legend className="text-sm font-medium mb-2">Voorkeuren</legend>
-  <div className="flex items-center gap-2">
-    <Checkbox
-      id="pref-email"
-      checked={!!preferences.emailNotifications}
-      onCheckedChange={(val) =>
-        handlePreferenceChange("emailNotifications", !!val)
-      }
-    />
-    <Label htmlFor="pref-email" className="text-sm">
-      E-mail notificaties ontvangen
-    </Label>
-  </div>
-</fieldset>
+          <TabsTrigger
+            value="tracking"
+            className="px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
+          >
+            <span className="flex items-center gap-2">
+              Tracking script
+              {getTrackingStatusBadge()}
+            </span>
+          </TabsTrigger>
+        </div>
+      </TabsList>
 
-              <button
-                onClick={handleUpdate}
-                disabled={updating}
-                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
-              >
-                {updating ? 'Bezig...' : 'Profiel bijwerken'}
-              </button>
-              <button
-                onClick={handlePasswordReset}
-                className="mt-2 text-sm text-blue-600 hover:underline"
-              >
-                Wachtwoord reset e-mail sturen
-              </button>
+      {/* PANELS */}
+      <div className="mt-4 space-y-6">
+        {/* ACCOUNT */}
+        <TabsContent value="account" forceMount>
+          {activeTab !== 'tracking' && generalMessage && (
+            <div
+              className={`p-3 rounded ${
+                generalMessage.type === 'success'
+                  ? 'bg-green-100 text-green-700'
+                  : generalMessage.type === 'info'
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'bg-red-100 text-red-700'
+              }`}
+            >
+              {generalMessage.text}
             </div>
-          </>
-        )}
+          )}
 
-        {activeTab === 'instellingen' && (
-  <div>
-    <h2 className="text-xl font-semibold mb-2">Instellingen</h2>
-    <p className="text-gray-600 mb-4">E-mail overzichten met belangrijkste websitebezoekers.</p>
+          <h2 className="text-xl font-semibold mb-4">Accountgegevens</h2>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm mb-1">E-mailadres</label>
+              <Input
+                type="email"
+                autoComplete="email"
+                aria-label="E-mailadres"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
 
-    <div className="space-y-3">
-      {/* Dagelijks */}
-      <div className="flex items-center gap-3">
-  <Toggle
-    checked={digest.daily}
-    disabled={!currentOrgId || digestLoading || digestSaving}
-    onChange={(val) => saveDigest({ daily: val })}
-    label="Dagelijks om 07:00 (NL-tijd)"
-  />
-  <span>
-    Ontvang dagelijks overzicht
-  </span>
-</div>
+            <div>
+              <label className="block text-sm mb-1">Volledige naam</label>
+              <Input
+                type="text"
+                autoComplete="name"
+                aria-label="Volledige naam"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+              />
+            </div>
 
+            <div>
+              <label className="block text-sm mb-1">Telefoonnummer</label>
+              <Input
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                aria-label="Telefoonnummer"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+              />
+            </div>
 
-      {/* Wekelijks (maandag 07:00) */}
-      <div className="flex items-center gap-3">
-  <Toggle
-    checked={digest.weekly}
-    disabled={!currentOrgId || digestLoading || digestSaving}
-    onChange={(val) => saveDigest({ weekly: val })}
-    label="Wekelijks (maandag 07:00 NL)"
-  />
-  <span>
-    Ontvang wekelijks overzicht
-  </span>
-</div>
+            <fieldset>
+              <legend className="text-sm font-medium mb-2">Voorkeuren</legend>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="pref-email"
+                  checked={!!preferences.emailNotifications}
+                  onCheckedChange={(val) =>
+                    setPreferences((p) => ({ ...p, emailNotifications: !!val }))
+                  }
+                />
+                <Label htmlFor="pref-email" className="text-sm">
+                  E-mail notificaties ontvangen
+                </Label>
+              </div>
+            </fieldset>
 
+            <button
+              onClick={handleUpdate}
+              disabled={updating}
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              {updating ? 'Bezig...' : 'Profiel bijwerken'}
+            </button>
 
-      {/* Maandelijks (07:00, dag wordt vastgezet bij aanzetten) */}
-      <div className="flex items-center gap-3">
-  <Toggle
-    checked={digest.monthly}
-    disabled={!currentOrgId || digestLoading || digestSaving}
-    onChange={(val) => saveDigest({ monthly: val })}
-    label="Maandelijks 07:00 NL"
-  />
-  <span>
-    Ontvang maandelijks overzicht
-  </span>
-</div>
-
-      {(digestLoading || digestSaving) && (
-        <div className="text-sm text-gray-500">Opslaan…</div>
-      )}
-      {!digestLoading && !digestSaving && (
-        <div className="text-sm text-green-700">Wijzigingen worden automatisch opgeslagen.</div>
-      )}
-
-      <p className="text-xs text-gray-500 mt-2">
-        We sturen alleen een mail als er bezoekers zijn binnen de periode (max 10). De mail toont exact dezelfde bedrijven als je dashboard.
-      </p>
-
-      {/* Realtime meldingen (geluid) */}
-<div className="mt-6 border-t pt-4">
-  <h3 className="text-lg font-semibold mb-2">Realtime meldingen</h3>
-  <div className="flex items-center gap-3">
-    <Toggle
-  checked={!!(preferences?.newLeadSoundOn ?? true)}
-  disabled={!user?.id}
-  onChange={(val) => saveProfilePreference('newLeadSoundOn', val)}
-  label="Geluid bij nieuwe bedrijven"
-/>
-    <span>Geluid bij nieuwe bedrijven</span>
-  </div>
-  <p className="text-xs text-gray-500 mt-1">
-    Korte ping zodra er tijdens je sessie nieuwe bedrijven binnenkomen.
-  </p>
-</div>
-
-    </div>
-  </div>
-)}
-
-
-        {activeTab === 'facturen' && (
-          <div>
-            <h2 className="text-xl font-semibold mb-4">Facturen</h2>
-            <p className="text-gray-600">Hier zie je je facturen.</p>
+            <button
+              onClick={handlePasswordReset}
+              className="mt-2 text-sm text-blue-600 hover:underline"
+            >
+              Wachtwoord reset e-mail sturen
+            </button>
           </div>
-        )}
+        </TabsContent>
 
-        {activeTab === 'betaling' && (
+        {/* INSTELLINGEN */}
+        <TabsContent value="instellingen" forceMount>
+          {activeTab !== 'tracking' && generalMessage && (
+            <div
+              className={`p-3 rounded ${
+                generalMessage.type === 'success'
+                  ? 'bg-green-100 text-green-700'
+                  : generalMessage.type === 'info'
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'bg-red-100 text-red-700'
+              }`}
+            >
+              {generalMessage.text}
+            </div>
+          )}
+
           <div>
-            <h2 className="text-xl font-semibold mb-4">Betaalmethode</h2>
-            <p className="text-gray-600">Hier beheer je je betaalmethoden.</p>
+            <h2 className="text-xl font-semibold mb-2">Instellingen</h2>
+            <p className="text-gray-600 mb-4">
+              E-mail overzichten met belangrijkste websitebezoekers.
+            </p>
+
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <Toggle
+                  checked={digest.daily}
+                  disabled={!currentOrgId || digestLoading || digestSaving}
+                  onChange={(val) => saveDigest({ daily: val })}
+                  label="Dagelijks om 07:00 (NL-tijd)"
+                />
+                <span>Ontvang dagelijks overzicht</span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <Toggle
+                  checked={digest.weekly}
+                  disabled={!currentOrgId || digestLoading || digestSaving}
+                  onChange={(val) => saveDigest({ weekly: val })}
+                  label="Wekelijks (maandag 07:00 NL)"
+                />
+                <span>Ontvang wekelijks overzicht</span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <Toggle
+                  checked={digest.monthly}
+                  disabled={!currentOrgId || digestLoading || digestSaving}
+                  onChange={(val) => saveDigest({ monthly: val })}
+                  label="Maandelijks 07:00 NL"
+                />
+                <span>Ontvang maandelijks overzicht</span>
+              </div>
+
+              {(digestLoading || digestSaving) && (
+                <div className="text-sm text-gray-500">Opslaan…</div>
+              )}
+              {!digestLoading && !digestSaving && (
+                <div className="text-sm text-green-700">
+                  Wijzigingen worden automatisch opgeslagen.
+                </div>
+              )}
+
+              <p className="text-xs text-gray-500 mt-2">
+                We sturen alleen een mail als er bezoekers zijn binnen de periode (max 10). De mail toont exact dezelfde bedrijven als je dashboard.
+              </p>
+
+              <div className="mt-6 border-t pt-4">
+                <h3 className="text-lg font-semibold mb-2">Realtime meldingen</h3>
+                <div className="flex items-center gap-3">
+                  <Toggle
+                    checked={!!(preferences?.newLeadSoundOn ?? true)}
+                    disabled={!user?.id}
+                    onChange={(val) => saveProfilePreference('newLeadSoundOn', val)}
+                    label="Geluid bij nieuwe bedrijven"
+                  />
+                  <span>Geluid bij nieuwe bedrijven</span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Korte ping zodra er tijdens je sessie nieuwe bedrijven binnenkomen.
+                </p>
+              </div>
+            </div>
           </div>
-        )}
+        </TabsContent>
 
-        {activeTab === 'team' && (
-  <div>
-    <h2 className="text-xl font-semibold mb-4">Team</h2>
-    <TeamTab />
-  </div>
-)}
+        {/* FACTUREN */}
+        <TabsContent value="facturen" forceMount>
+          <h2 className="text-xl font-semibold mb-4">Facturen</h2>
+          <p className="text-gray-600">Hier zie je je facturen.</p>
+        </TabsContent>
 
+        {/* BETALING */}
+        <TabsContent value="betaling" forceMount>
+          <h2 className="text-xl font-semibold mb-4">Betaalmethode</h2>
+          <p className="text-gray-600">Hier beheer je je betaalmethoden.</p>
+        </TabsContent>
 
-        {activeTab === 'tracking' && (
+        {/* TEAM */}
+        <TabsContent value="team" forceMount>
+          <h2 className="text-xl font-semibold mb-4">Team</h2>
+          <TeamTab />
+        </TabsContent>
+
+        {/* TRACKING */}
+        <TabsContent value="tracking" forceMount>
+          {trackingMessage && (
+            <div
+              className={`p-3 rounded ${
+                trackingMessage.type === 'success'
+                  ? 'bg-green-100 text-green-700'
+                  : trackingMessage.type === 'info'
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'bg-red-100 text-red-700'
+              }`}
+            >
+              {trackingMessage.text}
+            </div>
+          )}
+
           <div>
             <h2 className="text-xl font-semibold mb-4">Tracking script</h2>
-            
-{lastTrackingPing ? (
-  <div className="mb-2 text-sm flex items-start flex-col gap-1">
-    {new Date() - new Date(lastTrackingPing) > 1000 * 60 * 60 * 24 ? (
-      <>
-        <div className="flex items-center gap-2 text-red-600 font-medium">
-          ⚠️ Laatste tracking ping:{" "}
-          <span>{formatDutchDateTime(lastTrackingPing)}</span>
-        </div>
-        <p className="text-red-600">
-          Je hebt al meer dan 24 uur geen trackingactiviteit ontvangen.
-        </p>
-      </>
-    ) : (
-      <div className="flex items-center gap-2 text-green-800 font-medium">
-        ✅ Laatste tracking ping:{" "}
-      <span>{formatDutchDateTime(lastTrackingPing)}</span>
-      </div>
-    )}
-  </div>
-) : (
-  <div className="mb-2 text-sm text-red-600 flex items-center gap-2">
-    ❌ Nog geen tracking ping ontvangen.
-  </div>
-)}
 
-
+            {lastTrackingPing ? (
+              <div className="mb-2 text-sm flex items-start flex-col gap-1">
+                {new Date() - new Date(lastTrackingPing) > 1000 * 60 * 60 * 24 ? (
+                  <>
+                    <div className="flex items-center gap-2 text-red-600 font-medium">
+                      ⚠️ Laatste tracking ping:{" "}
+                      <span>{formatDutchDateTime(lastTrackingPing)}</span>
+                    </div>
+                    <p className="text-red-600">
+                      Je hebt al meer dan 24 uur geen trackingactiviteit ontvangen.
+                    </p>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-2 text-green-800 font-medium">
+                    ✅ Laatste tracking ping:{" "}
+                    <span>{formatDutchDateTime(lastTrackingPing)}</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="mb-2 text-sm text-red-600 flex items-center gap-2">
+                ❌ Nog geen tracking ping ontvangen.
+              </div>
+            )}
 
             <p className="text-gray-600 mb-4">
               Plaats dit script in de &lt;head&gt; van je website om bezoekers te meten.
             </p>
+
             <div className="relative">
               <pre className="bg-gray-100 border rounded p-4 text-sm overflow-x-auto">
                 {trackingScript}
@@ -642,60 +675,57 @@ async function saveDigest(changes) {
             {copySuccess && (
               <p className="text-green-600 text-sm mt-2">{copySuccess}</p>
             )}
+
             <div className="mt-6">
               <button
                 onClick={async () => {
                   if (!currentOrgId) {
-      setTrackingMessage({ type: 'error', text: 'Geen organisatie gekoppeld aan dit account.' });
-      return;
-    }
-                  setTrackingMessage(null)
-                  setTrackingMessage({ type: 'info', text: 'Bezig met valideren...' })
+                    setTrackingMessage({ type: 'error', text: 'Geen organisatie gekoppeld aan dit account.' });
+                    return;
+                  }
+                  setTrackingMessage({ type: 'info', text: 'Bezig met valideren...' });
                   await fetch(`/api/track`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-projectId: currentOrgId,
-    pageUrl: window.location.href,
-    anonId: 'validation-test',
-    durationSeconds: 1,
-    utmSource: 'validation',
-    utmMedium: 'internal',
-    utmCampaign: 'script-validation',
-    referrer: document.referrer || null,
-    validationTest: true
-  })
-})
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      projectId: currentOrgId,
+                      pageUrl: window.location.href,
+                      anonId: 'validation-test',
+                      durationSeconds: 1,
+                      utmSource: 'validation',
+                      utmMedium: 'internal',
+                      utmCampaign: 'script-validation',
+                      referrer: document.referrer || null,
+                      validationTest: true
+                    })
+                  });
 
-const res = await fetch(`/api/check-tracking?projectId=${currentOrgId}`)
-const json = await res.json()
+                  const res = await fetch(`/api/check-tracking?projectId=${currentOrgId}`);
+                  const json = await res.json();
 
                   if (json.status === 'ok') {
-  setTrackingMessage({ type: 'success', text: 'Script gevonden en actief!' });
-} else if (json.status === 'stale') {
-  setTrackingMessage({
-    type: 'error',
-    text: 'Script gedetecteerd, maar geen recente activiteit. Probeer opnieuw te laden.'
-  });
-} else {
-  setTrackingMessage({
-    type: 'error',
-    text: 'Script niet gevonden. Controleer of je het script hebt geplaatst.'
-  });
-}
+                    setTrackingMessage({ type: 'success', text: 'Script gevonden en actief!' });
+                  } else if (json.status === 'stale') {
+                    setTrackingMessage({
+                      type: 'error',
+                      text: 'Script gedetecteerd, maar geen recente activiteit. Probeer opnieuw te laden.'
+                    });
+                  } else {
+                    setTrackingMessage({
+                      type: 'error',
+                      text: 'Script niet gevonden. Controleer of je het script hebt geplaatst.'
+                    });
+                  }
 
-// ✅ Nieuw: update de status direct in de UI
-const refreshed = await supabase
-  .from('organizations')
-  .select('last_tracking_ping')
-  .eq('id', currentOrgId)   // <-- let op: org_id, niet user.id
-  .single();
+                  const refreshed = await supabase
+                    .from('organizations')
+                    .select('last_tracking_ping')
+                    .eq('id', currentOrgId)
+                    .single();
 
-if (refreshed?.data?.last_tracking_ping) {
-  setLastTrackingPing(refreshed.data.last_tracking_ping);
-}
-
-
+                  if (refreshed?.data?.last_tracking_ping) {
+                    setLastTrackingPing(refreshed.data.last_tracking_ping);
+                  }
                 }}
                 className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
               >
@@ -703,8 +733,19 @@ if (refreshed?.data?.last_tracking_ping) {
               </button>
             </div>
           </div>
-        )}
-      </main>
+        </TabsContent>
+      </div>
+    </Tabs>
+
+    {/* Losse actie buiten tabs */}
+    <div className="mt-6">
+      <button
+        onClick={handleLogout}
+        className="px-4 py-2 rounded border hover:bg-gray-50 text-red-600"
+      >
+        Uitloggen
+      </button>
     </div>
-  )
+  </div>
+);
 }
