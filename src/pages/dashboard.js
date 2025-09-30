@@ -1571,6 +1571,7 @@ return (
     fixed top-0 left-0 h-screen w-[85%] max-w-sm z-50 p-4
     transform transition-transform duration-300 ease-in-out
     ${filtersOpen ? "translate-x-0" : "-translate-x-full"}
+        md:translate-x-0 md:transform-none
   `}
   style={{ flexBasis: "250px", flexShrink: 0 }}
 >
