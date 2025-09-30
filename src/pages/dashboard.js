@@ -1411,9 +1411,10 @@ const resetFilters = () => {
 
         {/* Midden kolom: lijst met 10 skeleton cards */}
         <div
-  className="flex flex-col h-full min-h-0 bg-white border border-gray-200 shadow"
-  style={{ flexBasis: "500px", flexShrink: 0 }}
+  className="flex flex-col h-full min-h-0 bg-white border border-gray-200 shadow
+             basis-full md:basis-[500px] md:shrink-0 max-w-full"
 >
+
 
           <div className="bg-blue-50 border-b border-blue-200 p-3 space-y-2 animate-pulse">
             <div className="h-4 w-48 bg-blue-100 rounded" />
@@ -1980,10 +1981,8 @@ const handleDeleteGlobalLabel = async (labelId) => {
 <div
   ref={(el) => (columnRefs.current[1] = el)}
   className={`h-full min-h-0 bg-white border border-gray-200 shadow
-  ${selectedCompany ? "hidden md:flex" : "flex"}
-  flex-col
-`}
-  style={{ flexBasis: "500px", flexShrink: 0 }}
+              ${selectedCompany ? "hidden md:flex" : "flex"}
+              flex-col basis-full md:basis-[500px] md:shrink-0 max-w-full`}
 >
 
 
