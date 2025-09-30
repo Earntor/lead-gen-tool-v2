@@ -1436,47 +1436,15 @@ const resetFilters = () => {
 
 
         {/* Linker kolom: Filters skeleton */}
-        <FiltersSkeleton />
-
-        {/* Resizer */}
-        <div
-          className="hidden md:block w-1 cursor-col-resize bg-gray-200 hover:bg-gray-400 transition"
-          aria-hidden
-        />
-
-        {/* Midden kolom: lijst met 10 skeleton cards */}
-        <div
-  className="flex flex-col h-full min-h-0 bg-white border border-gray-200 shadow
-             basis-full md:basis-[500px] md:shrink-0 max-w-full"
->
-
-
-          <div className="bg-blue-50 border-b border-blue-200 p-3 space-y-2 animate-pulse">
-            <div className="h-4 w-48 bg-blue-100 rounded" />
-            <div className="h-3 w-40 bg-blue-100 rounded" />
-            <div className="h-3 w-36 bg-blue-100 rounded" />
-          </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            <NewCompaniesButton
-  count={newCompaniesCount}
-  onApply={applyPendingNewCompanies}
-/>
-
-
-            {Array.from({ length: 10 }).map((_, i) => (
-              <LeadCardSkeleton key={i} />
-            ))}
-          </div>
-        </div>
-
-        {/* Resizer */}
-        <div
-          className="hidden md:block w-1 cursor-col-resize bg-gray-200 hover:bg-gray-400 transition"
-          aria-hidden
-        />
-
-        {/* Rechter kolom: detail skeleton */}
-        <DetailSkeleton />
+        {/* Linker kolom: alleen op desktop */}
+<div className="hidden md:block">
+  <FiltersSkeleton />
+</div>
+…
+{/* Rechter kolom: alleen op desktop */}
+<div className="hidden md:block">
+  <DetailSkeleton />
+</div>
       </div>
     </div>
   );
@@ -2003,7 +1971,7 @@ const handleDeleteGlobalLabel = async (labelId) => {
     // drawer sluiten op mobiel na export
     setFiltersOpen(false);
   }}
-  className="w-full mt-2 bg-black text-white px-3 py-2 rounded-lg text-sm hover:bg-gray-800 transition"
+  className="md:hidden w-full mt-2 bg-black text-white px-3 py-2 rounded-lg text-sm hover:bg-gray-800 transition"
 >
   Export
 </button>
