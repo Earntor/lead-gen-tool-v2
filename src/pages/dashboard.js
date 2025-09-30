@@ -1364,91 +1364,114 @@ const resetFilters = () => {
   return (
     <div className="w-full min-h-[100svh] bg-white">
       {/* Mobile top bar (alleen mobiel zichtbaar) */}
-<div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white/95 backdrop-blur border-b px-3 py-2 flex items-center justify-between">
-  {/* Hamburger LINKS */}
-  <button
-    onClick={() => setFiltersOpen(true)}
-    className="p-2 -ml-2 rounded hover:bg-gray-100"
-    aria-label="Menu & filters"
-  >
-    <Menu className="w-5 h-5" />
-  </button>
+      <div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white/95 backdrop-blur border-b px-3 py-2 flex items-center justify-between">
+        <button
+          onClick={() => setFiltersOpen(true)}
+          className="p-2 -ml-2 rounded hover:bg-gray-100"
+          aria-label="Menu & filters"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
 
-  {/* Titel */}
-  <div className="font-medium truncate">
-    {selectedCompany ? "Activiteiten" : "Bedrijven"}
-  </div>
+        <div className="font-medium truncate">
+          {selectedCompany ? "Activiteiten" : "Bedrijven"}
+        </div>
 
-  {/* RECHTS: terug (alleen in detail) + profielmenu */}
-  <div className="flex items-center gap-1">
-    {selectedCompany && (
-      <button
-        onClick={() => setSelectedCompany(null)}
-        className="p-2 rounded hover:bg-gray-100"
-        aria-label="Terug naar bedrijven"
+        <div className="flex items-center gap-1">
+          {selectedCompany && (
+            <button
+              onClick={() => setSelectedCompany(null)}
+              className="p-2 rounded hover:bg-gray-100"
+              aria-label="Terug naar bedrijven"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+          )}
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="p-2 -mr-2 rounded hover:bg-gray-100" aria-label="Profielmenu">
+                <User className="w-5 h-5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuLabel className="text-xs">
+                {user?.email || "Mijn account"}
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <a href="/account#account" className="block px-3 py-2 text-sm hover:bg-gray-50">Account</a>
+              <a href="/account#instellingen" className="block px-3 py-2 text-sm hover:bg-gray-50">Instellingen</a>
+              <a href="/account#facturen" className="block px-3 py-2 text-sm hover:bg-gray-50">Facturen</a>
+              <a href="/account#betaling" className="block px-3 py-2 text-sm hover:bg-gray-50">Betaalmethode</a>
+              <button
+                onClick={handleLogout}
+                className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+              >
+                Uitloggen
+              </button>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+
+      <div
+        className="
+          flex w-full
+          md:pt-0 pt-14
+          md:h-[calc(100vh-6rem)] h-[calc(100svh-3.5rem)]
+          supports-[height:100dvh]:md:h-[calc(100dvh-6rem)]
+          supports-[height:100dvh]:h-[calc(100dvh-3.5rem)]
+          bg-white
+          min-h-0 overflow-hidden
+        "
       >
-        <ArrowLeft className="w-5 h-5" />
-      </button>
-    )}
-
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          className="p-2 -mr-2 rounded hover:bg-gray-100"
-          aria-label="Profielmenu"
-        >
-          <User className="w-5 h-5" />
-        </button>
-      </DropdownMenuTrigger>
-
-      <DropdownMenuContent align="end" className="w-48">
-        <DropdownMenuLabel className="text-xs">
-          {user?.email || "Mijn account"}
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <a href="/account#account" className="block px-3 py-2 text-sm hover:bg-gray-50">Account</a>
-        <a href="/account#instellingen" className="block px-3 py-2 text-sm hover:bg-gray-50">Instellingen</a>
-        <a href="/account#facturen" className="block px-3 py-2 text-sm hover:bg-gray-50">Facturen</a>
-        <a href="/account#betaling" className="block px-3 py-2 text-sm hover:bg-gray-50">Betaalmethode</a>
-        <button
-          onClick={handleLogout}
-          className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
-        >
-          Uitloggen
-        </button>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  </div>
-</div>
-
-
+        {/* Linker kolom skeleton: alleen desktop */}
         <div
-  className="
-    flex w-full
-    md:pt-0 pt-14
-    md:h-[calc(100vh-6rem)] h:[calc(100svh-3.5rem)]
-    supports-[height:100dvh]:md:h-[calc(100dvh-6rem)]
-    supports-[height:100dvh]:h-[calc(100dvh-3.5rem)]
-    bg-white
-    min-h-0 overflow-hidden
-  "
->
+          className="hidden md:flex"
+          style={{ flexBasis: "250px", flexShrink: 0 }}
+        >
+          <FiltersSkeleton />
+        </div>
 
+        {/* Resizer: alleen desktop */}
+        <div
+          className="hidden md:block w-1 cursor-col-resize bg-gray-200 hover:bg-gray-400 transition"
+          aria-hidden
+        />
 
-        {/* Linker kolom: Filters skeleton */}
-        {/* Linker kolom: alleen op desktop */}
-<div className="hidden md:block">
-  <FiltersSkeleton />
-</div>
-…
-{/* Rechter kolom: alleen op desktop */}
-<div className="hidden md:block">
-  <DetailSkeleton />
-</div>
+        {/* Midden kolom skeleton: altijd zichtbaar (mobiel en desktop) */}
+        <div
+          className="flex flex-col h-full min-h-0 bg-white border border-gray-200 shadow
+                     basis-full md:basis-[500px] md:shrink-0 max-w-full"
+        >
+          <div className="bg-blue-50 border-b border-blue-200 p-3 space-y-2 animate-pulse">
+            <div className="h-4 w-48 bg-blue-100 rounded" />
+            <div className="h-3 w-40 bg-blue-100 rounded" />
+            <div className="h-3 w-36 bg-blue-100 rounded" />
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {Array.from({ length: 10 }).map((_, i) => (
+              <LeadCardSkeleton key={i} />
+            ))}
+          </div>
+        </div>
+
+        {/* Resizer: alleen desktop */}
+        <div
+          className="hidden md:block w-1 cursor-col-resize bg-gray-200 hover:bg-gray-400 transition"
+          aria-hidden
+        />
+
+        {/* Rechter kolom skeleton: alleen desktop */}
+        <div className="hidden md:flex flex-1 min-h-0">
+          <DetailSkeleton />
+        </div>
       </div>
     </div>
   );
 }
+
 
 
 return (
