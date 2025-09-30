@@ -1379,52 +1379,46 @@ const resetFilters = () => {
     {selectedCompany ? "Activiteiten" : "Bedrijven"}
   </div>
 
-  {/* Rechts: back in detail, anders profielmenu */}
-{selectedCompany ? (
-  <button
-    onClick={() => setSelectedCompany(null)}
-    className="p-2 -mr-2 rounded hover:bg-gray-100"
-    aria-label="Terug naar bedrijven"
-  >
-    <ArrowLeft className="w-5 h-5" />
-  </button>
-) : (
-  <DropdownMenu>
-    <DropdownMenuTrigger asChild>
+  {/* RECHTS: terug (alleen in detail) + profielmenu */}
+  <div className="flex items-center gap-1">
+    {selectedCompany && (
       <button
-        className="p-2 -mr-2 rounded hover:bg-gray-100"
-        aria-label="Profielmenu"
+        onClick={() => setSelectedCompany(null)}
+        className="p-2 rounded hover:bg-gray-100"
+        aria-label="Terug naar bedrijven"
       >
-        <User className="w-5 h-5" />
+        <ArrowLeft className="w-5 h-5" />
       </button>
-    </DropdownMenuTrigger>
+    )}
 
-    <DropdownMenuContent align="end" className="w-48">
-      <DropdownMenuLabel className="text-xs">
-        {user?.email || "Mijn account"}
-      </DropdownMenuLabel>
-      <DropdownMenuSeparator />
-      <a href="/account#account" className="block px-3 py-2 text-sm hover:bg-gray-50">
-        Account
-      </a>
-      <a href="/account#instellingen" className="block px-3 py-2 text-sm hover:bg-gray-50">
-        Instellingen
-      </a>
-      <a href="/account#facturen" className="block px-3 py-2 text-sm hover:bg-gray-50">
-        Facturen
-      </a>
-      <a href="/account#betaling" className="block px-3 py-2 text-sm hover:bg-gray-50">
-        Betaalmethode
-      </a>
-      <button
-        onClick={handleLogout}
-        className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
-      >
-        Uitloggen
-      </button>
-    </DropdownMenuContent>
-  </DropdownMenu>
-)}
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          className="p-2 -mr-2 rounded hover:bg-gray-100"
+          aria-label="Profielmenu"
+        >
+          <User className="w-5 h-5" />
+        </button>
+      </DropdownMenuTrigger>
+
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuLabel className="text-xs">
+          {user?.email || "Mijn account"}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <a href="/account#account" className="block px-3 py-2 text-sm hover:bg-gray-50">Account</a>
+        <a href="/account#instellingen" className="block px-3 py-2 text-sm hover:bg-gray-50">Instellingen</a>
+        <a href="/account#facturen" className="block px-3 py-2 text-sm hover:bg-gray-50">Facturen</a>
+        <a href="/account#betaling" className="block px-3 py-2 text-sm hover:bg-gray-50">Betaalmethode</a>
+        <button
+          onClick={handleLogout}
+          className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+        >
+          Uitloggen
+        </button>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  </div>
 </div>
 
 
@@ -1507,14 +1501,46 @@ return (
     {selectedCompany ? "Activiteiten" : "Bedrijven"}
   </div>
 
-  {/* Terugknop RECHTS (alleen in detail) */}
-  <button
-    onClick={() => setSelectedCompany(null)}
-    className={`p-2 -mr-2 rounded hover:bg-gray-100 ${selectedCompany ? "" : "invisible"}`}
-    aria-label="Terug naar bedrijven"
-  >
-    <ArrowLeft className="w-5 h-5" />
-  </button>
+  {/* RECHTS: terug (alleen detail) + profielmenu */}
+  <div className="flex items-center gap-1">
+    {selectedCompany && (
+      <button
+        onClick={() => setSelectedCompany(null)}
+        className="p-2 rounded hover:bg-gray-100"
+        aria-label="Terug naar bedrijven"
+      >
+        <ArrowLeft className="w-5 h-5" />
+      </button>
+    )}
+
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          className="p-2 -mr-2 rounded hover:bg-gray-100"
+          aria-label="Profielmenu"
+        >
+          <User className="w-5 h-5" />
+        </button>
+      </DropdownMenuTrigger>
+
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuLabel className="text-xs">
+          {user?.email || "Mijn account"}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <a href="/account#account" className="block px-3 py-2 text-sm hover:bg-gray-50">Account</a>
+        <a href="/account#instellingen" className="block px-3 py-2 text-sm hover:bg-gray-50">Instellingen</a>
+        <a href="/account#facturen" className="block px-3 py-2 text-sm hover:bg-gray-50">Facturen</a>
+        <a href="/account#betaling" className="block px-3 py-2 text-sm hover:bg-gray-50">Betaalmethode</a>
+        <button
+          onClick={handleLogout}
+          className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+        >
+          Uitloggen
+        </button>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  </div>
 </div>
 
 
