@@ -1569,7 +1569,7 @@ return (
 
 {/* Alleen zichtbaar op mobiel */}
 <div className="md:hidden flex items-center justify-between -mt-2 mb-2">
-  <span className="text-base font-semibold">Menu & filters</span>
+  <span className="text-base font-semibold">Filters</span>
   <button
     onClick={() => setFiltersOpen(false)}
     className="px-3 py-1.5 rounded-lg border hover:bg-gray-100 text-sm"
@@ -1579,7 +1579,7 @@ return (
 </div>
 
 
-          <h2 className="text-xl font-semibold text-gray-700 mb-2">Filters</h2>
+<h2 className="hidden md:block text-xl font-semibold text-gray-700 mb-2">Filters</h2>
 
           {/* Globale zoekbalk (zelfde werking als in layout.js) */}
 <Input
