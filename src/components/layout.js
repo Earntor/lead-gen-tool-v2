@@ -39,7 +39,11 @@ export default function Layout({ children }) {
     <div className="min-h-screen bg-gray-50">
       {/* Header tonen op dashboard en account */}
       {(router.pathname === "/dashboard" || router.pathname === "/account") && (
-<header className="bg-white border-b px-4 py-3 flex flex-wrap justify-between items-center gap-4">
+<header
+  className={`bg-white border-b px-4 py-3 flex flex-wrap justify-between items-center gap-4 ${
+    router.pathname === "/dashboard" ? "hidden md:flex" : ""
+  }`}
+>
           {/* Logo */}
           <Link href="/">
             <div className="flex items-center gap-2 cursor-pointer">

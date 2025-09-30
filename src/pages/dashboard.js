@@ -46,6 +46,8 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from "@/components/ui/accordion";
+import { ArrowLeft, Menu } from "lucide-react";
+
 
 
 
@@ -387,6 +389,8 @@ const [authToken, setAuthToken] = useState(null);
 const [notesByDomain, setNotesByDomain] = useState({}); // { [domain]: "note text" }
 const geocodeCacheRef = useRef(new Map()); // key: adres-string → { lat, lon }
 const [profile, setProfile] = useState(null);
+const [filtersOpen, setFiltersOpen] = useState(false); // mobiel: open/gesloten filters
+
 // Sessie-start: alleen events vanaf dit moment tellen
 const sessionStartRef = useRef(new Date().toISOString());
 
@@ -1356,13 +1360,39 @@ const resetFilters = () => {
   if (loading) {
   return (
     <div className="w-full">
-      <div className="flex w-full h-[calc(100vh-6rem)]">
+      {/* Mobile top bar (alleen mobiel zichtbaar) */}
+<div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white border-b px-3 py-2 flex items-center justify-between">
+  {/* Terugknop als je in detail zit */}
+  <button
+    onClick={() => setSelectedCompany(null)}
+    className={`p-2 -ml-2 rounded hover:bg-gray-100 ${selectedCompany ? "" : "invisible"}`}
+    aria-label="Terug naar bedrijven"
+  >
+    <ArrowLeft className="w-5 h-5" />
+  </button>
+
+  {/* Titel */}
+  <div className="font-medium truncate">
+    {selectedCompany ? "Activiteiten" : "Bedrijven"}
+  </div>
+
+  {/* Hamburger om filters te openen */}
+  <button
+    onClick={() => setFiltersOpen(true)}
+    className="p-2 -mr-2 rounded hover:bg-gray-100"
+    aria-label="Filters en menu"
+  >
+    <Menu className="w-5 h-5" />
+  </button>
+</div>
+
+        <div className="flex w-full md:h-[calc(100vh-6rem)] h-[calc(100vh-3.5rem)] md:pt-0 pt-14">
         {/* Linker kolom: Filters skeleton */}
         <FiltersSkeleton />
 
         {/* Resizer */}
         <div
-          className="w-1 cursor-col-resize bg-gray-200"
+          className="hidden md:block w-1 cursor-col-resize bg-gray-200 hover:bg-gray-400 transition"
           aria-hidden
         />
 
@@ -1391,7 +1421,7 @@ const resetFilters = () => {
 
         {/* Resizer */}
         <div
-          className="w-1 cursor-col-resize bg-gray-200"
+          className="hidden md:block w-1 cursor-col-resize bg-gray-200 hover:bg-gray-400 transition"
           aria-hidden
         />
 
@@ -1413,12 +1443,48 @@ return (
 
         <div
   ref={(el) => (columnRefs.current[0] = el)}
-  className="flex flex-col h-full overflow-y-auto bg-gray-50 border border-gray-200 p-4 shadow-md space-y-4"
+  // Desktop: normale kolom
+  // Mobiel: off-canvas drawer
+  className={`bg-gray-50 border border-gray-200 shadow-md space-y-4
+    md:static md:flex md:flex-col md:h-full md:overflow-y-auto md:p-4
+    fixed top-0 left-0 h-screen w-[85%] max-w-sm z-50 p-4
+    transform transition-transform duration-300 ease-in-out
+    ${filtersOpen ? "translate-x-0" : "-translate-x-full"}
+  `}
   style={{ flexBasis: "250px", flexShrink: 0 }}
 >
 
+{/* Alleen zichtbaar op mobiel */}
+<div className="md:hidden flex items-center justify-between -mt-2 mb-2">
+  <span className="text-base font-semibold">Menu & filters</span>
+  <button
+    onClick={() => setFiltersOpen(false)}
+    className="px-3 py-1.5 rounded-lg border hover:bg-gray-100 text-sm"
+  >
+    Sluiten
+  </button>
+</div>
+
 
           <h2 className="text-xl font-semibold text-gray-700 mb-2">Filters</h2>
+
+          {/* Globale zoekbalk (zelfde werking als in layout.js) */}
+<Input
+  type="text"
+  placeholder="Zoek bedrijf, locatie of pagina..."
+  aria-label="Zoek bedrijf, locatie of pagina"
+  defaultValue={router.query.search || ""}
+  onChange={(e) => {
+    const term = e.target.value;
+    router.replace(
+      { pathname: "/dashboard", query: { ...router.query, search: term } },
+      undefined,
+      { shallow: true }
+    );
+  }}
+  className="w-full mb-3"
+/>
+
           <DropdownMenu>
   <DropdownMenuTrigger asChild>
     <Button
@@ -1808,9 +1874,50 @@ const handleDeleteGlobalLabel = async (labelId) => {
   Reset filters
 </button>
 
+<button
+  onClick={() => {
+    // zelfde event als je header-knop
+    window.dispatchEvent(new Event("exportLeads"));
+    // drawer sluiten op mobiel na export
+    setFiltersOpen(false);
+  }}
+  className="w-full mt-2 bg-black text-white px-3 py-2 rounded-lg text-sm hover:bg-gray-800 transition"
+>
+  Export
+</button>
+
+{/* Snelle links (onderaan je drawer) */}
+<div className="mt-3 pt-3 border-t space-y-2 text-sm">
+  <a href="/account#account" className="block hover:underline">Account</a>
+  <a href="/account#instellingen" className="block hover:underline">Instellingen</a>
+  <a href="/account#team" className="block hover:underline">Team</a>
+  <button
+    onClick={async () => {
+      try {
+        await supabase.auth.signOut();
+        router.push("/login");
+      } catch {}
+    }}
+    className="block text-left w-full hover:underline text-red-600"
+  >
+    Uitloggen
+  </button>
+</div>
+
+
         </div>
+
+        {/* Backdrop voor mobiele drawer */}
+{filtersOpen && (
+  <div
+    className="fixed inset-0 z-40 bg-black/50 md:hidden"
+    onClick={() => setFiltersOpen(false)}
+    aria-hidden
+  />
+)}
+
 <div
-  className="w-1 cursor-col-resize bg-gray-200 hover:bg-gray-400 transition"
+  className="hidden md:block w-1 cursor-col-resize bg-gray-200 hover:bg-gray-400 transition"
   onMouseDown={(e) => startResizing(e, 0)}
 ></div>
 
@@ -1819,7 +1926,10 @@ const handleDeleteGlobalLabel = async (labelId) => {
 
 <div
   ref={(el) => (columnRefs.current[1] = el)}
-  className="flex flex-col h-full bg-white border border-gray-200 shadow"
+  className={`h-full bg-white border border-gray-200 shadow
+  ${selectedCompany ? "hidden md:flex" : "flex"}
+  flex-col
+`}
   style={{ flexBasis: "500px", flexShrink: 0 }}
 >
 
@@ -1860,7 +1970,12 @@ const handleDeleteGlobalLabel = async (labelId) => {
   return (
     <div
       key={`override-${company.company_name}`}
-      onClick={() => { setSelectedCompany(company.company_name); setInitialVisitorSet(false); }}
+      onClick={() => {
+  setSelectedCompany(company.company_name);
+  setInitialVisitorSet(false);
+  setFiltersOpen(false); // sluit de drawer op mobiel
+}}
+
       className="cursor-pointer bg-white border border-amber-300 rounded-xl p-4 shadow hover:shadow-lg hover:scale-[1.02] transition-transform duration-200 ring-1 ring-amber-300"
       title="Tijdelijk getoond buiten je filter"
     >
@@ -2022,6 +2137,8 @@ if (leadRating >= 80) {
           onClick={() => {
             setSelectedCompany(company.company_name);
             setInitialVisitorSet(false);
+            setFiltersOpen(false); // sluit de drawer op mobiel
+
           }}
           className={`cursor-pointer bg-white border border-gray-200 rounded-xl p-4 shadow hover:shadow-lg hover:scale-[1.02] transition-transform duration-200 ${
   selectedCompany === company.company_name
@@ -2235,12 +2352,12 @@ try {
 </div>
 
 <div
-  className="w-1 cursor-col-resize bg-gray-200 hover:bg-gray-400 transition"
+  className="hidden md:block w-1 cursor-col-resize bg-gray-200 hover:bg-gray-400 transition"
   onMouseDown={(e) => startResizing(e, 1)}
 ></div>
 
 
-<div className="flex flex-col flex-grow overflow-y-auto bg-white border border-gray-200 p-4 shadow">
+<div className={`${selectedCompany ? "flex" : "hidden md:flex"} flex-col flex-grow overflow-y-auto bg-white border border-gray-200 p-4 shadow`}>
   {selectedCompany ? (
     <div className="bg-white border border-gray-200 rounded-xl p-4 shadow">
       {selectedCompanyData && (
@@ -2398,7 +2515,7 @@ try {
             {/* Bedrijfsgegevens */}
            <div className="space-y-4 text-sm text-gray-700 bg-white p-6 rounded-2xl border border-gray-200 shadow-lg">
   <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-    📇 Bedrijfsprofiel
+  Bedrijfsprofiel
   </h3>
 
   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2674,8 +2791,9 @@ try {
        {/* ──────────────────────────────────────────────── */}
 
       <h2 className="text-lg font-semibold text-gray-800 mb-2">
-        Activiteiten – {selectedCompany}
-      </h2>
+  Activiteiten
+</h2>
+
 
       {sortedVisitors.length === 0 ? (
   <p className="text-sm text-gray-500">Geen activiteiten gevonden.</p>
