@@ -356,6 +356,51 @@ async function saveDigest(changes) {
   <div className="max-w-4xl mx-auto w-full px-4 py-10">
     <h1 className="text-xl md:text-2xl font-semibold mb-4">Mijn account</h1>
 
+<aside className="hidden md:block space-y-2">
+  {[
+    { key: 'account', label: 'Account' },
+    { key: 'instellingen', label: 'Instellingen' },
+    { key: 'facturen', label: 'Facturen' },
+    { key: 'betaling', label: 'Betaalmethode' },
+    { key: 'team', label: 'Team' },
+    {
+      key: 'tracking',
+      label: (
+        <span className="flex items-center justify-between w-full">
+          <span>Tracking script</span>
+          {getTrackingStatusBadge()}
+        </span>
+      ),
+    },
+  ].map((tab) => (
+    <button
+      key={tab.key}
+      onClick={() => {
+        const next = tab.key;
+        setActiveTab(next);
+        window.location.hash = next;
+        setGeneralMessage(null);
+        setTrackingMessage(null);
+      }}
+      className={`block w-full text-left px-4 py-2 rounded ${
+        activeTab === tab.key
+          ? 'bg-blue-100 text-blue-700 font-medium'
+          : 'hover:bg-gray-100 text-gray-700'
+      }`}
+    >
+      {tab.label}
+    </button>
+  ))}
+
+  <button
+    onClick={handleLogout}
+    className="block w-full text-left px-4 py-2 rounded hover:bg-red-100 text-red-600 mt-4"
+  >
+    Uitloggen
+  </button>
+</aside>
+
+
     <Tabs
       value={activeTab}
       onValueChange={(val) => {
@@ -368,65 +413,67 @@ async function saveDigest(changes) {
     >
       {/* Horizontale, scrollbare tabbar (mobile friendly) */}
       <TabsList
-        className={[
-          "w-full bg-transparent p-0 border-b md:border rounded-none",
-          "sticky top-0 z-20 bg-white/90 backdrop-blur",
-          "overflow-x-auto whitespace-nowrap",
-          "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-        ].join(" ")}
-      >
-        <div className="flex gap-2 px-1 py-2">
-          <TabsTrigger
-            value="account"
-            className="px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
-          >
-            Account
-          </TabsTrigger>
+  className={[
+    "md:hidden",                       // alleen mobiel
+    "w-full sticky top-0 z-20",
+    "bg-white/90 backdrop-blur",
+    "border-b p-2",
+    "overflow-x-auto whitespace-nowrap",
+    "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+    "gap-2 inline-flex"                // let op: triggers direct onder List
+  ].join(" ")}
+>
+  <TabsTrigger
+    value="account"
+    className="shrink-0 px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
+  >
+    Account
+  </TabsTrigger>
 
-          <TabsTrigger
-            value="instellingen"
-            className="px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
-          >
-            Instellingen
-          </TabsTrigger>
+  <TabsTrigger
+    value="instellingen"
+    className="shrink-0 px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
+  >
+    Instellingen
+  </TabsTrigger>
 
-          <TabsTrigger
-            value="facturen"
-            className="px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
-          >
-            Facturen
-          </TabsTrigger>
+  <TabsTrigger
+    value="facturen"
+    className="shrink-0 px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
+  >
+    Facturen
+  </TabsTrigger>
 
-          <TabsTrigger
-            value="betaling"
-            className="px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
-          >
-            Betaalmethode
-          </TabsTrigger>
+  <TabsTrigger
+    value="betaling"
+    className="shrink-0 px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
+  >
+    Betaalmethode
+  </TabsTrigger>
 
-          <TabsTrigger
-            value="team"
-            className="px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
-          >
-            Team
-          </TabsTrigger>
+  <TabsTrigger
+    value="team"
+    className="shrink-0 px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
+  >
+    Team
+  </TabsTrigger>
 
-          <TabsTrigger
-            value="tracking"
-            className="px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
-          >
-            <span className="flex items-center gap-2">
-              Tracking script
-              {getTrackingStatusBadge()}
-            </span>
-          </TabsTrigger>
-        </div>
-      </TabsList>
+  <TabsTrigger
+    value="tracking"
+    className="shrink-0 px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
+  >
+    <span className="flex items-center gap-2">
+      Tracking script
+      {getTrackingStatusBadge()}
+    </span>
+  </TabsTrigger>
+</TabsList>
+
 
       {/* PANELS */}
       <div className="mt-4 space-y-6">
         {/* ACCOUNT */}
-        <TabsContent value="account" forceMount>
+        <TabsContent value="account">
           {activeTab !== 'tracking' && generalMessage && (
             <div
               className={`p-3 rounded ${
