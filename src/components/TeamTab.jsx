@@ -490,96 +490,118 @@ export default function TeamTab() {
         )}
 
         {loading ? (
-          <div className="space-y-2">
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className="h-12 rounded-lg bg-gray-100 animate-pulse" />
-            ))}
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="text-sm text-gray-600">Geen leden gevonden.</div>
-        ) : (
-          <ul className="divide-y">
-            {filtered.map((m) => {
-              const initials = (m.full_name || m.email || '?')
-                .split(' ')
-                .map(s => s[0]?.toUpperCase())
-                .join('')
-                .slice(0, 2)
+  <div className="space-y-2">
+    {[...Array(4)].map((_, i) => (
+      <div key={i} className="h-12 rounded-lg bg-gray-100 animate-pulse" />
+    ))}
+  </div>
+) : filtered.length === 0 ? (
+  <div className="text-sm text-gray-600">Geen leden gevonden.</div>
+) : (
+  <ul
+    className={[
+      // Mobile: horizontal scroll row of cards
+      "flex gap-3 overflow-x-auto pb-2 -mx-4 px-4",
+      "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+      // Desktop: fall back to your original vertical list with dividers
+      "md:block md:overflow-visible md:pb-0 md:mx-0 md:px-0 md:gap-0 md:divide-y",
+    ].join(" ")}
+  >
+    {filtered.map((m) => {
+      const initials = (m.full_name || m.email || "?")
+        .split(" ")
+        .map((s) => s[0]?.toUpperCase())
+        .join("")
+        .slice(0, 2);
 
-              return (
-                <li key={m.user_id} className="py-3 flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    {/* Avatar */}
-                    <div className="h-9 w-9 rounded-full bg-gray-100 border flex items-center justify-center text-xs font-semibold">
-                      {initials || '–'}
-                    </div>
-                    {/* Tekst */}
-                    <div>
-                      <div className="font-medium flex items-center gap-2">
-                        <span>{m.full_name || m.email || m.user_id}</span>
-                        {ownerId === m.user_id && (
-                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 border">
-                            Owner
-                          </span>
-                        )}
-                        {m.role === 'admin' && (
-                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700">
-                            Admin
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-gray-500">Sinds: {safeSince(m?.since)}</div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <DropdownMenu>
-  <DropdownMenuTrigger asChild>
-    <Button
-      type="button"
-      variant="outline"
-      size="sm"
-      className="justify-between min-w-[9rem]"
-      disabled={!canAdmin || isLastAdmin(m.user_id)}
-      aria-label="Wijzig rol"
-    >
-      {ROLES.find(r => r.value === m.role)?.label ?? m.role}
-      <ChevronDown className="w-4 h-4 opacity-60" />
-    </Button>
-  </DropdownMenuTrigger>
-
-  <DropdownMenuContent align="end" className="w-[180px]">
-    <DropdownMenuLabel>Rol</DropdownMenuLabel>
-    <DropdownMenuRadioGroup
-      value={m.role}
-      onValueChange={(val) => changeRole(m.user_id, val)}
-    >
-      {ROLES.map((r) => (
-        <DropdownMenuRadioItem
-          key={r.value}
-          value={r.value}
-          disabled={isLastAdmin(m.user_id) && r.value !== "admin"}
+      return (
+        <li
+          key={m.user_id}
+          className={[
+            // Mobile “card” style
+            "shrink-0 min-w-[320px] rounded-lg border p-3 bg-white",
+            // Ensure text truncates in tight widths
+            "md:min-w-0 md:shrink md:rounded-none md:border-0 md:p-0",
+            // Desktop row layout
+            "md:py-3 md:flex md:items-center md:justify-between md:gap-4",
+          ].join(" ")}
         >
-          {r.label}
-        </DropdownMenuRadioItem>
-      ))}
-    </DropdownMenuRadioGroup>
-  </DropdownMenuContent>
-</DropdownMenu>
+          <div className="flex items-center gap-3 min-w-0">
+            {/* Avatar */}
+            <div className="h-9 w-9 rounded-full bg-gray-100 border flex items-center justify-center text-xs font-semibold">
+              {initials || "–"}
+            </div>
 
-                    <button
-                      onClick={() => removeMember(m.user_id)}
-                      className="text-red-600 text-sm px-3 py-1.5 rounded-lg border hover:bg-red-50 disabled:opacity-50"
-                      disabled={!canAdmin || isLastAdmin(m.user_id)}
+            {/* Tekst */}
+            <div className="min-w-0">
+              <div className="font-medium flex items-center gap-2">
+                <span className="truncate max-w-[180px] md:max-w-none">
+                  {m.full_name || m.email || m.user_id}
+                </span>
+                {ownerId === m.user_id && (
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 border">
+                    Owner
+                  </span>
+                )}
+                {m.role === "admin" && (
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700">
+                    Admin
+                  </span>
+                )}
+              </div>
+              <div className="text-xs text-gray-500">Sinds: {safeSince(m?.since)}</div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 mt-2 md:mt-0">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="justify-between min-w-[9rem]"
+                  disabled={!canAdmin || isLastAdmin(m.user_id)}
+                  aria-label="Wijzig rol"
+                >
+                  {ROLES.find((r) => r.value === m.role)?.label ?? m.role}
+                  <ChevronDown className="w-4 h-4 opacity-60" />
+                </Button>
+              </DropdownMenuTrigger>
+
+              <DropdownMenuContent align="end" className="w-[180px]">
+                <DropdownMenuLabel>Rol</DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={m.role}
+                  onValueChange={(val) => changeRole(m.user_id, val)}
+                >
+                  {ROLES.map((r) => (
+                    <DropdownMenuRadioItem
+                      key={r.value}
+                      value={r.value}
+                      disabled={isLastAdmin(m.user_id) && r.value !== "admin"}
                     >
-                      Verwijderen
-                    </button>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
-        )}
+                      {r.label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <button
+              onClick={() => removeMember(m.user_id)}
+              className="text-red-600 text-sm px-3 py-1.5 rounded-lg border hover:bg-red-50 disabled:opacity-50"
+              disabled={!canAdmin || isLastAdmin(m.user_id)}
+            >
+              Verwijderen
+            </button>
+          </div>
+        </li>
+      );
+    })}
+  </ul>
+)}
+
       </div>
 
       {/* Uitnodigen (card) */}
