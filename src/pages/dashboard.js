@@ -1361,14 +1361,14 @@ const resetFilters = () => {
   return (
     <div className="w-full">
       {/* Mobile top bar (alleen mobiel zichtbaar) */}
-<div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white border-b px-3 py-2 flex items-center justify-between">
-  {/* Terugknop als je in detail zit */}
+<div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white/95 backdrop-blur border-b px-3 py-2 flex items-center justify-between">
+  {/* Hamburger LINKS */}
   <button
-    onClick={() => setSelectedCompany(null)}
-    className={`p-2 -ml-2 rounded hover:bg-gray-100 ${selectedCompany ? "" : "invisible"}`}
-    aria-label="Terug naar bedrijven"
+    onClick={() => setFiltersOpen(true)}
+    className="p-2 -ml-2 rounded hover:bg-gray-100"
+    aria-label="Menu & filters"
   >
-    <ArrowLeft className="w-5 h-5" />
+    <Menu className="w-5 h-5" />
   </button>
 
   {/* Titel */}
@@ -1376,15 +1376,16 @@ const resetFilters = () => {
     {selectedCompany ? "Activiteiten" : "Bedrijven"}
   </div>
 
-  {/* Hamburger om filters te openen */}
+  {/* Terugknop RECHTS (alleen in detail) */}
   <button
-    onClick={() => setFiltersOpen(true)}
-    className="p-2 -mr-2 rounded hover:bg-gray-100"
-    aria-label="Filters en menu"
+    onClick={() => setSelectedCompany(null)}
+    className={`p-2 -mr-2 rounded hover:bg-gray-100 ${selectedCompany ? "" : "invisible"}`}
+    aria-label="Terug naar bedrijven"
   >
-    <Menu className="w-5 h-5" />
+    <ArrowLeft className="w-5 h-5" />
   </button>
 </div>
+
 
         <div className="flex w-full md:h-[calc(100vh-6rem)] h-[calc(100vh-3.5rem)] md:pt-0 pt-14">
         {/* Linker kolom: Filters skeleton */}
@@ -1436,14 +1437,14 @@ const resetFilters = () => {
 return (
   <div className="w-full">
     {/* Mobile top bar (alleen mobiel zichtbaar) */}
-<div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white border-b px-3 py-2 flex items-center justify-between">
-  {/* Terugknop als je in detail zit */}
+<div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white/95 backdrop-blur border-b px-3 py-2 flex items-center justify-between">
+  {/* Hamburger LINKS */}
   <button
-    onClick={() => setSelectedCompany(null)}
-    className={`p-2 -ml-2 rounded hover:bg-gray-100 ${selectedCompany ? "" : "invisible"}`}
-    aria-label="Terug naar bedrijven"
+    onClick={() => setFiltersOpen(true)}
+    className="p-2 -ml-2 rounded hover:bg-gray-100"
+    aria-label="Menu & filters"
   >
-    <ArrowLeft className="w-5 h-5" />
+    <Menu className="w-5 h-5" />
   </button>
 
   {/* Titel */}
@@ -1451,15 +1452,16 @@ return (
     {selectedCompany ? "Activiteiten" : "Bedrijven"}
   </div>
 
-  {/* Hamburger om filters/menu te openen */}
+  {/* Terugknop RECHTS (alleen in detail) */}
   <button
-    onClick={() => setFiltersOpen(true)}
-    className="p-2 -mr-2 rounded hover:bg-gray-100"
-    aria-label="Filters en menu"
+    onClick={() => setSelectedCompany(null)}
+    className={`p-2 -mr-2 rounded hover:bg-gray-100 ${selectedCompany ? "" : "invisible"}`}
+    aria-label="Terug naar bedrijven"
   >
-    <Menu className="w-5 h-5" />
+    <ArrowLeft className="w-5 h-5" />
   </button>
 </div>
+
 
    {/*< <div className="mb-4">
       <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
