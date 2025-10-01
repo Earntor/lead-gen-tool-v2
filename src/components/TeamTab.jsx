@@ -389,22 +389,21 @@ export default function TeamTab() {
     <div className="space-y-6">
       {/* Page header */}
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm text-gray-500 mt-1">
-            Beheer je team, rollen en uitnodigingen.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 text-xs">
-          {/* Owner bovenaan is bewust NIET zichtbaar (modern, minimal) */}
-          <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 bg-white">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            Jouw rol:&nbsp;<b className="lowercase">{meRole || 'laden…'}</b>
-          </span>
-          <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 bg-white">
-            Seats&nbsp;<b>{members.length}/{SEAT_LIMIT}</b>
-          </span>
-        </div>
-      </div>
+  <div>
+    <p className="text-sm text-gray-500 mt-1">
+      Beheer je team, rollen en uitnodigingen.
+    </p>
+  </div>
+  <div className="flex flex-col gap-2 text-xs sm:flex-row sm:items-center">
+    <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 bg-white w-full justify-center sm:w-auto sm:justify-start">
+      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+      Jouw rol:&nbsp;<b className="lowercase">{meRole || 'laden…'}</b>
+    </span>
+    <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 bg-white w-full justify-center sm:w-auto sm:justify-start">
+      Seats&nbsp;<b>{members.length}/{SEAT_LIMIT}</b>
+    </span>
+  </div>
+</div>
 
       {/* Error / Notice */}
       {(error || notice) && (
@@ -460,29 +459,29 @@ export default function TeamTab() {
       <div className="rounded-2xl border p-4 bg-white shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
           <h3 className="font-semibold">Teamleden</h3>
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400">
-                <IconSearch />
-              </span>
-              <Input
-  type="text"
-  aria-label="Zoek op naam, e-mail of rol"
-  placeholder="Zoek op naam, e-mail of rol…"
-  value={q}
-  onChange={(e) => setQ(e.target.value)}
-  autoComplete="off"
-  className="pl-8 pr-3 w-[240px]"
-/>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
+  <div className="relative w-full sm:w-auto">
+    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400">
+      <IconSearch />
+    </span>
+    <Input
+      type="text"
+      aria-label="Zoek op naam, e-mail of rol"
+      placeholder="Zoek op naam, e-mail of rol…"
+      value={q}
+      onChange={(e) => setQ(e.target.value)}
+      autoComplete="off"
+      className="pl-8 pr-3 w-full sm:w-[240px]"
+    />
+  </div>
+  <button
+    onClick={() => { loadMembers(); if (orgId && canAdmin) loadInvites(); }}
+    className="text-sm px-3 py-2 rounded-lg border hover:bg-gray-50 w-full sm:w-auto"
+  >
+    Vernieuwen
+  </button>
+</div>
 
-            </div>
-            <button
-  onClick={() => { loadMembers(); if (orgId && canAdmin) loadInvites(); }}
-  className="text-sm px-3 py-2 rounded-lg border hover:bg-gray-50"
->
-  Vernieuwen
-</button>
-          </div>
         </div>
 
         {!orgId && (
@@ -498,109 +497,94 @@ export default function TeamTab() {
 ) : filtered.length === 0 ? (
   <div className="text-sm text-gray-600">Geen leden gevonden.</div>
 ) : (
-  <ul
-    className={[
-      // Mobile: horizontal scroll row of cards
-      "flex gap-3 overflow-x-auto pb-2 -mx-4 px-4",
-      "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-      // Desktop: fall back to your original vertical list with dividers
-      "md:block md:overflow-visible md:pb-0 md:mx-0 md:px-0 md:gap-0 md:divide-y",
-    ].join(" ")}
-  >
-    {filtered.map((m) => {
-      const initials = (m.full_name || m.email || "?")
-        .split(" ")
-        .map((s) => s[0]?.toUpperCase())
-        .join("")
-        .slice(0, 2);
+  <div className="max-h-[60vh] overflow-y-auto -mx-4 px-4 md:max-h-none md:overflow-visible md:mx-0 md:px-0">
+    <ul className="divide-y">
+      {filtered.map((m) => {
+        const initials = (m.full_name || m.email || "?")
+          .split(" ")
+          .map((s) => s[0]?.toUpperCase())
+          .join("")
+          .slice(0, 2);
 
-      return (
-        <li
-          key={m.user_id}
-          className={[
-            // Mobile “card” style
-            "shrink-0 min-w-[320px] rounded-lg border p-3 bg-white",
-            // Ensure text truncates in tight widths
-            "md:min-w-0 md:shrink md:rounded-none md:border-0 md:p-0",
-            // Desktop row layout
-            "md:py-3 md:flex md:items-center md:justify-between md:gap-4",
-          ].join(" ")}
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            {/* Avatar */}
-            <div className="h-9 w-9 rounded-full bg-gray-100 border flex items-center justify-center text-xs font-semibold">
-              {initials || "–"}
-            </div>
-
-            {/* Tekst */}
-            <div className="min-w-0">
-              <div className="font-medium flex items-center gap-2">
-                <span className="truncate max-w-[180px] md:max-w-none">
-                  {m.full_name || m.email || m.user_id}
-                </span>
-                {ownerId === m.user_id && (
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 border">
-                    Owner
-                  </span>
-                )}
-                {m.role === "admin" && (
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700">
-                    Admin
-                  </span>
-                )}
+        return (
+          <li key={m.user_id} className="py-3 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              {/* Avatar */}
+              <div className="h-9 w-9 rounded-full bg-gray-100 border flex items-center justify-center text-xs font-semibold">
+                {initials || "–"}
               </div>
-              <div className="text-xs text-gray-500">Sinds: {safeSince(m?.since)}</div>
+
+              {/* Tekst */}
+              <div className="min-w-0">
+                <div className="font-medium flex items-center gap-2">
+                  <span className="truncate max-w-[180px] md:max-w-none">
+                    {m.full_name || m.email || m.user_id}
+                  </span>
+                  {ownerId === m.user_id && (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 border">
+                      Owner
+                    </span>
+                  )}
+                  {m.role === "admin" && (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700">
+                      Admin
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-gray-500">Sinds: {safeSince(m?.since)}</div>
+              </div>
             </div>
-          </div>
 
-          <div className="flex items-center gap-2 mt-2 md:mt-0">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="justify-between min-w-[9rem]"
-                  disabled={!canAdmin || isLastAdmin(m.user_id)}
-                  aria-label="Wijzig rol"
-                >
-                  {ROLES.find((r) => r.value === m.role)?.label ?? m.role}
-                  <ChevronDown className="w-4 h-4 opacity-60" />
-                </Button>
-              </DropdownMenuTrigger>
+            <div className="flex items-center gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="justify-between min-w-[9rem]"
+                    disabled={!canAdmin || isLastAdmin(m.user_id)}
+                    aria-label="Wijzig rol"
+                  >
+                    {ROLES.find((r) => r.value === m.role)?.label ?? m.role}
+                    <ChevronDown className="w-4 h-4 opacity-60" />
+                  </Button>
+                </DropdownMenuTrigger>
 
-              <DropdownMenuContent align="end" className="w-[180px]">
-                <DropdownMenuLabel>Rol</DropdownMenuLabel>
-                <DropdownMenuRadioGroup
-                  value={m.role}
-                  onValueChange={(val) => changeRole(m.user_id, val)}
-                >
-                  {ROLES.map((r) => (
-                    <DropdownMenuRadioItem
-                      key={r.value}
-                      value={r.value}
-                      disabled={isLastAdmin(m.user_id) && r.value !== "admin"}
-                    >
-                      {r.label}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                <DropdownMenuContent align="end" className="w-[180px]">
+                  <DropdownMenuLabel>Rol</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup
+                    value={m.role}
+                    onValueChange={(val) => changeRole(m.user_id, val)}
+                  >
+                    {ROLES.map((r) => (
+                      <DropdownMenuRadioItem
+                        key={r.value}
+                        value={r.value}
+                        disabled={isLastAdmin(m.user_id) && r.value !== "admin"}
+                      >
+                        {r.label}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
 
-            <button
-              onClick={() => removeMember(m.user_id)}
-              className="text-red-600 text-sm px-3 py-1.5 rounded-lg border hover:bg-red-50 disabled:opacity-50"
-              disabled={!canAdmin || isLastAdmin(m.user_id)}
-            >
-              Verwijderen
-            </button>
-          </div>
-        </li>
-      );
-    })}
-  </ul>
-)}
+              <button
+                onClick={() => removeMember(m.user_id)}
+                className="text-red-600 text-sm px-3 py-1.5 rounded-lg border hover:bg-red-50 disabled:opacity-50"
+                disabled={!canAdmin || isLastAdmin(m.user_id)}
+              >
+                Verwijderen
+              </button>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  </div>
+)
+}
 
       </div>
 
