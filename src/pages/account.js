@@ -654,10 +654,11 @@ export default function Account() {
             setTrackingMessage(null);
           }}
         >
-          <TabsList
+       <TabsList
   className={[
     "w-full bg-transparent p-0 border-b rounded-none",
-    "sticky top-0 z-10 bg-white/90 backdrop-blur", // 👈 lager dan dropdown
+    // ↓ lager z-index + blur alleen waar ondersteund
+    "sticky top-0 z-[5] bg-white/90 supports-[backdrop-filter]:backdrop-blur supports-[backdrop-filter]:bg-white/70",
     "overflow-x-auto whitespace-nowrap justify-start px-1",
     "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
   ].join(" ")}
