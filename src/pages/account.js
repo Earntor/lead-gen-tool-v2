@@ -6,22 +6,22 @@ import { formatDutchDateTime } from '../lib/formatTimestamp'
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
+// ⬇️ mini helper om secties conditioneel te tonen
+const Section = ({ when, children }) => (when ? <>{children}</> : null)
 
-// ⬅️ nieuw: TeamTab alleen client-side laden (voorkomt SSR/hydration errors)
+// ⬅️ TeamTab alleen client-side (voorkomt SSR/hydration errors)
 const TeamTab = dynamic(() => import('../components/TeamTab'), {
   ssr: false,
   loading: () => <p>Team laden…</p>,
 })
-
 
 function getTodayDomNL() {
   const now = new Date();
   const dayStr = new Intl.DateTimeFormat('nl-NL', { timeZone: 'Europe/Amsterdam', day: '2-digit' }).format(now);
   return parseInt(dayStr, 10);
 }
-
 
 function Toggle({ checked, disabled, onChange, label }) {
   return (
@@ -66,39 +66,31 @@ export default function Account() {
   const [lastTrackingPing, setLastTrackingPing] = useState(null);
   const [currentOrgId, setCurrentOrgId] = useState(null);
   const [digest, setDigest] = useState({ daily: false, weekly: false, monthly: false, monthlyDom: null });
-const [digestLoading, setDigestLoading] = useState(false);
-const [digestSaving, setDigestSaving] = useState(false);
+  const [digestLoading, setDigestLoading] = useState(false);
+  const [digestSaving, setDigestSaving] = useState(false);
 
- 
-  
-  
   const getTrackingStatusBadge = () => {
-  if (!lastTrackingPing) {
+    if (!lastTrackingPing) {
+      return (
+        <span className="bg-red-100 text-red-800 px-2 py-0.5 rounded text-xs font-medium">
+          Geen ping
+        </span>
+      );
+    }
+    const diff = new Date() - new Date(lastTrackingPing);
+    if (diff > 1000 * 60 * 60 * 24) {
+      return (
+        <span className="bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded text-xs font-medium">
+          Inactief
+        </span>
+      );
+    }
     return (
-      <span className="bg-red-100 text-red-800 px-2 py-0.5 rounded text-xs font-medium">
-        Geen ping
+      <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded text-xs font-medium">
+        Actief
       </span>
     );
-  }
-
-  const diff = new Date() - new Date(lastTrackingPing);
-
-  if (diff > 1000 * 60 * 60 * 24) {
-    return (
-      <span className="bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded text-xs font-medium">
-        Inactief
-      </span>
-    );
-  }
-
-  return (
-    <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded text-xs font-medium">
-      Actief
-    </span>
-  );
-};
-
-
+  };
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -111,97 +103,89 @@ const [digestSaving, setDigestSaving] = useState(false);
       setEmail(user.email)
 
       const { data: profile } = await supabase
-  .from('profiles')
-  .select('full_name, phone, preferences, current_org_id')
-  .eq('id', user.id)
-  .single()
+        .from('profiles')
+        .select('full_name, phone, preferences, current_org_id')
+        .eq('id', user.id)
+        .single()
 
-if (profile) {
-  setFullName(profile.full_name || '')
-  setPhone(profile.phone || '')
-  setPreferences(profile.preferences || {})
-  setCurrentOrgId(profile.current_org_id || null)
+      if (profile) {
+        setFullName(profile.full_name || '')
+        setPhone(profile.phone || '')
+        setPreferences(profile.preferences || {})
+        setCurrentOrgId(profile.current_org_id || null)
 
-  if (profile.current_org_id) {
-    const { data: org } = await supabase
-      .from('organizations')
-      .select('last_tracking_ping')
-      .eq('id', profile.current_org_id)
-      .single()
+        if (profile.current_org_id) {
+          const { data: org } = await supabase
+            .from('organizations')
+            .select('last_tracking_ping')
+            .eq('id', profile.current_org_id)
+            .single()
 
-    setLastTrackingPing(org?.last_tracking_ping || null)
+          setLastTrackingPing(org?.last_tracking_ping || null)
 
-    const domain = (process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin).replace(/\/$/, '')
-    const script = `<script src="${domain}/tracker.js" data-project-id="${profile.current_org_id}" async></script>`
-    setTrackingScript(script)
-  }
-}
+          const domain = (process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin).replace(/\/$/, '')
+          const script = `<script src="${domain}/tracker.js" data-project-id="${profile.current_org_id}" async></script>`
+          setTrackingScript(script)
+        }
+      }
 
-
-if (!profile) {
-  // geen record → meteen aanmaken
-  await supabase.from('profiles').upsert({ id: user.id });
-}
+      if (!profile) {
+        await supabase.from('profiles').upsert({ id: user.id });
+      }
 
       setLoading(false)
     }
     fetchUser()
   }, [router])
 
-useEffect(() => {
-  const onHashChange = () => {
-    const newHash = window.location.hash.replace('#', '');
-    const tab = normalizeTab(newHash || 'account');
-    setActiveTab(tab);
-    setGeneralMessage(null);
-    setTrackingMessage(null);
+  useEffect(() => {
+    const onHashChange = () => {
+      const newHash = window.location.hash.replace('#', '');
+      const tab = normalizeTab(newHash || 'account');
+      setActiveTab(tab);
+      setGeneralMessage(null);
+      setTrackingMessage(null);
 
-    if (tab === 'tracking' && user?.id && currentOrgId) {
-      supabase
-        .from('organizations')
-        .select('last_tracking_ping')
-        .eq('id', currentOrgId)
-        .single()
-        .then(({ data }) => {
-          if (data?.last_tracking_ping) setLastTrackingPing(data.last_tracking_ping);
-        });
-    }
-  };
-
-  const hash = window.location.hash.replace('#', '');
-  if (hash) {
-    setActiveTab(normalizeTab(hash));
-    onHashChange();
-  }
-
-  window.addEventListener('hashchange', onHashChange);
-  return () => window.removeEventListener('hashchange', onHashChange);
-}, [user, currentOrgId]);
-
-
-    useEffect(() => {
-  if (!user?.id || !currentOrgId) return; // ✅ wacht tot beide bestaan
-
-  const channel = supabase
-    .channel('profile-changes')
-    .on(
-      'postgres_changes',
-      { event: 'UPDATE', schema: 'public', table: 'organizations', filter: `id=eq.${currentOrgId}` },
-      (payload) => {
-        if (payload.new?.last_tracking_ping) {
-          setLastTrackingPing(payload.new.last_tracking_ping);
-        }
+      if (tab === 'tracking' && user?.id && currentOrgId) {
+        supabase
+          .from('organizations')
+          .select('last_tracking_ping')
+          .eq('id', currentOrgId)
+          .single()
+          .then(({ data }) => {
+            if (data?.last_tracking_ping) setLastTrackingPing(data.last_tracking_ping);
+          });
       }
-    )
-    .subscribe();
+    };
 
-  return () => {
-    supabase.removeChannel(channel);
-  };
-}, [user, currentOrgId])
+    const hash = window.location.hash.replace('#', '');
+    if (hash) {
+      setActiveTab(normalizeTab(hash));
+      onHashChange();
+    }
 
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, [user, currentOrgId]);
 
-
+  useEffect(() => {
+    if (!user?.id || !currentOrgId) return;
+    const channel = supabase
+      .channel('profile-changes')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'organizations', filter: `id=eq.${currentOrgId}` },
+        (payload) => {
+          if (payload.new?.last_tracking_ping) {
+            setLastTrackingPing(payload.new.last_tracking_ping);
+          }
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, currentOrgId])
 
   const handleUpdate = async () => {
     setUpdating(true)
@@ -233,33 +217,27 @@ useEffect(() => {
     setPreferences((prev) => ({ ...prev, [key]: value }))
   }
 
-// === Nieuw: voorkeur direct in profiel opslaan ===
-async function saveProfilePreference(key, value) {
-  if (!user?.id) return;
-
-  // Nieuwe preferences opbouwen (optimistic UI)
-  const next = { ...(preferences || {}), [key]: value };
-  setPreferences(next);
-
-  try {
-    const { error } = await supabase
-      .from('profiles')
-      .update({
-        preferences: next,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', user.id);
-
-    if (error) throw error;
-
-    setGeneralMessage({ type: 'success', text: 'Instelling opgeslagen.' });
-  } catch (e) {
-    setGeneralMessage({
-      type: 'error',
-      text: 'Opslaan mislukt: ' + (e?.message || e),
-    });
+  async function saveProfilePreference(key, value) {
+    if (!user?.id) return;
+    const next = { ...(preferences || {}), [key]: value };
+    setPreferences(next);
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          preferences: next,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', user.id);
+      if (error) throw error;
+      setGeneralMessage({ type: 'success', text: 'Instelling opgeslagen.' });
+    } catch (e) {
+      setGeneralMessage({
+        type: 'error',
+        text: 'Opslaan mislukt: ' + (e?.message || e),
+      });
+    }
   }
-}
 
   const handlePasswordReset = async () => {
     if (!email) {
@@ -285,195 +263,62 @@ async function saveProfilePreference(key, value) {
     setTimeout(() => setCopySuccess(''), 2000)
   }
 
-useEffect(() => {
-  if (!user?.id || !currentOrgId) return;
-  let cancelled = false;
-  (async () => {
-    setDigestLoading(true);
-    try {
-      const { data } = await supabase
-        .from('digest_subscriptions')
-        .select('daily_enabled, weekly_enabled, monthly_enabled, monthly_dom')
-        .eq('user_id', user.id)
-        .eq('org_id', currentOrgId)
-        .maybeSingle();
-      if (!cancelled && data) {
-        setDigest({ daily: !!data.daily_enabled, weekly: !!data.weekly_enabled, monthly: !!data.monthly_enabled, monthlyDom: data.monthly_dom ?? null });
-      } else if (!cancelled) {
-        setDigest({ daily: false, weekly: false, monthly: false, monthlyDom: null });
+  useEffect(() => {
+    if (!user?.id || !currentOrgId) return;
+    let cancelled = false;
+    (async () => {
+      setDigestLoading(true);
+      try {
+        const { data } = await supabase
+          .from('digest_subscriptions')
+          .select('daily_enabled, weekly_enabled, monthly_enabled, monthly_dom')
+          .eq('user_id', user.id)
+          .eq('org_id', currentOrgId)
+          .maybeSingle();
+        if (!cancelled && data) {
+          setDigest({ daily: !!data.daily_enabled, weekly: !!data.weekly_enabled, monthly: !!data.monthly_enabled, monthlyDom: data.monthly_dom ?? null });
+        } else if (!cancelled) {
+          setDigest({ daily: false, weekly: false, monthly: false, monthlyDom: null });
+        }
+      } finally {
+        if (!cancelled) setDigestLoading(false);
       }
+    })();
+    return () => { cancelled = true; };
+  }, [user, currentOrgId]);
+
+  async function saveDigest(changes) {
+    if (!user?.id || !currentOrgId) return;
+    setDigestSaving(true);
+    try {
+      const next = { ...digest, ...changes };
+      const { data, error } = await supabase.rpc('set_digest_subscription', {
+        p_org_id: currentOrgId,
+        p_daily:  !!next.daily,
+        p_weekly: !!next.weekly,
+        p_monthly:!!next.monthly,
+        p_monthly_dom: next.monthly ? (next.monthlyDom ?? null) : null
+      });
+      if (error) throw error;
+      setDigest({
+        daily:     !!data.daily_enabled,
+        weekly:    !!data.weekly_enabled,
+        monthly:   !!data.monthly_enabled,
+        monthlyDom: data.monthly_dom ?? null
+      });
+    } catch (e) {
+      alert('Opslaan van e-mailoverzicht-instellingen mislukt: ' + (e?.message || e));
     } finally {
-      if (!cancelled) setDigestLoading(false);
+      setDigestSaving(false);
     }
-  })();
-  return () => { cancelled = true; };
-}, [user, currentOrgId]);
-
-
-async function saveDigest(changes) {
-  if (!user?.id || !currentOrgId) return;
-  setDigestSaving(true);
-  try {
-    const next = { ...digest, ...changes };
-
-    const { data, error } = await supabase.rpc('set_digest_subscription', {
-      p_org_id: currentOrgId,
-      p_daily:  !!next.daily,
-      p_weekly: !!next.weekly,
-      p_monthly:!!next.monthly,
-      // Laat null door; de RPC zet zelf een nette default of wist 'm
-      p_monthly_dom: next.monthly ? (next.monthlyDom ?? null) : null
-    });
-
-    if (error) throw error;
-
-    // Sync state met server-respons
-    setDigest({
-      daily:     !!data.daily_enabled,
-      weekly:    !!data.weekly_enabled,
-      monthly:   !!data.monthly_enabled,
-      monthlyDom: data.monthly_dom ?? null
-    });
-  } catch (e) {
-    alert('Opslaan van e-mailoverzicht-instellingen mislukt: ' + (e?.message || e));
-  } finally {
-    setDigestSaving(false);
   }
-}
 
-
-
-
-  if (loading || !user) {
+  // ⬇️ alle tab-inhoud in één interne component
+  function Panels() {
     return (
-      <div className="flex justify-center items-center h-screen">
-        <p className="text-gray-600">Laden...</p>
-      </div>
-    )
-  }
-
-  return (
-  <div className="max-w-4xl mx-auto w-full px-4 py-10">
-    <h1 className="text-xl md:text-2xl font-semibold mb-4">Mijn account</h1>
-
-<aside className="hidden md:block space-y-2">
-  {[
-    { key: 'account', label: 'Account' },
-    { key: 'instellingen', label: 'Instellingen' },
-    { key: 'facturen', label: 'Facturen' },
-    { key: 'betaling', label: 'Betaalmethode' },
-    { key: 'team', label: 'Team' },
-    {
-      key: 'tracking',
-      label: (
-        <span className="flex items-center justify-between w-full">
-          <span>Tracking script</span>
-          {getTrackingStatusBadge()}
-        </span>
-      ),
-    },
-  ].map((tab) => (
-    <button
-      key={tab.key}
-      onClick={() => {
-        const next = tab.key;
-        setActiveTab(next);
-        window.location.hash = next;
-        setGeneralMessage(null);
-        setTrackingMessage(null);
-      }}
-      className={`block w-full text-left px-4 py-2 rounded ${
-        activeTab === tab.key
-          ? 'bg-blue-100 text-blue-700 font-medium'
-          : 'hover:bg-gray-100 text-gray-700'
-      }`}
-    >
-      {tab.label}
-    </button>
-  ))}
-
-  <button
-    onClick={handleLogout}
-    className="block w-full text-left px-4 py-2 rounded hover:bg-red-100 text-red-600 mt-4"
-  >
-    Uitloggen
-  </button>
-</aside>
-
-
-    <Tabs
-      value={activeTab}
-      onValueChange={(val) => {
-        const next = normalizeTab(val);
-        setActiveTab(next);
-        window.location.hash = next; // deeplink behouden
-        setGeneralMessage(null);
-        setTrackingMessage(null);
-      }}
-    >
-      {/* Horizontale, scrollbare tabbar (mobile friendly) */}
-      <TabsList
-  className={[
-    "md:hidden",                       // alleen mobiel
-    "w-full sticky top-0 z-20",
-    "bg-white/90 backdrop-blur",
-    "border-b p-2",
-    "overflow-x-auto whitespace-nowrap",
-    "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-    "gap-2 inline-flex"                // let op: triggers direct onder List
-  ].join(" ")}
->
-  <TabsTrigger
-    value="account"
-    className="shrink-0 px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
-  >
-    Account
-  </TabsTrigger>
-
-  <TabsTrigger
-    value="instellingen"
-    className="shrink-0 px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
-  >
-    Instellingen
-  </TabsTrigger>
-
-  <TabsTrigger
-    value="facturen"
-    className="shrink-0 px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
-  >
-    Facturen
-  </TabsTrigger>
-
-  <TabsTrigger
-    value="betaling"
-    className="shrink-0 px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
-  >
-    Betaalmethode
-  </TabsTrigger>
-
-  <TabsTrigger
-    value="team"
-    className="shrink-0 px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
-  >
-    Team
-  </TabsTrigger>
-
-  <TabsTrigger
-    value="tracking"
-    className="shrink-0 px-3 py-2 text-sm rounded-full transition data-[state=active]:bg-black data-[state=active]:text-white data-[state=inactive]:text-gray-700 hover:bg-gray-100"
-  >
-    <span className="flex items-center gap-2">
-      Tracking script
-      {getTrackingStatusBadge()}
-    </span>
-  </TabsTrigger>
-</TabsList>
-
-
-      {/* PANELS */}
-      <div className="mt-4 space-y-6">
+      <>
         {/* ACCOUNT */}
-        <TabsContent value="account">
+        <Section when={activeTab === 'account'}>
           {activeTab !== 'tracking' && generalMessage && (
             <div
               className={`p-3 rounded ${
@@ -555,10 +400,10 @@ async function saveDigest(changes) {
               Wachtwoord reset e-mail sturen
             </button>
           </div>
-        </TabsContent>
+        </Section>
 
         {/* INSTELLINGEN */}
-        <TabsContent value="instellingen" forceMount>
+        <Section when={activeTab === 'instellingen'}>
           {activeTab !== 'tracking' && generalMessage && (
             <div
               className={`p-3 rounded ${
@@ -640,28 +485,28 @@ async function saveDigest(changes) {
               </div>
             </div>
           </div>
-        </TabsContent>
+        </Section>
 
         {/* FACTUREN */}
-        <TabsContent value="facturen" forceMount>
+        <Section when={activeTab === 'facturen'}>
           <h2 className="text-xl font-semibold mb-4">Facturen</h2>
           <p className="text-gray-600">Hier zie je je facturen.</p>
-        </TabsContent>
+        </Section>
 
         {/* BETALING */}
-        <TabsContent value="betaling" forceMount>
+        <Section when={activeTab === 'betaling'}>
           <h2 className="text-xl font-semibold mb-4">Betaalmethode</h2>
           <p className="text-gray-600">Hier beheer je je betaalmethoden.</p>
-        </TabsContent>
+        </Section>
 
         {/* TEAM */}
-        <TabsContent value="team" forceMount>
+        <Section when={activeTab === 'team'}>
           <h2 className="text-xl font-semibold mb-4">Team</h2>
           <TeamTab />
-        </TabsContent>
+        </Section>
 
         {/* TRACKING */}
-        <TabsContent value="tracking" forceMount>
+        <Section when={activeTab === 'tracking'}>
           {trackingMessage && (
             <div
               className={`p-3 rounded ${
@@ -780,19 +625,125 @@ async function saveDigest(changes) {
               </button>
             </div>
           </div>
-        </TabsContent>
-      </div>
-    </Tabs>
+        </Section>
+      </>
+    )
+  }
 
-    {/* Losse actie buiten tabs */}
-    <div className="mt-6">
-      <button
-        onClick={handleLogout}
-        className="px-4 py-2 rounded border hover:bg-gray-50 text-red-600"
-      >
-        Uitloggen
-      </button>
+  if (loading || !user) {
+    return (
+      <div className="flex justify-center items-center h-screen">
+        <p className="text-gray-600">Laden...</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-w-4xl mx-auto w-full px-4 py-10">
+      <h1 className="text-xl md:text-2xl font-semibold mb-4">Mijn account</h1>
+
+      {/* MOBIEL: tabbar + content */}
+      <div className="md:hidden">
+        <Tabs
+          value={activeTab}
+          onValueChange={(val) => {
+            const next = normalizeTab(val);
+            setActiveTab(next);
+            window.location.hash = next;
+            setGeneralMessage(null);
+            setTrackingMessage(null);
+          }}
+        >
+          <TabsList
+            className={[
+              "w-full bg-transparent p-0 border-b rounded-none",
+              "sticky top-0 z-20 bg-white/90 backdrop-blur",
+              "overflow-x-auto whitespace-nowrap justify-start px-1",
+              "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            ].join(" ")}
+          >
+            <div className="flex gap-2 py-2">
+              <TabsTrigger value="account"      className="px-3 py-2 text-sm rounded-full data-[state=active]:bg-black data-[state=active]:text-white">Account</TabsTrigger>
+              <TabsTrigger value="instellingen" className="px-3 py-2 text-sm rounded-full data-[state=active]:bg-black data-[state=active]:text-white">Instellingen</TabsTrigger>
+              <TabsTrigger value="facturen"     className="px-3 py-2 text-sm rounded-full data-[state=active]:bg-black data-[state=active]:text-white">Facturen</TabsTrigger>
+              <TabsTrigger value="betaling"     className="px-3 py-2 text-sm rounded-full data-[state=active]:bg-black data-[state=active]:text-white">Betaalmethode</TabsTrigger>
+              <TabsTrigger value="team"         className="px-3 py-2 text-sm rounded-full data-[state=active]:bg-black data-[state=active]:text-white">Team</TabsTrigger>
+              <TabsTrigger value="tracking"     className="px-3 py-2 text-sm rounded-full data-[state=active]:bg-black data-[state=active]:text-white">
+                <span className="flex items-center gap-2">
+                  Tracking script
+                  {getTrackingStatusBadge()}
+                </span>
+              </TabsTrigger>
+            </div>
+          </TabsList>
+        </Tabs>
+
+        {/* Actieve panel (alleen deze) */}
+        <div className="mt-4 bg-white border rounded-xl p-6 shadow space-y-4">
+          <Panels />
+        </div>
+
+        {/* Uitloggen alleen mobiel */}
+        <div className="mt-6 md:hidden">
+          <button
+            onClick={handleLogout}
+            className="px-4 py-2 rounded border hover:bg-gray-50 text-red-600"
+          >
+            Uitloggen
+          </button>
+        </div>
+      </div>
+
+      {/* DESKTOP: sidebar links, content rechts */}
+      <div className="hidden md:grid grid-cols-4 gap-6">
+        <aside className="space-y-2">
+          {[
+            { key: 'account', label: 'Account' },
+            { key: 'instellingen', label: 'Instellingen' },
+            { key: 'facturen', label: 'Facturen' },
+            { key: 'betaling', label: 'Betaalmethode' },
+            { key: 'team', label: 'Team' },
+            {
+              key: 'tracking',
+              label: (
+                <span className="flex items-center justify-between w-full">
+                  <span>Tracking script</span>
+                  {getTrackingStatusBadge()}
+                </span>
+              ),
+            },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => {
+                const next = tab.key;
+                setActiveTab(next);
+                window.location.hash = next;
+                setGeneralMessage(null);
+                setTrackingMessage(null);
+              }}
+              className={`block w-full text-left px-4 py-2 rounded ${
+                activeTab === tab.key
+                  ? 'bg-blue-100 text-blue-700 font-medium'
+                  : 'hover:bg-gray-100 text-gray-700'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+
+          <button
+            onClick={handleLogout}
+            className="block w-full text-left px-4 py-2 rounded hover:bg-red-100 text-red-600 mt-4"
+          >
+            Uitloggen
+          </button>
+        </aside>
+
+        <main className="col-span-3 bg-white border rounded-xl p-6 shadow space-y-4">
+          <Panels />
+        </main>
+      </div>
     </div>
-  </div>
-);
+  )
 }
