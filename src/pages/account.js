@@ -655,13 +655,13 @@ export default function Account() {
           }}
         >
           <TabsList
-            className={[
-              "w-full bg-transparent p-0 border-b rounded-none",
-              "sticky top-0 z-20 bg-white/90 backdrop-blur",
-              "overflow-x-auto whitespace-nowrap justify-start px-1",
-              "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-            ].join(" ")}
-          >
+  className={[
+    "w-full bg-transparent p-0 border-b rounded-none",
+    "sticky top-0 z-10 bg-white/90 backdrop-blur", // 👈 lager dan dropdown
+    "overflow-x-auto whitespace-nowrap justify-start px-1",
+    "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+  ].join(" ")}
+>
             <div className="flex gap-2 py-2">
               <TabsTrigger value="account"      className="px-3 py-2 text-sm rounded-full data-[state=active]:bg-black data-[state=active]:text-white">Account</TabsTrigger>
               <TabsTrigger value="instellingen" className="px-3 py-2 text-sm rounded-full data-[state=active]:bg-black data-[state=active]:text-white">Instellingen</TabsTrigger>
@@ -684,14 +684,14 @@ export default function Account() {
         </div>
 
         {/* Uitloggen alleen mobiel */}
-        <div className="mt-6 md:hidden">
-          <button
-            onClick={handleLogout}
-            className="px-4 py-2 rounded border hover:bg-gray-50 text-red-600"
-          >
-            Uitloggen
-          </button>
-        </div>
+        <div className="mt-6 hidden md:block">
+  <button
+    onClick={handleLogout}
+    className="px-4 py-2 rounded border hover:bg-gray-50 text-red-600"
+  >
+    Uitloggen
+  </button>
+</div>
       </div>
 
       {/* DESKTOP: sidebar links, content rechts */}
