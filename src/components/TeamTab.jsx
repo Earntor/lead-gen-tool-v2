@@ -13,7 +13,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ChevronDown } from "lucide-react";
 
-
 const ROLES = [
   { value: 'admin', label: 'Admin' },
   { value: 'member', label: 'Gebruiker' },
@@ -60,7 +59,7 @@ export default function TeamTab() {
     }
   }, [])
 
-  // === Context laden: orgId, mijn rol, organisatienaam, owner ===
+  // === Context laden ===
   const loadContext = useCallback(async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -386,16 +385,17 @@ export default function TeamTab() {
   )
 
   return (
-    <div className="space-y-6">
+    // ÉÉN GROTE CONTAINER (alle secties hierin, geen binnen-kaarten meer)
+    <div className="rounded-2xl border p-4 md:p-6 bg-white shadow-sm space-y-8">
       {/* Page header */}
       <div className="flex items-start justify-between gap-4">
         <div>
+          <h2 className="font-semibold text-lg">Team</h2>
           <p className="text-sm text-gray-500 mt-1">
             Beheer je team, rollen en uitnodigingen.
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs">
-          {/* Owner bovenaan is bewust NIET zichtbaar (modern, minimal) */}
           <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 bg-white">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
             Jouw rol:&nbsp;<b className="lowercase">{meRole || 'laden…'}</b>
@@ -430,59 +430,64 @@ export default function TeamTab() {
         </div>
       )}
 
-      {/* Organisatienaam (card) */}
-      <form onSubmit={saveOrgName} className="rounded-2xl border p-4 bg-white shadow-sm">
+      {/* Scheidingslijn */}
+      <div className="h-px bg-gray-200" />
+
+      {/* Organisatienaam (geen card, gewone sectie) */}
+      <section className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <h3 className="font-semibold">Organisatienaam</h3>
           {!canAdmin && <span className="text-xs text-gray-500">Alleen admin kan wijzigen</span>}
         </div>
-        <div className="mt-3 flex flex-col sm:flex-row gap-2">
-          <Input
-  type="text"
-  aria-label="Organisatienaam"
-  placeholder="Organisatienaam"
-  value={orgName}
-  onChange={(e) => setOrgName(e.target.value)}
-  disabled={!canAdmin}
-  className="flex-1"
-/>
 
+        <form onSubmit={saveOrgName} className="flex flex-col sm:flex-row gap-2">
+          <Input
+            type="text"
+            aria-label="Organisatienaam"
+            placeholder="Organisatienaam"
+            value={orgName}
+            onChange={(e) => setOrgName(e.target.value)}
+            disabled={!canAdmin}
+            className="flex-1"
+          />
           <button
             className="px-4 py-2 rounded-lg bg-black text-white disabled:opacity-50"
             disabled={savingName || !orgName.trim() || !canAdmin}
           >
             {savingName ? 'Opslaan…' : 'Opslaan'}
           </button>
-        </div>
-      </form>
+        </form>
+      </section>
 
-      {/* Teamleden (card) */}
-      <div className="rounded-2xl border p-4 bg-white shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+      {/* Scheidingslijn */}
+      <div className="h-px bg-gray-200" />
+
+      {/* Teamleden (geen card, gewone sectie) */}
+      <section className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <h3 className="font-semibold">Teamleden</h3>
           <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
-  <div className="relative w-full sm:w-auto">
-    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400">
-      <IconSearch />
-    </span>
-    <Input
-      type="text"
-      aria-label="Zoek op naam, e-mail of rol"
-      placeholder="Zoek op naam, e-mail of rol…"
-      value={q}
-      onChange={(e) => setQ(e.target.value)}
-      autoComplete="off"
-      className="pl-8 pr-3 w-full sm:w-[240px]"
-    />
-  </div>
-  <button
-    onClick={() => { loadMembers(); if (orgId && canAdmin) loadInvites(); }}
-    className="text-sm px-3 py-2 rounded-lg border hover:bg-gray-50 w-full sm:w-auto"
-  >
-    Vernieuwen
-  </button>
-</div>
-
+            <div className="relative w-full sm:w-auto">
+              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400">
+                <IconSearch />
+              </span>
+              <Input
+                type="text"
+                aria-label="Zoek op naam, e-mail of rol"
+                placeholder="Zoek op naam, e-mail of rol…"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                autoComplete="off"
+                className="pl-8 pr-3 w-full sm:w-[240px]"
+              />
+            </div>
+            <button
+              onClick={() => { loadMembers(); if (orgId && canAdmin) loadInvites(); }}
+              className="text-sm px-3 py-2 rounded-lg border hover:bg-gray-50 w-full sm:w-auto"
+            >
+              Vernieuwen
+            </button>
+          </div>
         </div>
 
         {!orgId && (
@@ -490,122 +495,119 @@ export default function TeamTab() {
         )}
 
         {loading ? (
-  <div className="space-y-2">
-    {[...Array(4)].map((_, i) => (
-      <div key={i} className="h-12 rounded-lg bg-gray-100 animate-pulse" />
-    ))}
-  </div>
-) : filtered.length === 0 ? (
-  <div className="text-sm text-gray-600">Geen leden gevonden.</div>
-) : (
-  <ul
-    className={[
-      // Mobile: horizontal scroll row of cards
-      "flex gap-3 overflow-x-auto pb-2 -mx-4 px-4",
-      "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-      // Desktop: fall back to your original vertical list with dividers
-      "md:block md:overflow-visible md:pb-0 md:mx-0 md:px-0 md:gap-0 md:divide-y",
-    ].join(" ")}
-  >
-    {filtered.map((m) => {
-      const initials = (m.full_name || m.email || "?")
-        .split(" ")
-        .map((s) => s[0]?.toUpperCase())
-        .join("")
-        .slice(0, 2);
-
-      return (
-        <li
-          key={m.user_id}
-          className={[
-            // Mobile “card” style
-            "shrink-0 min-w-[320px] rounded-lg border p-3 bg-white",
-            // Ensure text truncates in tight widths
-            "md:min-w-0 md:shrink md:rounded-none md:border-0 md:p-0",
-            // Desktop row layout
-            "md:py-3 md:flex md:items-center md:justify-between md:gap-4",
-          ].join(" ")}
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            {/* Avatar */}
-            <div className="h-9 w-9 rounded-full bg-gray-100 border flex items-center justify-center text-xs font-semibold">
-              {initials || "–"}
-            </div>
-
-            {/* Tekst */}
-            <div className="min-w-0">
-              <div className="font-medium flex items-center gap-2">
-                <span className="truncate max-w-[180px] md:max-w-none">
-                  {m.full_name || m.email || m.user_id}
-                </span>
-                {ownerId === m.user_id && (
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 border">
-                    Owner
-                  </span>
-                )}
-                {m.role === "admin" && (
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700">
-                    Admin
-                  </span>
-                )}
-              </div>
-              <div className="text-xs text-gray-500">Sinds: {safeSince(m?.since)}</div>
-            </div>
+          <div className="space-y-2">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="h-12 rounded-lg bg-gray-100 animate-pulse" />
+            ))}
           </div>
+        ) : filtered.length === 0 ? (
+          <div className="text-sm text-gray-600">Geen leden gevonden.</div>
+        ) : (
+          <ul
+            className={[
+              "flex gap-3 overflow-x-auto pb-2 -mx-4 px-4",
+              "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+              "md:block md:overflow-visible md:pb-0 md:mx-0 md:px-0 md:gap-0 md:divide-y",
+            ].join(" ")}
+          >
+            {filtered.map((m) => {
+              const initials = (m.full_name || m.email || "?")
+                .split(" ")
+                .map((s) => s[0]?.toUpperCase())
+                .join("")
+                .slice(0, 2);
 
-          <div className="flex items-center gap-2 mt-2 md:mt-0">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="justify-between min-w-[9rem]"
-                  disabled={!canAdmin || isLastAdmin(m.user_id)}
-                  aria-label="Wijzig rol"
+              return (
+                <li
+                  key={m.user_id}
+                  className={[
+                    "shrink-0 min-w-[320px] rounded-lg border p-3 bg-white",
+                    "md:min-w-0 md:shrink md:rounded-none md:border-0 md:p-0",
+                    "md:py-3 md:flex md:items-center md:justify-between md:gap-4",
+                  ].join(" ")}
                 >
-                  {ROLES.find((r) => r.value === m.role)?.label ?? m.role}
-                  <ChevronDown className="w-4 h-4 opacity-60" />
-                </Button>
-              </DropdownMenuTrigger>
+                  <div className="flex items-center gap-3 min-w-0">
+                    {/* Avatar */}
+                    <div className="h-9 w-9 rounded-full bg-gray-100 border flex items-center justify-center text-xs font-semibold">
+                      {initials || "–"}
+                    </div>
 
-              <DropdownMenuContent align="end" className="w-[180px]">
-                <DropdownMenuLabel>Rol</DropdownMenuLabel>
-                <DropdownMenuRadioGroup
-                  value={m.role}
-                  onValueChange={(val) => changeRole(m.user_id, val)}
-                >
-                  {ROLES.map((r) => (
-                    <DropdownMenuRadioItem
-                      key={r.value}
-                      value={r.value}
-                      disabled={isLastAdmin(m.user_id) && r.value !== "admin"}
+                    {/* Tekst */}
+                    <div className="min-w-0">
+                      <div className="font-medium flex items-center gap-2">
+                        <span className="truncate max-w-[180px] md:max-w-none">
+                          {m.full_name || m.email || m.user_id}
+                        </span>
+                        {ownerId === m.user_id && (
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 border">
+                            Owner
+                          </span>
+                        )}
+                        {m.role === "admin" && (
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700">
+                            Admin
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-500">Sinds: {safeSince(m?.since)}</div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 mt-2 md:mt-0">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="justify-between min-w-[9rem]"
+                          disabled={!canAdmin || isLastAdmin(m.user_id)}
+                          aria-label="Wijzig rol"
+                        >
+                          {ROLES.find((r) => r.value === m.role)?.label ?? m.role}
+                          <ChevronDown className="w-4 h-4 opacity-60" />
+                        </Button>
+                      </DropdownMenuTrigger>
+
+                      <DropdownMenuContent align="end" className="w-[180px]">
+                        <DropdownMenuLabel>Rol</DropdownMenuLabel>
+                        <DropdownMenuRadioGroup
+                          value={m.role}
+                          onValueChange={(val) => changeRole(m.user_id, val)}
+                        >
+                          {ROLES.map((r) => (
+                            <DropdownMenuRadioItem
+                              key={r.value}
+                              value={r.value}
+                              disabled={isLastAdmin(m.user_id) && r.value !== "admin"}
+                            >
+                              {r.label}
+                            </DropdownMenuRadioItem>
+                          ))}
+                        </DropdownMenuRadioGroup>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+
+                    <button
+                      onClick={() => removeMember(m.user_id)}
+                      className="text-red-600 text-sm px-3 py-1.5 rounded-lg border hover:bg-red-50 disabled:opacity-50"
+                      disabled={!canAdmin || isLastAdmin(m.user_id)}
                     >
-                      {r.label}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                      Verwijderen
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
 
-            <button
-              onClick={() => removeMember(m.user_id)}
-              className="text-red-600 text-sm px-3 py-1.5 rounded-lg border hover:bg-red-50 disabled:opacity-50"
-              disabled={!canAdmin || isLastAdmin(m.user_id)}
-            >
-              Verwijderen
-            </button>
-          </div>
-        </li>
-      );
-    })}
-  </ul>
-)}
+      {/* Scheidingslijn */}
+      <div className="h-px bg-gray-200" />
 
-      </div>
-
-      {/* Uitnodigen (card) */}
-      <form onSubmit={sendInvite} className="rounded-2xl border p-4 bg-white shadow-sm space-y-4">
+      {/* Uitnodigen (geen card) */}
+      <section className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="font-semibold">Teamlid uitnodigen</h3>
           <span className="text-xs text-gray-500">
@@ -613,46 +615,46 @@ export default function TeamTab() {
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <form onSubmit={sendInvite} className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <Input
-  type="email"
-  required
-  aria-label="E-mailadres uitnodiging"
-  placeholder="email@bedrijf.nl"
-  value={inviteEmail}
-  onChange={(e) => setInviteEmail(e.target.value)}
-  disabled={!canAdmin || atLimit}
-  autoComplete="email"
-/>
+            type="email"
+            required
+            aria-label="E-mailadres uitnodiging"
+            placeholder="email@bedrijf.nl"
+            value={inviteEmail}
+            onChange={(e) => setInviteEmail(e.target.value)}
+            disabled={!canAdmin || atLimit}
+            autoComplete="email"
+          />
 
           <DropdownMenu>
-  <DropdownMenuTrigger asChild>
-    <Button
-      type="button"
-      variant="outline"
-      className="w-full justify-between"
-      disabled={!canAdmin || atLimit}
-      aria-label="Kies rol"
-    >
-      {ROLES.find(r => r.value === inviteRole)?.label ?? "Rol"}
-      <ChevronDown className="w-4 h-4 opacity-60" />
-    </Button>
-  </DropdownMenuTrigger>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full justify-between"
+                disabled={!canAdmin || atLimit}
+                aria-label="Kies rol"
+              >
+                {ROLES.find(r => r.value === inviteRole)?.label ?? "Rol"}
+                <ChevronDown className="w-4 h-4 opacity-60" />
+              </Button>
+            </DropdownMenuTrigger>
 
-  <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
-    <DropdownMenuLabel>Rol</DropdownMenuLabel>
-    <DropdownMenuRadioGroup
-      value={inviteRole}
-      onValueChange={(val) => setInviteRole(val)}
-    >
-      {ROLES.map((r) => (
-        <DropdownMenuRadioItem key={r.value} value={r.value}>
-          {r.label}
-        </DropdownMenuRadioItem>
-      ))}
-    </DropdownMenuRadioGroup>
-  </DropdownMenuContent>
-</DropdownMenu>
+            <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
+              <DropdownMenuLabel>Rol</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={inviteRole}
+                onValueChange={(val) => setInviteRole(val)}
+              >
+                {ROLES.map((r) => (
+                  <DropdownMenuRadioItem key={r.value} value={r.value}>
+                    {r.label}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <button
             className="px-4 py-2 rounded-lg bg-black text-white disabled:opacity-50"
@@ -660,7 +662,7 @@ export default function TeamTab() {
           >
             Uitnodigen
           </button>
-        </div>
+        </form>
 
         {inviteLink && (
           <div className="bg-gray-50 border rounded-lg p-3 text-sm">
@@ -677,12 +679,15 @@ export default function TeamTab() {
             </div>
           </div>
         )}
-      </form>
+      </section>
 
-      {/* Openstaande uitnodigingen (card) */}
+      {/* Scheidingslijn */}
+      <div className="h-px bg-gray-200" />
+
+      {/* Openstaande uitnodigingen (geen card) */}
       {canAdmin && (
-        <div className="rounded-2xl border p-4 bg-white shadow-sm">
-          <div className="flex items-center justify-between mb-3">
+        <section className="space-y-3">
+          <div className="flex items-center justify-between">
             <h3 className="font-semibold">Openstaande uitnodigingen</h3>
             <span className="text-sm text-gray-500">{invites.length} open</span>
           </div>
@@ -724,7 +729,7 @@ export default function TeamTab() {
               })}
             </ul>
           )}
-        </div>
+        </section>
       )}
     </div>
   )

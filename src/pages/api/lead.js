@@ -19,13 +19,6 @@ import net from 'node:net'; // service banner probes (SMTP/IMAP/POP3/FTP)
 const require = createRequire(import.meta.url);
 // END PATCH
 
-// interne app-hosts en paden die we willen overslaan
-const APP_HOSTS = [
-  "lead-gen-tool-v2.vercel.app", // jouw tijdelijke app-url
-  "localhost",
-  "127.0.0.1"
-];
-
 const APP_PATH_PREFIXES = ["/login", "/dashboard", "/account"];
 
 
@@ -996,7 +989,7 @@ try {
   const host = (u.hostname || "").toLowerCase();
   const path = u.pathname || "/";
 
-  const isAppHost = APP_HOSTS.includes(host);
+  const isAppHost = APP_HOSTS.has(host);
   const isAppPath = APP_PATH_PREFIXES.some(p => path.startsWith(p));
 
   if (isAppHost || isAppPath) {
@@ -1062,18 +1055,21 @@ if (cached && manualLock) {
 }
 
 // 🧠 Alleen verrijken als het echt nodig is
+// ✅ Re-enrich ook als cache "fresh" is maar confidence laag is (< 0.70)
 const needsDomainEnrichment =
   !cached
   || !cachedIsFresh
-  || !cachedHasDomain                  // ← BELANGRIJK: zonder domein altijd verrijken
+  || !cachedHasDomain
   || cached?.company_name === 'Testbedrijf'
   || (cachedHasDomain && (
        !cachedHasConfidence
+       || (typeof cached.confidence === 'number' && cached.confidence < 0.70) // 👈 NIEUW
        || !cachedHasAddr
        || !cachedHasContacts
        || !cachedHasProfile
        || !cached?.rdns_hostname
      ));
+
 
 // ⚡ Early return bij verse, complete cache (scheelt kosten & tijd)
 if (cached && !needsDomainEnrichment && !manualLock) {
@@ -2660,8 +2656,22 @@ return res.status(200).json({ ignored: true, reason: 'no domain found' });
         instagram_url = domainCache.instagram_url || null;
         twitter_url = domainCache.twitter_url || null;
         meta_description = domainCache.meta_description || null;
-        confidence = domainCache.auto_confidence || domainCache.confidence || null;
-        confidence_reason = domainCache.auto_confidence_reason || domainCache.confidence_reason || null;
+        // ✅ Reuse mag nooit downgraden: neem de max met wat we al hadden
+{
+  const reusedConf =
+    (typeof domainCache.auto_confidence === 'number' ? domainCache.auto_confidence : null) ??
+    (typeof domainCache.confidence === 'number' ? domainCache.confidence : null);
+
+  if (typeof reusedConf === 'number') {
+    confidence = Math.max(typeof confidence === 'number' ? confidence : 0, reusedConf);
+  }
+
+  // Alleen reden bijvullen als we er nog geen (betere) hebben
+  if (!confidence_reason) {
+    confidence_reason = domainCache.auto_confidence_reason || domainCache.confidence_reason || null;
+  }
+}
+
 
         // 🧠 Niet opnieuw enrichen
         cachedDomainEnrichment = {
@@ -2829,11 +2839,13 @@ domainEnrichment = await enrichFromDomain(company_domain);
     }
 
 
-    // Confidence nooit omlaag
-const finalConfidence =
-  (typeof confidence === 'number' && !Number.isNaN(confidence))
-    ? (cached?.confidence != null ? Math.max(confidence, cached.confidence) : confidence)
-    : (cached?.confidence ?? null);
+// ✅ Final confidence = max van alle kandidaten (huidig, cached, reuse was al verdisconteerd)
+const confCandidates = [];
+if (typeof confidence === 'number' && !Number.isNaN(confidence)) confCandidates.push(confidence);
+if (typeof cached?.confidence === 'number' && !Number.isNaN(cached.confidence)) confCandidates.push(cached.confidence);
+
+const finalConfidence = confCandidates.length ? Math.max(...confCandidates) : null;
+
 
 // ⛔️ Confidence-drempel check
 const MIN_CONFIDENCE = 0.5;
