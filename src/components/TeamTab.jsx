@@ -59,7 +59,7 @@ export default function TeamTab() {
     }
   }, [])
 
-  // === Context laden ===
+  // === Context laden: orgId, mijn rol, organisatienaam, owner ===
   const loadContext = useCallback(async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -384,31 +384,12 @@ export default function TeamTab() {
     </svg>
   )
 
+  // ⬇️ Geen eigen container/kaart en geen “Team”-titel meer. Alles direct in de buitenste pagina-container.
   return (
-    // ÉÉN GROTE CONTAINER (alle secties hierin, geen binnen-kaarten meer)
-    <div className="rounded-2xl border p-4 md:p-6 bg-white shadow-sm space-y-8">
-      {/* Page header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="font-semibold text-lg">Team</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Beheer je team, rollen en uitnodigingen.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 text-xs">
-          <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 bg-white">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            Jouw rol:&nbsp;<b className="lowercase">{meRole || 'laden…'}</b>
-          </span>
-          <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 bg-white">
-            Seats&nbsp;<b>{members.length}/{SEAT_LIMIT}</b>
-          </span>
-        </div>
-      </div>
-
+    <>
       {/* Error / Notice */}
       {(error || notice) && (
-        <div className="space-y-2">
+        <div className="space-y-2 mb-6">
           {error && (
             <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
               {String(error)}
@@ -430,10 +411,7 @@ export default function TeamTab() {
         </div>
       )}
 
-      {/* Scheidingslijn */}
-      <div className="h-px bg-gray-200" />
-
-      {/* Organisatienaam (geen card, gewone sectie) */}
+      {/* Organisatienaam */}
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <h3 className="font-semibold">Organisatienaam</h3>
@@ -459,13 +437,13 @@ export default function TeamTab() {
         </form>
       </section>
 
-      {/* Scheidingslijn */}
-      <div className="h-px bg-gray-200" />
+      <div className="h-px bg-gray-200 my-8" />
 
-      {/* Teamleden (geen card, gewone sectie) */}
+      {/* Teamleden */}
       <section className="space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <h3 className="font-semibold">Teamleden</h3>
+
           <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
             <div className="relative w-full sm:w-auto">
               <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400">
@@ -481,6 +459,16 @@ export default function TeamTab() {
                 className="pl-8 pr-3 w-full sm:w-[240px]"
               />
             </div>
+
+            <div className="flex items-center gap-2 text-xs">
+              <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 bg-white">
+                Jouw rol:&nbsp;<b className="lowercase">{meRole || 'laden…'}</b>
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 bg-white">
+                Seats&nbsp;<b>{members.length}/{SEAT_LIMIT}</b>
+              </span>
+            </div>
+
             <button
               onClick={() => { loadMembers(); if (orgId && canAdmin) loadInvites(); }}
               className="text-sm px-3 py-2 rounded-lg border hover:bg-gray-50 w-full sm:w-auto"
@@ -505,8 +493,10 @@ export default function TeamTab() {
         ) : (
           <ul
             className={[
+              // Mobile: horizontaal scrollen
               "flex gap-3 overflow-x-auto pb-2 -mx-4 px-4",
               "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+              // Desktop: verticale lijst
               "md:block md:overflow-visible md:pb-0 md:mx-0 md:px-0 md:gap-0 md:divide-y",
             ].join(" ")}
           >
@@ -527,12 +517,10 @@ export default function TeamTab() {
                   ].join(" ")}
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    {/* Avatar */}
                     <div className="h-9 w-9 rounded-full bg-gray-100 border flex items-center justify-center text-xs font-semibold">
                       {initials || "–"}
                     </div>
 
-                    {/* Tekst */}
                     <div className="min-w-0">
                       <div className="font-medium flex items-center gap-2">
                         <span className="truncate max-w-[180px] md:max-w-none">
@@ -603,10 +591,9 @@ export default function TeamTab() {
         )}
       </section>
 
-      {/* Scheidingslijn */}
-      <div className="h-px bg-gray-200" />
+      <div className="h-px bg-gray-200 my-8" />
 
-      {/* Uitnodigen (geen card) */}
+      {/* Uitnodigen */}
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="font-semibold">Teamlid uitnodigen</h3>
@@ -627,34 +614,34 @@ export default function TeamTab() {
             autoComplete="email"
           />
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full justify-between"
-                disabled={!canAdmin || atLimit}
-                aria-label="Kies rol"
-              >
-                {ROLES.find(r => r.value === inviteRole)?.label ?? "Rol"}
-                <ChevronDown className="w-4 h-4 opacity-60" />
-              </Button>
-            </DropdownMenuTrigger>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full justify-between"
+              disabled={!canAdmin || atLimit}
+              aria-label="Kies rol"
+            >
+              {ROLES.find(r => r.value === inviteRole)?.label ?? "Rol"}
+              <ChevronDown className="w-4 h-4 opacity-60" />
+            </Button>
+          </DropdownMenuTrigger>
 
-            <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
-              <DropdownMenuLabel>Rol</DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                value={inviteRole}
-                onValueChange={(val) => setInviteRole(val)}
-              >
-                {ROLES.map((r) => (
-                  <DropdownMenuRadioItem key={r.value} value={r.value}>
-                    {r.label}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
+            <DropdownMenuLabel>Rol</DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={inviteRole}
+              onValueChange={(val) => setInviteRole(val)}
+            >
+              {ROLES.map((r) => (
+                <DropdownMenuRadioItem key={r.value} value={r.value}>
+                  {r.label}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
           <button
             className="px-4 py-2 rounded-lg bg-black text-white disabled:opacity-50"
@@ -681,10 +668,9 @@ export default function TeamTab() {
         )}
       </section>
 
-      {/* Scheidingslijn */}
-      <div className="h-px bg-gray-200" />
+      <div className="h-px bg-gray-200 my-8" />
 
-      {/* Openstaande uitnodigingen (geen card) */}
+      {/* Openstaande uitnodigingen */}
       {canAdmin && (
         <section className="space-y-3">
           <div className="flex items-center justify-between">
@@ -731,6 +717,6 @@ export default function TeamTab() {
           )}
         </section>
       )}
-    </div>
+    </>
   )
 }
