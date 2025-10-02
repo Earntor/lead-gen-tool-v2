@@ -296,26 +296,6 @@ function withTimeout(promise, ms = 8000) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-// Responsive helper: is het viewport < md (Tailwind 768px)?
-function useIsMobile(breakpointPx = 768) {
-  const [isMobile, setIsMobile] = useState(false);
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const mq = window.matchMedia(`(max-width:${breakpointPx - 1}px)`);
-    const apply = () => setIsMobile(mq.matches);
-    apply();
-    // Safari fallback: addListener/removeListener
-    if (mq.addEventListener) mq.addEventListener('change', apply);
-    else mq.addListener(apply);
-    return () => {
-      if (mq.removeEventListener) mq.removeEventListener('change', apply);
-      else mq.removeListener(apply);
-    };
-  }, [breakpointPx]);
-  return isMobile;
-}
-
-
 // === Realtime helpers voor nieuwe bedrijven ===
 const CONFIDENCE_MIN = null; // pas aan naar wens
 
