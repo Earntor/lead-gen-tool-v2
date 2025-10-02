@@ -444,38 +444,49 @@ export default function TeamTab() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <h3 className="font-semibold">Teamleden</h3>
 
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
-            <div className="relative w-full sm:w-auto">
-              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400">
-                <IconSearch />
-              </span>
-              <Input
-                type="text"
-                aria-label="Zoek op naam, e-mail of rol"
-                placeholder="Zoek op naam, e-mail of rol…"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                autoComplete="off"
-                className="pl-8 pr-3 w-full sm:w-[240px]"
-              />
-            </div>
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+  {/* Titel links */}
+  <h3 className="font-semibold">Teamleden</h3>
 
-            <div className="flex items-center gap-2 text-xs">
-              <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 bg-white">
-                Jouw rol:&nbsp;<b className="lowercase">{meRole || 'laden…'}</b>
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 bg-white">
-                Seats&nbsp;<b>{members.length}/{SEAT_LIMIT}</b>
-              </span>
-            </div>
+  {/* Rechts: eerst badges (rol/seats), daaronder zoek + knop; alles rechts uitgelijnd */}
+  <div className="flex flex-col items-end gap-2 w-full sm:w-auto">
+    {/* Rij 1: badges rechts */}
+    <div className="flex items-center gap-2">
+      <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 bg-white text-xs">
+        Jouw rol:&nbsp;<b className="lowercase">{meRole || 'laden…'}</b>
+      </span>
+      <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 bg-white text-xs">
+        Seats&nbsp;<b>{members.length}/{SEAT_LIMIT}</b>
+      </span>
+    </div>
 
-            <button
-              onClick={() => { loadMembers(); if (orgId && canAdmin) loadInvites(); }}
-              className="text-sm px-3 py-2 rounded-lg border hover:bg-gray-50 w-full sm:w-auto"
-            >
-              Vernieuwen
-            </button>
-          </div>
+    {/* Rij 2: zoekveld + Vernieuwen rechts uitgelijnd */}
+    <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+      <div className="relative w-full sm:w-[280px]">
+        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400">
+          <IconSearch />
+        </span>
+        <Input
+          type="text"
+          aria-label="Zoek op naam, e-mail of rol"
+          placeholder="Zoek op naam, e-mail of rol…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          autoComplete="off"
+          className="pl-8 pr-3 w-full"
+        />
+      </div>
+
+      <button
+        onClick={() => { loadMembers(); if (orgId && canAdmin) loadInvites(); }}
+        className="text-sm px-3 py-2 rounded-lg border hover:bg-gray-50"
+      >
+        Vernieuwen
+      </button>
+    </div>
+  </div>
+</div>
+
         </div>
 
         {!orgId && (
