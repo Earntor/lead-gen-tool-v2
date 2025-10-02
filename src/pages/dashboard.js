@@ -47,6 +47,8 @@ import {
   AccordionContent,
 } from "@/components/ui/accordion";
 import { ArrowLeft, Menu, User } from "lucide-react";
+import SocialIcons from "../components/SocialIcons";
+
 
 
 // Normaliseer landcode voor FlagCDN: twee letters, lowercase, met uitzonderingen.
@@ -2731,58 +2733,28 @@ try {
     )}
 
     {/* Social links */}
-    {selectedCompanyData.linkedin_url && (
-      <div>
-        <p className="text-xs font-semibold text-gray-600">LinkedIn</p>
-        <a
-          href={selectedCompanyData.linkedin_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-blue-600 hover:underline"
-        >
-          Bekijk profiel
-        </a>
+        {/* Social (icoonrij) */}
+    {(selectedCompanyData.linkedin_url ||
+      selectedCompanyData.facebook_url ||
+      selectedCompanyData.instagram_url ||
+      selectedCompanyData.twitter_url) && (
+      <div className="sm:col-span-2">
+        <p className="text-xs font-semibold text-gray-600 mb-1">
+          Social
+        </p>
+        <SocialIcons
+          urls={{
+            linkedin_url: selectedCompanyData.linkedin_url,
+            facebook_url: selectedCompanyData.facebook_url,
+            instagram_url: selectedCompanyData.instagram_url,
+            twitter_url: selectedCompanyData.twitter_url,
+          }}
+          // optioneel: size={20}
+          className=""
+        />
       </div>
     )}
-    {selectedCompanyData.facebook_url && (
-      <div>
-        <p className="text-xs font-semibold text-gray-600">Facebook</p>
-        <a
-          href={selectedCompanyData.facebook_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-blue-600 hover:underline"
-        >
-          Facebook-pagina
-        </a>
-      </div>
-    )}
-    {selectedCompanyData.instagram_url && (
-      <div>
-        <p className="text-xs font-semibold text-gray-600">Instagram</p>
-        <a
-          href={selectedCompanyData.instagram_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-blue-600 hover:underline"
-        >
-          Instagram-profiel
-        </a>
-      </div>
-    )}
-    {selectedCompanyData.twitter_url && (
-      <div>
-        <p className="text-xs font-semibold text-gray-600">Twitter</p>
-        <a
-          href={selectedCompanyData.twitter_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-blue-600 hover:underline"
-        >
-          Twitter-profiel
-        </a>
-      </div>
-    )}
+
   </div>
 
   {/* Meta description */}
