@@ -296,6 +296,26 @@ function withTimeout(promise, ms = 8000) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+// Responsive helper: is het viewport < md (Tailwind 768px)?
+function useIsMobile(breakpointPx = 768) {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia(`(max-width:${breakpointPx - 1}px)`);
+    const apply = () => setIsMobile(mq.matches);
+    apply();
+    // Safari fallback: addListener/removeListener
+    if (mq.addEventListener) mq.addEventListener('change', apply);
+    else mq.addListener(apply);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener('change', apply);
+      else mq.removeListener(apply);
+    };
+  }, [breakpointPx]);
+  return isMobile;
+}
+
+
 // === Realtime helpers voor nieuwe bedrijven ===
 const CONFIDENCE_MIN = null; // pas aan naar wens
 
@@ -345,8 +365,29 @@ function NewCompaniesButton({ count, onApply }) {
   );
 }
 
+// Responsive helper: is het viewport < md (Tailwind 768px)?
+function useIsMobile(breakpointPx = 768) {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia(`(max-width:${breakpointPx - 1}px)`);
+    const apply = () => setIsMobile(mq.matches);
+    apply();
+    // Safari fallback
+    if (mq.addEventListener) mq.addEventListener('change', apply);
+    else mq.addListener(apply);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener('change', apply);
+      else mq.removeListener(apply);
+    };
+  }, [breakpointPx]);
+  return isMobile;
+}
+
+
 export default function Dashboard() {
   const router = useRouter();
+  const isMobile = useIsMobile();
   const [user, setUser] = useState(null);
   const [allLeads, setAllLeads] = useState([]);
   const [labels, setLabels] = useState([]);
@@ -560,7 +601,6 @@ setUniqueCategories(Array.from(categoriesSet).sort());
     });
 
     // 5) Realtime subscriptions (blokkeert niet)
-    
 
     const labelsCh = supabase
   .channel(`labels:org:${orgId}`)
@@ -988,6 +1028,44 @@ const domainToCompany = useMemo(() => {
   return m;
 }, [allCompanies]);
 
+// Alleen op mobiel: koppel ?company=<domain> aan UI-state
+useEffect(() => {
+  if (!isMobile) return;
+  const domain = typeof router.query.company === 'string' ? router.query.company : '';
+  if (domain) {
+    const company = domainToCompany.get(domain);
+    if (company && company.company_name !== selectedCompany) {
+      setSelectedCompany(company.company_name);
+      setInitialVisitorSet(false);
+      setFiltersOpen(false);
+    }
+  } else if (selectedCompany) {
+    setSelectedCompany(null);
+  }
+}, [isMobile, router.query.company, domainToCompany]); 
+
+const openCompany = (companyDomain, companyName) => {
+  if (!companyName) return;
+  setSelectedCompany(companyName);
+  setInitialVisitorSet(false);
+  setFiltersOpen(false);
+
+  if (isMobile && companyDomain) {
+    const q = { ...router.query, company: String(companyDomain) };
+    router.push({ pathname: '/dashboard', query: q }, undefined, { shallow: true });
+  }
+};
+
+const closeCompany = () => {
+  setSelectedCompany(null);
+  if (isMobile && router.query.company) {
+    const q = { ...router.query };
+    delete q.company;
+    router.replace({ pathname: '/dashboard', query: q }, undefined, { shallow: true });
+  }
+};
+
+
 // Bovenaan te tonen bedrijven die buiten je filters vallen (met badge)
 const overrideCompanies = useMemo(() => {
   const arr = Array.from(overrideDomains)
@@ -1379,14 +1457,21 @@ const resetFilters = () => {
 
         <div className="flex items-center gap-1">
           {selectedCompany && (
-            <button
-              onClick={() => setSelectedCompany(null)}
-              className="p-2 rounded hover:bg-gray-100"
-              aria-label="Terug naar bedrijven"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-          )}
+  <button
+    onClick={() => {
+      if (isMobile && router.query.company) {
+        router.back();
+      } else {
+        closeCompany();
+      }
+    }}
+    className="p-2 rounded hover:bg-gray-100"
+    aria-label="Terug naar bedrijven"
+  >
+    <ArrowLeft className="w-5 h-5" />
+  </button>
+)}
+
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1496,7 +1581,14 @@ return (
   <div className="flex items-center gap-1">
     {selectedCompany && (
       <button
-        onClick={() => setSelectedCompany(null)}
+        onClick={() => {
+  if (isMobile && router.query.company) {
+    router.back();
+  } else {
+    closeCompany();
+  }
+}}
+
         className="p-2 rounded hover:bg-gray-100"
         aria-label="Terug naar bedrijven"
       >
@@ -2064,11 +2156,8 @@ const handleDeleteGlobalLabel = async (labelId) => {
   return (
     <div
       key={`override-${company.company_name}`}
-      onClick={() => {
-  setSelectedCompany(company.company_name);
-  setInitialVisitorSet(false);
-  setFiltersOpen(false); // sluit de drawer op mobiel
-}}
+      onClick={() => openCompany(company.company_domain, company.company_name)}
+
 
       className="cursor-pointer bg-white border border-amber-300 rounded-xl p-4 shadow hover:shadow-lg hover:scale-[1.02] transition-transform duration-200 ring-1 ring-amber-300"
       title="Tijdelijk getoond buiten je filter"
@@ -2228,12 +2317,8 @@ if (leadRating >= 80) {
       return (
         <div
           key={company.company_name}
-          onClick={() => {
-            setSelectedCompany(company.company_name);
-            setInitialVisitorSet(false);
-            setFiltersOpen(false); // sluit de drawer op mobiel
+          onClick={() => openCompany(company.company_domain, company.company_name)}
 
-          }}
           className={`cursor-pointer bg-white border border-gray-200 rounded-xl p-4 shadow hover:shadow-lg hover:scale-[1.02] transition-transform duration-200 ${
   selectedCompany === company.company_name
     ? "border-blue-500 ring-1 ring-blue-500 bg-blue-50"
