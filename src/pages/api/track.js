@@ -300,6 +300,26 @@ if (!orgId) {
     console.warn('⚠️ sites insert check faalde:', e.message);
   }
 
+  // 🔔 Hello ping op site-niveau (idempotent first_ping_at, altijd last_ping_at)
+const nowIso = new Date().toISOString();
+try {
+  // Zet first_ping_at alleen als hij nog NULL is
+  await supabase
+    .from('sites')
+    .update({ first_ping_at: nowIso })
+    .eq('site_id', siteId)
+    .is('first_ping_at', null);
+
+  // Altijd bijwerken
+  await supabase
+    .from('sites')
+    .update({ last_ping_at: nowIso })
+    .eq('site_id', siteId);
+} catch (e) {
+  console.warn('⚠️ site hello-ping update faalde:', e.message);
+}
+
+
   // Enrichment uit cache
   let ipCache = null;
   try {
@@ -420,7 +440,6 @@ if (shouldQueueThisEvent && needsEnrichment && !skipBecauseRecent) {
 }
 
   // Health ping / script validatie
-const nowIso = new Date().toISOString();
 if (isValidation) {
   await supabase
     .from('organizations')

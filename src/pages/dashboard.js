@@ -48,6 +48,9 @@ import {
 } from "@/components/ui/accordion";
 import { ArrowLeft, Menu, User } from "lucide-react";
 import SocialIcons from "../components/SocialIcons";
+import dynamic from 'next/dynamic';
+const OnboardingWizard = dynamic(() => import('../components/OnboardingWizard'), { ssr: false });
+
 
 
 
@@ -409,6 +412,8 @@ const [notesByDomain, setNotesByDomain] = useState({}); // { [domain]: "note tex
 const geocodeCacheRef = useRef(new Map()); // key: adres-string → { lat, lon }
 const [profile, setProfile] = useState(null);
 const [filtersOpen, setFiltersOpen] = useState(false); // mobiel: open/gesloten filters
+// Onboarding wizard
+const [wizardOpen, setWizardOpen] = useState(false);
 
 // Sessie-start: alleen events vanaf dit moment tellen
 const sessionStartRef = useRef(new Date().toISOString());
@@ -432,6 +437,36 @@ const handleLogout = async () => {
     router.push("/login");
   } catch {}
 };
+
+// toggle voor "Geluid bij nieuwe bezoeker"
+const toggleNewLeadSound = async () => {
+  if (!user?.id) return;
+  const next = !soundOn;
+
+  // Optimistic update
+  setSoundOn(next);
+
+  try {
+    const newPref = { ...(profile?.preferences || {}), newLeadSoundOn: next };
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({ preferences: newPref })
+      .eq('id', user.id)
+      .select('preferences')
+      .single();
+
+    if (error) throw error;
+
+    // profiel in state bijwerken (handig voor UI elders)
+    setProfile((p) => (p ? { ...p, preferences: data?.preferences || newPref } : p));
+  } catch (e) {
+    // rollback bij fout
+    setSoundOn((prev) => !prev);
+    console.error('Voorkeur opslaan mislukt:', e);
+    alert('Kon voorkeur niet opslaan. Probeer later opnieuw.');
+  }
+};
+
 
 useEffect(() => { overrideDomainsRef.current = overrideDomains; }, [overrideDomains]);
 
@@ -637,6 +672,30 @@ setUniqueCategories(Array.from(categoriesSet).sort());
   };
 }, [router]);
 
+// Wizard tonen als hij nog niet gezien is (of geforceerd via ?onboarding=1)
+useEffect(() => {
+  if (!user || !profile || loading) return;
+
+  const prefs = profile?.preferences || {};
+  const localKey = user?.id ? `onboardingDone:${user.id}` : null;
+  const localSeen =
+    typeof window !== 'undefined' && localKey && localStorage.getItem(localKey) === '1';
+
+  const forced = router.query.onboarding === '1';
+  const shouldOpen = forced || (!prefs.onboardingDone && !localSeen);
+
+  if (shouldOpen) setWizardOpen(true);
+}, [user, profile, loading, router.query.onboarding]);
+
+// Body-scroll blokkeren zolang wizard open is
+useEffect(() => {
+  if (!wizardOpen) return;
+  const prev = document.body.style.overflow;
+  document.body.style.overflow = 'hidden';
+  return () => { document.body.style.overflow = prev; };
+}, [wizardOpen]);
+
+
 // 🔔 Houd soundOn live in sync met profiel-voorkeuren uit Account
 // ⬇️ Realtime: volg profiel-voorkeuren (newLeadSoundOn) live
 useEffect(() => {
@@ -648,16 +707,22 @@ useEffect(() => {
       'postgres_changes',
       { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${user.id}` },
       (payload) => {
+        // ⬇️ NIEUW: haal alle preferences op
         const pref = payload?.new?.preferences || {};
+
+        // 1) soundOn up-to-date houden
         const v = pref.newLeadSoundOn;
-        // zelfde default als bij initial load: true indien niet gezet
         setSoundOn(v == null ? true : !!v);
+
+        // 2) ⬇️ NIEUW: ook het profiel in state bijwerken (voor bv. onboardingDone)
+        setProfile((p) => (p ? { ...p, preferences: pref } : p));
       }
     )
     .subscribe();
 
   return () => { supabase.removeChannel(ch); };
 }, [user?.id]);
+
 
 
   // ⬇️ Batch: alle notities in één keer (géén N+1 meer)
@@ -1420,6 +1485,29 @@ const resetFilters = () => {
   setCategoryFilter("");
 };
 
+// Markeer onboarding als voltooid in Supabase + fallback in localStorage
+async function markOnboardingDone() {
+  try {
+    const nextPrefs = { ...(profile?.preferences || {}), onboardingDone: true };
+
+    // Optimistic UI
+    setProfile((p) => (p ? { ...p, preferences: nextPrefs } : p));
+
+    // Bewaar in Supabase
+    if (user?.id) {
+      await supabase.from('profiles').update({ preferences: nextPrefs }).eq('id', user.id);
+    }
+
+    // Fallback/extra check client-side
+    if (typeof window !== 'undefined' && user?.id) {
+      localStorage.setItem(`onboardingDone:${user.id}`, '1');
+    }
+  } catch (e) {
+    console.error('onboardingDone update mislukt:', e);
+  }
+}
+
+
   if (loading) {
   return (
     <div className="w-full min-h-[100svh] bg-white">
@@ -1593,6 +1681,18 @@ return (
           {user?.email || "Mijn account"}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        <button
+  onClick={toggleNewLeadSound}
+  className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center justify-between"
+>
+  <span>{soundOn ? '🔔 Geluid bij nieuwe bezoeker: aan' : '🔕 Geluid bij nieuwe bezoeker: uit'}</span>
+  <span
+    aria-hidden
+    className="ml-2 inline-block w-2 h-2 rounded-full"
+    style={{ backgroundColor: soundOn ? '#22c55e' : '#ef4444' }}
+  />
+</button>
+
         <a href="/account#account" className="block px-3 py-2 text-sm hover:bg-gray-50">Account</a>
         <a href="/account#instellingen" className="block px-3 py-2 text-sm hover:bg-gray-50">Instellingen</a>
         <a href="/account#facturen" className="block px-3 py-2 text-sm hover:bg-gray-50">Facturen</a>
@@ -3028,7 +3128,16 @@ try {
    )}
 </section>
 
-  </div>
+ </div>
+
+  {/* Onboarding wizard overlay (niet in skeleton!) */}
+{wizardOpen && (
+  <OnboardingWizard
+    open
+    onClose={() => { setWizardOpen(false); markOnboardingDone(); }}
+    onComplete={() => { setWizardOpen(false); markOnboardingDone(); }}
+  />
+)}
 </div>    
 );
 }
