@@ -22,15 +22,41 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   const pollRef = useRef(null)
   const [pollStatus, setPollStatus] = useState('idle')
 
-useEffect(() => {
-  if (open === true) setVisible(true);
-  if (open === false) setVisible(false);
-}, [open]);
+  // ---------- NIEUW: helpers ----------
+  async function getFreshToken() {
+    // Probeer uit state
+    if (token) return token
+    // Haal vers token op uit Supabase
+    const { data } = await supabase.auth.getSession()
+    const t = data?.session?.access_token || null
+    if (!t) {
+      alert('Niet ingelogd (geen token). Ververs de pagina en probeer opnieuw.')
+      throw new Error('missing token')
+    }
+    setToken(t)
+    return t
+  }
 
+  async function authedFetch(url, options = {}) {
+    const t = await getFreshToken()
+    const headers = { ...(options.headers || {}), Authorization: `Bearer ${t}` }
+    return fetch(url, { ...options, headers })
+  }
+
+  async function parseJsonSafe(resp) {
+    try { return await resp.json() } catch { return null }
+  }
+  // ---------- EINDE helpers ----------
+
+  useEffect(() => {
+    if (open === true) setVisible(true);
+    if (open === false) setVisible(false);
+  }, [open])
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
+      // haal session/token één keer op voor de initiële state
       const { data } = await supabase.auth.getSession()
       const t = data?.session?.access_token
       setToken(t || null)
@@ -77,27 +103,20 @@ useEffect(() => {
   const progress = useMemo(() => Math.round((step / totalSteps) * 100), [step, totalSteps])
   if (!visible) return null
 
-  const authHeaders = token ? { Authorization: `Bearer ${token}` } : {}
-
+  // -------- acties met authedFetch --------
   async function saveProfile() {
-if (!token) {
-  const { data } = await supabase.auth.getSession()
-  const t = data?.session?.access_token || null
-  setToken(t)
-  if (!t) {
-    alert('Niet ingelogd (geen token). Ververs de pagina en probeer opnieuw.')
-    return
-  }
-}
     if (!fullName.trim()) return alert('Vul je naam in')
     setLoading(true)
     try {
-      const resp = await fetch('/api/onboarding', {
+      const resp = await authedFetch('/api/onboarding', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'saveProfile', fullName, phone }),
       })
-      if (!resp.ok) throw new Error((await resp.json()).error || 'Opslaan mislukt')
+      if (!resp.ok) {
+        const j = await parseJsonSafe(resp)
+        throw new Error(j?.error || 'Opslaan mislukt')
+      }
       setStep((s) => s + 1)
     } catch (e) {
       alert(e.message || String(e))
@@ -107,24 +126,18 @@ if (!token) {
   }
 
   async function saveRole() {
-if (!token) {
-  const { data } = await supabase.auth.getSession()
-  const t = data?.session?.access_token || null
-  setToken(t)
-  if (!t) {
-    alert('Niet ingelogd (geen token). Ververs de pagina en probeer opnieuw.')
-    return
-  }
-}
     if (!role) return alert('Kies je rol')
     setLoading(true)
     try {
-      const resp = await fetch('/api/onboarding', {
+      const resp = await authedFetch('/api/onboarding', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'saveRole', role }),
       })
-      if (!resp.ok) throw new Error((await resp.json()).error || 'Opslaan mislukt')
+      if (!resp.ok) {
+        const j = await parseJsonSafe(resp)
+        throw new Error(j?.error || 'Opslaan mislukt')
+      }
       setStep((s) => s + 1)
     } catch (e) {
       alert(e.message || String(e))
@@ -134,25 +147,19 @@ if (!token) {
   }
 
   async function complete() {
-if (!token) {
-  const { data } = await supabase.auth.getSession()
-  const t = data?.session?.access_token || null
-  setToken(t)
-  if (!t) {
-    alert('Niet ingelogd (geen token). Ververs de pagina en probeer opnieuw.')
-    return
-  }
-}
     setLoading(true)
     try {
-      const resp = await fetch('/api/onboarding', {
+      const resp = await authedFetch('/api/onboarding', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'complete' }),
       })
-      if (!resp.ok) throw new Error((await resp.json()).error || 'Afronden mislukt')
+      if (!resp.ok) {
+        const j = await parseJsonSafe(resp)
+        throw new Error(j?.error || 'Afronden mislukt')
+      }
       setVisible(false)
-    onComplete && onComplete();
+      onComplete && onComplete()
     } catch (e) {
       alert(e.message || String(e))
     } finally {
@@ -161,24 +168,19 @@ if (!token) {
   }
 
   async function snooze(minutes = 60 * 24) {
-if (!token) {
-  const { data } = await supabase.auth.getSession()
-  const t = data?.session?.access_token || null
-  setToken(t)
-  if (!t) {
-    alert('Niet ingelogd (geen token). Ververs de pagina en probeer opnieuw.')
-    return
-  }
-}
     setLoading(true)
     try {
-      await fetch('/api/onboarding', {
+      const resp = await authedFetch('/api/onboarding', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'snooze', minutes }),
       })
+      if (!resp.ok) {
+        const j = await parseJsonSafe(resp)
+        throw new Error(j?.error || 'Snoozen mislukt')
+      }
       setVisible(false)
-      onClose && onClose();
+      onClose && onClose()
     } catch (e) {
       alert(e.message || String(e))
     } finally {
@@ -187,81 +189,79 @@ if (!token) {
   }
 
   function startPolling() {
-  if (!orgId) return alert('Org ontbreekt, ververs de pagina en probeer opnieuw.');
-  if (pollRef.current) return;          // voorkom dubbele intervals
-  setPolling(true);
-  setPollStatus('checking');
+    if (!orgId) return alert('Org ontbreekt, ververs de pagina en probeer opnieuw.')
+    if (pollRef.current) return
+    setPolling(true)
+    setPollStatus('checking')
 
-  const tick = async () => {
-    try {
- const resp = await fetch(
-   `/api/check-tracking?projectId=${encodeURIComponent(orgId)}`,
-   { headers: token ? { Authorization: `Bearer ${token}` } : {} }
- )      // Als in de tussentijd gestopt is, niet meer updaten:
-      if (!pollRef.current) return;
+    const tick = async () => {
+      try {
+        const resp = await authedFetch(`/api/check-tracking?projectId=${encodeURIComponent(orgId)}`)
+        if (!pollRef.current) return
+        const json = await parseJsonSafe(resp)
+        if (!pollRef.current) return
 
-      const json = await resp.json();
-      if (!pollRef.current) return;
-
-      if (json?.status === 'ok') {
-        setPollStatus('ok');
-        // eerst interval weg, dan UI-status updaten
-        if (pollRef.current) {
-          clearInterval(pollRef.current);
-          pollRef.current = null;
+        if (json?.status === 'ok') {
+          setPollStatus('ok')
+          clearInterval(pollRef.current)
+          pollRef.current = null
+          setPolling(false)
+        } else {
+          setPollStatus('not_found')
         }
-        setPolling(false);
-      } else {
-        setPollStatus('not_found');
+      } catch {
+        if (!pollRef.current) return
+        setPollStatus('error')
       }
-    } catch {
-      if (!pollRef.current) return;
-      setPollStatus('error');
     }
-  };
 
-  tick();
-  pollRef.current = setInterval(tick, 5000);
-}
-
-function stopPolling() {
-  if (pollRef.current) {
-    clearInterval(pollRef.current);
-    pollRef.current = null;
+    tick()
+    pollRef.current = setInterval(tick, 5000)
   }
-  setPolling(false);
-  setPollStatus('idle');
-}
 
-
-
+  function stopPolling() {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+    setPolling(false)
+    setPollStatus('idle')
+  }
 
   const ActionBar = ({ onPrimary, primaryText, onSecondary, secondaryText, disabled }) => (
-    <div className="mt-6 flex flex-col sm:flex-row gap-2 sm:gap-3">
+  <div className="mt-6 flex flex-col sm:flex-row gap-2 sm:gap-3">
+    {/* ⬅️ Links: Later afronden */}
+    <button
+      type="button"
+      onClick={() => snooze(60 * 24)}
+      className="text-sm text-gray-500 hover:text-gray-700"
+      title="Later afronden (24 uur)"
+    >
+      Later afronden
+    </button>
+
+    {/* Midden: Vorige (optioneel) */}
+    {onSecondary && (
       <button
-        onClick={onPrimary}
-        disabled={disabled}
-        className="inline-flex justify-center rounded-lg bg-black text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800 disabled:opacity-50"
+        type="button"
+        onClick={onSecondary}
+        className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50"
       >
-        {primaryText}
+        {secondaryText}
       </button>
-      {onSecondary && (
-        <button
-          onClick={onSecondary}
-          className="inline-flex justify-center rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50"
-        >
-          {secondaryText}
-        </button>
-      )}
-      <button
-        onClick={() => snooze(60 * 24)}
-        className="ml-auto text-sm text-gray-500 hover:text-gray-700"
-        title="Later afronden (24 uur)"
-      >
-        Later afronden
-      </button>
-    </div>
-  )
+    )}
+
+    {/* ➡️ Rechts: Primaire actie (Volgende / Naar dashboard) */}
+    <button
+      type="button"
+      onClick={onPrimary}
+      disabled={disabled}
+      className="ml-auto inline-flex justify-center rounded-lg bg-black text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800 disabled:opacity-50"
+    >
+      {primaryText}
+    </button>
+  </div>
+)
 
   return (
     <div className="fixed inset-0 z-[1000]">
@@ -300,7 +300,11 @@ function stopPolling() {
                     className="w-full rounded-lg border px-3 py-2 text-sm"
                   />
                 </div>
-+ <ActionBar onPrimary={saveProfile} primaryText={loading ? 'Opslaan…' : 'Volgende'} disabled={loading || !token} />
+                <ActionBar
+                  onPrimary={saveProfile}
+                  primaryText={loading ? 'Opslaan…' : 'Volgende'}
+                  disabled={loading}
+                />
               </>
             )}
 
@@ -310,6 +314,7 @@ function stopPolling() {
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {roleOptions.map((opt) => (
                     <button
+                      type="button"
                       key={opt}
                       onClick={() => setRole(opt)}
                       className={`rounded-lg border px-3 py-2 text-sm text-left hover:bg-gray-50 ${role === opt ? 'border-blue-600 ring-2 ring-blue-200' : ''}`}
@@ -323,7 +328,7 @@ function stopPolling() {
                   primaryText={loading ? 'Opslaan…' : 'Volgende'}
                   onSecondary={() => setStep((s) => Math.max(1, s - 1))}
                   secondaryText="Vorige"
-                  disabled={loading || !token}
+                  disabled={loading}
                 />
               </>
             )}
@@ -343,11 +348,11 @@ function stopPolling() {
                 </div>
                 <div className="mt-4 flex items-center gap-2">
                   {!polling ? (
-                    <button onClick={startPolling} className="rounded-lg bg-black text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800">
+                    <button type="button" onClick={startPolling} className="rounded-lg bg-black text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800">
                       Start check
                     </button>
                   ) : (
-                    <button onClick={stopPolling} className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50">
+                    <button type="button" onClick={stopPolling} className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50">
                       Stop check
                     </button>
                   )}
@@ -365,6 +370,7 @@ function stopPolling() {
                   primaryText={pollStatus === 'ok' ? 'Volgende' : 'Sla voorlopig over'}
                   onSecondary={() => setStep((s) => Math.max(1, s - 1))}
                   secondaryText="Vorige"
+                  disabled={loading}
                 />
               </>
             )}
@@ -380,7 +386,7 @@ function stopPolling() {
                   primaryText={loading ? 'Afronden…' : 'Naar dashboard'}
                   onSecondary={() => setStep((s) => Math.max(1, s - 1))}
                   secondaryText="Vorige"
- disabled={loading || !token}
+                  disabled={loading}
                 />
               </>
             )}
