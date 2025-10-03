@@ -57,7 +57,7 @@ export default async function handler(req, res) {
   // Profiel ophalen of (veilig) bootstrap
   const { data: profile0 } = await supabaseAdmin
     .from('profiles')
-    .select('id, email, full_name, phone, preferences, current_org_id')
+    .select('id, email, full_name, phone, preferences, current_org_id, onboarding_status')
     .eq('id', user.id)
     .maybeSingle()
 
@@ -66,7 +66,7 @@ export default async function handler(req, res) {
     const { data: created, error: cErr } = await supabaseAdmin
       .from('profiles')
       .insert({ id: user.id, email: user.email ?? null, preferences: {} })
-      .select('id, email, full_name, phone, preferences, current_org_id')
+      .select('id, email, full_name, phone, preferences, current_org_id, onboarding_status')
       .single()
     if (cErr) return res.status(500).json({ error: cErr.message })
     profile = created
@@ -90,12 +90,17 @@ export default async function handler(req, res) {
 
     const prefs = profile.preferences || {}
     const onboarding = prefs.onboarding || {}
+
+    const completedByPrefs = onboarding.completed === true
+    const completedByColumn = (profile.onboarding_status || '').toLowerCase() === 'done'
+    const completed = completedByPrefs || completedByColumn
+
     const snoozedUntil = onboarding.snoozed_until ? new Date(onboarding.snoozed_until) : null
     const now = new Date()
-    const showWizard =
-      onboarding.completed === true
-        ? false
-        : snoozedUntil && snoozedUntil > now
+
+    const showWizard = completed
+      ? false
+      : (snoozedUntil && snoozedUntil > now)
         ? false
         : true
 
@@ -113,7 +118,7 @@ export default async function handler(req, res) {
         user_role: prefs.user_role || '',
         onboarding: {
           step: onboarding.step || null,
-          completed: onboarding.completed || false,
+          completed, // gecombineerde vlag
           welcome_sent_at: onboarding.welcome_sent_at || null,
           snoozed_until: onboarding.snoozed_until || null,
           completed_at: onboarding.completed_at || null,
@@ -223,7 +228,11 @@ export default async function handler(req, res) {
     const prefs = mergePrefs(profile.preferences, { onboarding: { completed: true, completed_at: nowIso } })
     const { error: upErr } = await supabaseAdmin
       .from('profiles')
-      .update({ preferences: prefs, updated_at: nowIso })
+      .update({
+        preferences: prefs,
+        onboarding_status: 'done', // <-- kolom expliciet op done
+        updated_at: nowIso
+      })
       .eq('id', user.id)
     if (upErr) return res.status(500).json({ error: upErr.message })
 

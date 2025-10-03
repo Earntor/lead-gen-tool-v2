@@ -22,13 +22,21 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   const pollRef = useRef(null)
   const [pollStatus, setPollStatus] = useState('idle')
 
-  // ---------- NIEUW: helpers ----------
-  async function getFreshToken() {
-    // Probeer uit state
+  // ---------- helpers ----------
+  async function sleep(ms) {
+    return new Promise(r => setTimeout(r, ms))
+  }
+
+  async function getFreshTokenWithRetry(maxWaitMs = 1500) {
     if (token) return token
-    // Haal vers token op uit Supabase
-    const { data } = await supabase.auth.getSession()
-    const t = data?.session?.access_token || null
+    const started = Date.now()
+    let t = null
+    while (Date.now() - started < maxWaitMs) {
+      const { data } = await supabase.auth.getSession()
+      t = data?.session?.access_token || null
+      if (t) break
+      await sleep(150)
+    }
     if (!t) {
       alert('Niet ingelogd (geen token). Ververs de pagina en probeer opnieuw.')
       throw new Error('missing token')
@@ -38,7 +46,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   }
 
   async function authedFetch(url, options = {}) {
-    const t = await getFreshToken()
+    const t = await getFreshTokenWithRetry()
     const headers = { ...(options.headers || {}), Authorization: `Bearer ${t}` }
     return fetch(url, { ...options, headers })
   }
@@ -46,17 +54,17 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   async function parseJsonSafe(resp) {
     try { return await resp.json() } catch { return null }
   }
-  // ---------- EINDE helpers ----------
+  // ---------- einde helpers ----------
 
   useEffect(() => {
-    if (open === true) setVisible(true);
-    if (open === false) setVisible(false);
+    if (open === true) setVisible(true)
+    if (open === false) setVisible(false)
   }, [open])
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      // haal session/token één keer op voor de initiële state
+      // init: probeer alvast token
       const { data } = await supabase.auth.getSession()
       const t = data?.session?.access_token
       setToken(t || null)
@@ -103,7 +111,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   const progress = useMemo(() => Math.round((step / totalSteps) * 100), [step, totalSteps])
   if (!visible) return null
 
-  // -------- acties met authedFetch --------
+  // -------- actions via authedFetch --------
   async function saveProfile() {
     if (!fullName.trim()) return alert('Vul je naam in')
     setLoading(true)
@@ -113,10 +121,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'saveProfile', fullName, phone }),
       })
-      if (!resp.ok) {
-        const j = await parseJsonSafe(resp)
-        throw new Error(j?.error || 'Opslaan mislukt')
-      }
+      if (!resp.ok) throw new Error((await parseJsonSafe(resp))?.error || 'Opslaan mislukt')
       setStep((s) => s + 1)
     } catch (e) {
       alert(e.message || String(e))
@@ -134,10 +139,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'saveRole', role }),
       })
-      if (!resp.ok) {
-        const j = await parseJsonSafe(resp)
-        throw new Error(j?.error || 'Opslaan mislukt')
-      }
+      if (!resp.ok) throw new Error((await parseJsonSafe(resp))?.error || 'Opslaan mislukt')
       setStep((s) => s + 1)
     } catch (e) {
       alert(e.message || String(e))
@@ -154,10 +156,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'complete' }),
       })
-      if (!resp.ok) {
-        const j = await parseJsonSafe(resp)
-        throw new Error(j?.error || 'Afronden mislukt')
-      }
+      if (!resp.ok) throw new Error((await parseJsonSafe(resp))?.error || 'Afronden mislukt')
       setVisible(false)
       onComplete && onComplete()
     } catch (e) {
@@ -175,10 +174,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'snooze', minutes }),
       })
-      if (!resp.ok) {
-        const j = await parseJsonSafe(resp)
-        throw new Error(j?.error || 'Snoozen mislukt')
-      }
+      if (!resp.ok) throw new Error((await parseJsonSafe(resp))?.error || 'Snoozen mislukt')
       setVisible(false)
       onClose && onClose()
     } catch (e) {
@@ -229,39 +225,39 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   }
 
   const ActionBar = ({ onPrimary, primaryText, onSecondary, secondaryText, disabled }) => (
-  <div className="mt-6 flex flex-col sm:flex-row gap-2 sm:gap-3">
-    {/* ⬅️ Links: Later afronden */}
-    <button
-      type="button"
-      onClick={() => snooze(60 * 24)}
-      className="text-sm text-gray-500 hover:text-gray-700"
-      title="Later afronden (24 uur)"
-    >
-      Later afronden
-    </button>
-
-    {/* Midden: Vorige (optioneel) */}
-    {onSecondary && (
+    <div className="mt-6 flex flex-col sm:flex-row gap-2 sm:gap-3">
+      {/* ⬅️ Links: Later afronden */}
       <button
         type="button"
-        onClick={onSecondary}
-        className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50"
+        onClick={() => snooze(60 * 24)}
+        className="text-sm text-gray-500 hover:text-gray-700"
+        title="Later afronden (24 uur)"
       >
-        {secondaryText}
+        Later afronden
       </button>
-    )}
 
-    {/* ➡️ Rechts: Primaire actie (Volgende / Naar dashboard) */}
-    <button
-      type="button"
-      onClick={onPrimary}
-      disabled={disabled}
-      className="ml-auto inline-flex justify-center rounded-lg bg-black text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800 disabled:opacity-50"
-    >
-      {primaryText}
-    </button>
-  </div>
-)
+      {/* Midden: Vorige (optioneel) */}
+      {onSecondary && (
+        <button
+          type="button"
+          onClick={onSecondary}
+          className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50"
+        >
+          {secondaryText}
+        </button>
+      )}
+
+      {/* ➡️ Rechts: Primaire actie */}
+      <button
+        type="button"
+        onClick={onPrimary}
+        disabled={disabled}
+        className="ml-auto inline-flex justify-center rounded-lg bg-black text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800 disabled:opacity-50"
+      >
+        {primaryText}
+      </button>
+    </div>
+  )
 
   return (
     <div className="fixed inset-0 z-[1000]">
