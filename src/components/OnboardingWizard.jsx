@@ -80,7 +80,15 @@ useEffect(() => {
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {}
 
   async function saveProfile() {
-    if (!token) return
+if (!token) {
+  const { data } = await supabase.auth.getSession()
+  const t = data?.session?.access_token || null
+  setToken(t)
+  if (!t) {
+    alert('Niet ingelogd (geen token). Ververs de pagina en probeer opnieuw.')
+    return
+  }
+}
     if (!fullName.trim()) return alert('Vul je naam in')
     setLoading(true)
     try {
@@ -99,7 +107,15 @@ useEffect(() => {
   }
 
   async function saveRole() {
-    if (!token) return
+if (!token) {
+  const { data } = await supabase.auth.getSession()
+  const t = data?.session?.access_token || null
+  setToken(t)
+  if (!t) {
+    alert('Niet ingelogd (geen token). Ververs de pagina en probeer opnieuw.')
+    return
+  }
+}
     if (!role) return alert('Kies je rol')
     setLoading(true)
     try {
@@ -118,7 +134,15 @@ useEffect(() => {
   }
 
   async function complete() {
-    if (!token) return
+if (!token) {
+  const { data } = await supabase.auth.getSession()
+  const t = data?.session?.access_token || null
+  setToken(t)
+  if (!t) {
+    alert('Niet ingelogd (geen token). Ververs de pagina en probeer opnieuw.')
+    return
+  }
+}
     setLoading(true)
     try {
       const resp = await fetch('/api/onboarding', {
@@ -137,7 +161,15 @@ useEffect(() => {
   }
 
   async function snooze(minutes = 60 * 24) {
-    if (!token) return
+if (!token) {
+  const { data } = await supabase.auth.getSession()
+  const t = data?.session?.access_token || null
+  setToken(t)
+  if (!t) {
+    alert('Niet ingelogd (geen token). Ververs de pagina en probeer opnieuw.')
+    return
+  }
+}
     setLoading(true)
     try {
       await fetch('/api/onboarding', {
@@ -268,7 +300,7 @@ function stopPolling() {
                     className="w-full rounded-lg border px-3 py-2 text-sm"
                   />
                 </div>
-                <ActionBar onPrimary={saveProfile} primaryText={loading ? 'Opslaan…' : 'Volgende'} disabled={loading} />
++ <ActionBar onPrimary={saveProfile} primaryText={loading ? 'Opslaan…' : 'Volgende'} disabled={loading || !token} />
               </>
             )}
 
@@ -291,7 +323,7 @@ function stopPolling() {
                   primaryText={loading ? 'Opslaan…' : 'Volgende'}
                   onSecondary={() => setStep((s) => Math.max(1, s - 1))}
                   secondaryText="Vorige"
-                  disabled={loading}
+                  disabled={loading || !token}
                 />
               </>
             )}
@@ -348,7 +380,7 @@ function stopPolling() {
                   primaryText={loading ? 'Afronden…' : 'Naar dashboard'}
                   onSecondary={() => setStep((s) => Math.max(1, s - 1))}
                   secondaryText="Vorige"
-                  disabled={loading}
+ disabled={loading || !token}
                 />
               </>
             )}

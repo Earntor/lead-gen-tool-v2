@@ -3134,7 +3134,7 @@ try {
 {wizardOpen && (
   <OnboardingWizard
     open
-    onClose={() => { setWizardOpen(false); markOnboardingDone(); }}
+    onClose={() => { setWizardOpen(false); }}
     onComplete={() => { setWizardOpen(false); markOnboardingDone(); }}
   />
 )}
