@@ -36,13 +36,12 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
     const started = Date.now();
     let t = null;
 
-    // 1) direct proberen
+    // direct proberen
     {
       const { data } = await supabase.auth.getSession();
       t = data?.session?.access_token || null;
     }
-
-    // 2) geforceerd refreshen + retry
+    // geforceerd refreshen + retry
     while (!t && (Date.now() - started) < maxWaitMs) {
       await supabase.auth.refreshSession().catch(() => {});
       const { data } = await supabase.auth.getSession();
@@ -124,7 +123,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
     };
   }, []);
 
-  // 🔎 Globale capture-listener om te zien wat er klikt zolang de wizard open is
+  // (diagnose) toont welk element kliks vangt zolang modal open is
   useEffect(() => {
     if (!visible) return;
     const capture = (e) => {
@@ -221,22 +220,43 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
     }
   }
 
+  // -------- unified activators (werken op mousedown + keyboard) --------
+  const activate = (handler) => (e) => {
+    // fire on mousedown / keyboard; click kan door extensions gesnoept worden
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (loading) return;
+    handler && handler();
+  };
+  const keyActivate = (handler) => (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      activate(handler)(e);
+    }
+  };
+
   // Knoppen: Later afronden links, Volgende rechts
   const ActionBar = ({ onPrimary, primaryText, onSecondary, secondaryText, disabled }) => (
     <div className="mt-6 flex flex-col sm:flex-row gap-2 sm:gap-3">
       {/* ⬅️ Links: Later afronden */}
       <button
         type="button"
-        onMouseDown={() => console.log('[Onboarding] SNOOZE mousedown')}
-        onClick={(e) => {
-          e.stopPropagation();
-          console.log('[Onboarding] SNOOZE CLICK');
+        onMouseDown={activate(() => {
+          console.log('[Onboarding] SNOOZE mousedown → run');
           // sluit direct (optimistic)
           setVisible(false);
           onClose && onClose();
           // server-call fire-and-forget
           snooze(60 * 24).catch(err => console.warn('Snooze faalde:', err));
-        }}
+        })}
+        onKeyDown={keyActivate(() => {
+          setVisible(false);
+          onClose && onClose();
+          snooze(60 * 24).catch(err => console.warn('Snooze faalde:', err));
+        })}
+        // onClick blijft staan maar doet niets (voorkomt dubbele triggers)
+        onClick={(e) => e.stopPropagation()}
         className="text-sm text-gray-500 hover:text-gray-700"
         title="Later afronden (24 uur)"
         style={{ position: 'relative', zIndex: 2147483647, pointerEvents: 'auto' }}
@@ -248,7 +268,12 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
       {onSecondary && (
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); console.log('[Onboarding] PREV CLICK'); onSecondary(); }}
+          onMouseDown={activate(() => {
+            console.log('[Onboarding] PREV mousedown → run');
+            onSecondary();
+          })}
+          onKeyDown={keyActivate(onSecondary)}
+          onClick={(e) => e.stopPropagation()}
           className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50"
         >
           {secondaryText}
@@ -258,15 +283,16 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
       {/* ➡️ Rechts: Primaire actie */}
       <button
         type="button"
-        onMouseDown={() => console.log('[Onboarding] PRIMARY mousedown')}
-        onClick={(e) => {
-          e.stopPropagation();
-          console.log('[Onboarding] PRIMARY CLICK');
+        onMouseDown={activate(() => {
+          console.log('[Onboarding] PRIMARY mousedown → run');
           onPrimary && onPrimary();
-        }}
+        })}
+        onKeyDown={keyActivate(onPrimary)}
+        onClick={(e) => e.stopPropagation()}
         disabled={disabled}
         className="ml-auto inline-flex justify-center rounded-lg bg-black text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800 disabled:opacity-50"
         style={{ position: 'relative', zIndex: 2147483647, pointerEvents: 'auto' }}
+        aria-disabled={disabled ? 'true' : 'false'}
       >
         {primaryText}
       </button>
@@ -277,10 +303,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   const modal = (
     <div className="fixed inset-0 z-[2147483647]" role="dialog" aria-modal="true">
       {/* Backdrop laat kliks door */}
-      <div
-        className="absolute inset-0 z-0 bg-black/40 backdrop-blur-sm pointer-events-none"
-        aria-hidden="true"
-      />
+      <div className="absolute inset-0 z-0 bg-black/40 backdrop-blur-sm pointer-events-none" aria-hidden="true" />
       {/* Container vangt niets */}
       <div className="absolute inset-0 z-10 flex items-center justify-center p-3 sm:p-6 pointer-events-none">
         {/* Alleen de kaart vangt kliks */}
@@ -301,7 +324,9 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
                 <p className="text-sm text-gray-700 mb-4">Vul je gegevens in. We gebruiken dit voor je account en in de welkomstmail.</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Voornaam <span className="text-red-500">*</span></label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Voornaam <span className="text-red-500">*</span>
+                    </label>
                     <input
                       type="text"
                       required
@@ -312,7 +337,9 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Achternaam <span className="text-red-500">*</span></label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Achternaam <span className="text-red-500">*</span>
+                    </label>
                     <input
                       type="text"
                       required
@@ -351,8 +378,12 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
                     <button
                       type="button"
                       key={opt}
-                      onClick={() => setRole(opt)}
-                      className={`rounded-lg border px-3 py-2 text-sm text-left hover:bg-gray-50 ${role === opt ? 'border-blue-600 ring-2 ring-blue-200' : ''}`}
+                      onMouseDown={activate(() => setRole(opt))}
+                      onKeyDown={keyActivate(() => setRole(opt))}
+                      onClick={(e) => e.stopPropagation()}
+                      className={`rounded-lg border px-3 py-2 text-sm text-left hover:bg-gray-50 ${
+                        role === opt ? 'border-blue-600 ring-2 ring-blue-200' : ''
+                      }`}
                     >
                       {opt}
                     </button>
@@ -383,11 +414,23 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
                 </div>
                 <div className="mt-4 flex items-center gap-2">
                   {!polling ? (
-                    <button type="button" onClick={startPolling} className="rounded-lg bg-black text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800">
+                    <button
+                      type="button"
+                      onMouseDown={activate(startPolling)}
+                      onKeyDown={keyActivate(startPolling)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="rounded-lg bg-black text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800"
+                    >
                       Start check
                     </button>
                   ) : (
-                    <button type="button" onClick={stopPolling} className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50">
+                    <button
+                      type="button"
+                      onMouseDown={activate(stopPolling)}
+                      onKeyDown={keyActivate(stopPolling)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50"
+                    >
                       Stop check
                     </button>
                   )}
