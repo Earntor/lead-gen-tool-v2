@@ -30,16 +30,15 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
     if (parts.length === 1) return [parts[0], '']
     return [parts.slice(0, -1).join(' '), parts[parts.length - 1]]
   }
+  const log = (...args) => console.debug('[OnboardingWizard]', ...args)
 
-  async function sleep(ms) {
-    return new Promise(r => setTimeout(r, ms))
-  }
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
   async function getFreshTokenWithRetry(maxWaitMs = 1500) {
     if (token) return token
-    const started = Date.now()
+    const start = Date.now()
     let t = null
-    while (Date.now() - started < maxWaitMs) {
+    while (Date.now() - start < maxWaitMs) {
       const { data } = await supabase.auth.getSession()
       t = data?.session?.access_token || null
       if (t) break
@@ -65,8 +64,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   // ---------- einde helpers ----------
 
   useEffect(() => {
-    if (open === true) setVisible(true)
-    if (open === false) setVisible(false)
+    setVisible(!!open)
   }, [open])
 
   useEffect(() => {
@@ -91,8 +89,9 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
       const prefs = json.preferences || {}
       const onboarding = prefs.onboarding || {}
 
-      // Naam opknippen naar voornaam/achternaam (fallback als user al full_name heeft)
-      const [fn, ln] = splitFullName(json?.profile?.full_name || '')
+      // Prefill naam
+      const full = json?.profile?.full_name || ''
+      const [fn, ln] = full ? splitFullName(full) : [json?.profile?.first_name || '', json?.profile?.last_name || '']
       setFirstName(fn)
       setLastName(ln)
       setPhone(json?.profile?.phone || '')
@@ -125,6 +124,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
 
   // -------- actions via authedFetch --------
   async function saveProfile() {
+    log('click saveProfile')
     if (!firstName.trim()) return alert('Vul je voornaam in')
     if (!lastName.trim())  return alert('Vul je achternaam in')
     setLoading(true)
@@ -144,6 +144,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   }
 
   async function saveRole() {
+    log('click saveRole', role)
     if (!role) return alert('Kies je rol')
     setLoading(true)
     try {
@@ -162,6 +163,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   }
 
   async function complete() {
+    log('click complete')
     setLoading(true)
     try {
       const resp = await authedFetch('/api/onboarding', {
@@ -180,6 +182,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   }
 
   async function snooze(minutes = 60 * 24) {
+    log('click snooze', minutes)
     setLoading(true)
     try {
       const resp = await authedFetch('/api/onboarding', {
@@ -237,22 +240,25 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
     setPollStatus('idle')
   }
 
-  // Knoppen: Later afronden links, Volgende rechts
+  // ---- UI ----
   const ActionBar = ({ onPrimary, primaryText, onSecondary, secondaryText, disabled }) => (
     <div className="mt-6 flex flex-col sm:flex-row gap-2 sm:gap-3">
-      {/* ⬅️ Links: Later afronden */}
+      {/* ⬅️ Links: Primaire actie (Volgende / Naar dashboard) */}
       <button
+        data-test="btn-primary"
         type="button"
-        onClick={() => snooze(60 * 24)}
-        className="text-sm text-gray-500 hover:text-gray-700"
-        title="Later afronden (24 uur)"
+        onClick={onPrimary}
+        disabled={disabled}
+        aria-disabled={disabled}
+        className="inline-flex justify-center rounded-lg bg-black text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800 disabled:opacity-50"
       >
-        Later afronden
+        {primaryText}
       </button>
 
       {/* Midden: Vorige (optioneel) */}
       {onSecondary && (
         <button
+          data-test="btn-prev"
           type="button"
           onClick={onSecondary}
           className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50"
@@ -261,22 +267,25 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
         </button>
       )}
 
-      {/* ➡️ Rechts: Primaire actie */}
+      {/* ➡️ Rechts: Later afronden */}
       <button
+        data-test="btn-snooze"
         type="button"
-        onClick={onPrimary}
-        disabled={disabled}
-        className="ml-auto inline-flex justify-center rounded-lg bg-black text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800 disabled:opacity-50"
+        onClick={() => snooze(60 * 24)}
+        className="ml-auto text-sm text-gray-500 hover:text-gray-700"
+        title="Later afronden (24 uur)"
       >
-        {primaryText}
+        Later afronden
       </button>
     </div>
   )
 
   return (
     <div className="fixed inset-0 z-[1000]">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-      <div className="absolute inset-0 flex items-center justify-center p-3 sm:p-6">
+      {/* Overlay ONDER (z-10) */}
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm z-10 pointer-events-auto" />
+      {/* Content BOVEN (z-20) */}
+      <div className="absolute inset-0 z-20 pointer-events-auto flex items-center justify-center p-3 sm:p-6">
         <div className="w-full max-w-xl rounded-2xl bg-white shadow-xl border">
           <div className="p-4 sm:p-5 border-b">
             <div className="flex items-center justify-between">
@@ -291,7 +300,9 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
           <div className="p-4 sm:p-6">
             {step === 1 && (
               <>
-                <p className="text-sm text-gray-700 mb-4">Vul je gegevens in. We gebruiken dit voor je account en in de welkomstmail.</p>
+                <p className="text-sm text-gray-700 mb-4">
+                  Vul je gegevens in. We gebruiken dit voor je account en in de welkomstmail.
+                </p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
