@@ -672,20 +672,37 @@ setUniqueCategories(Array.from(categoriesSet).sort());
   };
 }, [router]);
 
-// Wizard tonen als hij nog niet gezien is (of geforceerd via ?onboarding=1)
+// Wizard tonen op basis van serverstaat (completed + snooze) of geforceerd via ?onboarding=1
 useEffect(() => {
-  if (!user || !profile || loading) return;
-
-  const prefs = profile?.preferences || {};
-  const localKey = user?.id ? `onboardingDone:${user.id}` : null;
-  const localSeen =
-    typeof window !== 'undefined' && localKey && localStorage.getItem(localKey) === '1';
+  if (!user || loading) return;
 
   const forced = router.query.onboarding === '1';
-  const shouldOpen = forced || (!prefs.onboardingDone && !localSeen);
+  (async () => {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const t = sessionData?.session?.access_token;
+      if (!t) { setWizardOpen(false); return; }
 
-  if (shouldOpen) setWizardOpen(true);
-}, [user, profile, loading, router.query.onboarding]);
+      const resp = await fetch('/api/onboarding?action=state', {
+        headers: { Authorization: `Bearer ${t}` },
+      });
+      const json = await resp.json().catch(() => null);
+
+      const serverWantsWizard = !!json?.showWizard;
+      const openIt = forced || serverWantsWizard;
+      setWizardOpen(openIt);
+    } catch {
+      // Fallback: alleen tonen als niet lokaal afgevinkt
+      const prefs = profile?.preferences || {};
+      const localKey = user?.id ? `onboardingDone:${user.id}` : null;
+      const localSeen =
+        typeof window !== 'undefined' && localKey && localStorage.getItem(localKey) === '1';
+      const openIt = forced || (!prefs.onboardingDone && !localSeen);
+      setWizardOpen(openIt);
+    }
+  })();
+}, [user, loading, router.query.onboarding, profile?.preferences]);
+
 
 // Body-scroll blokkeren zolang wizard open is
 useEffect(() => {
@@ -1488,7 +1505,16 @@ const resetFilters = () => {
 // Markeer onboarding als voltooid in Supabase + fallback in localStorage
 async function markOnboardingDone() {
   try {
-    const nextPrefs = { ...(profile?.preferences || {}), onboardingDone: true };
+    const prev = profile?.preferences || {};
+    const nextPrefs = {
+      ...prev,
+      onboardingDone: true, // jouw oude key laten we bestaan
+      onboarding: {
+        ...(prev.onboarding || {}),
+        completed: true,
+        completed_at: new Date().toISOString(),
+      },
+    };
 
     // Optimistic UI
     setProfile((p) => (p ? { ...p, preferences: nextPrefs } : p));
@@ -1498,7 +1524,7 @@ async function markOnboardingDone() {
       await supabase.from('profiles').update({ preferences: nextPrefs }).eq('id', user.id);
     }
 
-    // Fallback/extra check client-side
+    // Fallback client-side
     if (typeof window !== 'undefined' && user?.id) {
       localStorage.setItem(`onboardingDone:${user.id}`, '1');
     }
@@ -1506,6 +1532,7 @@ async function markOnboardingDone() {
     console.error('onboardingDone update mislukt:', e);
   }
 }
+
 
 
   if (loading) {
