@@ -8,6 +8,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
+const roleOptions = ['Sales', 'Marketing', 'Management', 'Technisch', 'Overig'] // zelfde set als API
+
 // ⬇️ mini helper om secties conditioneel te tonen
 const Section = ({ when, children }) => (when ? <>{children}</> : null)
 
@@ -54,8 +56,10 @@ export default function Account() {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('account')
+
   const [email, setEmail] = useState('')
-  const [fullName, setFullName] = useState('')
+  const [firstName, setFirstName] = useState('')
+  const [lastName,  setLastName] = useState('')
   const [phone, setPhone] = useState('')
   const [preferences, setPreferences] = useState({})
   const [generalMessage, setGeneralMessage] = useState(null)
@@ -104,12 +108,22 @@ export default function Account() {
 
       const { data: profile } = await supabase
         .from('profiles')
-        .select('full_name, phone, preferences, current_org_id')
+        .select('first_name, last_name, full_name, phone, preferences, current_org_id')
         .eq('id', user.id)
         .single()
 
       if (profile) {
-        setFullName(profile.full_name || '')
+        setFirstName(profile.first_name || '')
+        setLastName(profile.last_name || '')
+        // fallback: als first/last leeg → derive uit full_name
+        if ((!profile.first_name || !profile.last_name) && (profile.full_name || '').trim()) {
+          const parts = profile.full_name.trim().split(/\s+/)
+          const ln = parts.pop() || ''
+          const fn = parts.join(' ')
+          if (!profile.first_name) setFirstName(fn)
+          if (!profile.last_name) setLastName(ln)
+        }
+
         setPhone(profile.phone || '')
         setPreferences(profile.preferences || {})
         setCurrentOrgId(profile.current_org_id || null)
@@ -168,10 +182,30 @@ export default function Account() {
     return () => window.removeEventListener('hashchange', onHashChange);
   }, [user, currentOrgId]);
 
+  // 🔔 Realtime: update velden live als onboarding ze opslaat
+  useEffect(() => {
+    if (!user?.id) return;
+    const channel = supabase
+      .channel('profile-self')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${user.id}` },
+        (payload) => {
+          const p = payload.new || {}
+          if (typeof p.first_name !== 'undefined') setFirstName(p.first_name || '')
+          if (typeof p.last_name  !== 'undefined') setLastName(p.last_name || '')
+          if (typeof p.phone      !== 'undefined') setPhone(p.phone || '')
+          if (typeof p.preferences!== 'undefined') setPreferences(p.preferences || {})
+        }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user?.id])
+
   useEffect(() => {
     if (!user?.id || !currentOrgId) return;
     const channel = supabase
-      .channel('profile-changes')
+      .channel('profile-org-tracking')
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'organizations', filter: `id=eq.${currentOrgId}` },
@@ -195,16 +229,22 @@ export default function Account() {
         const { error } = await supabase.auth.updateUser({ email })
         if (error) throw error
       }
+
+      const full_name = `${(firstName || '').trim()} ${(lastName || '').trim()}`.trim()
+
       const { error } = await supabase
         .from('profiles')
         .upsert({
           id: user.id,
-          full_name: fullName,
-          phone,
+          first_name: firstName || null,
+          last_name:  lastName  || null,
+          full_name:  full_name || null,
+          phone: phone || null,
           preferences,
           updated_at: new Date().toISOString(),
         })
       if (error) throw error
+
       setGeneralMessage({ type: 'success', text: 'Profiel succesvol bijgewerkt.' })
     } catch (error) {
       setGeneralMessage({ type: 'error', text: error.message })
@@ -346,15 +386,28 @@ export default function Account() {
               />
             </div>
 
-            <div>
-              <label className="block text-sm mb-1">Volledige naam</label>
-              <Input
-                type="text"
-                autoComplete="name"
-                aria-label="Volledige naam"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-              />
+            {/* Voornaam + Achternaam naast elkaar op desktop, onder elkaar mobiel */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm mb-1">Voornaam</label>
+                <Input
+                  type="text"
+                  autoComplete="given-name"
+                  aria-label="Voornaam"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Achternaam</label>
+                <Input
+                  type="text"
+                  autoComplete="family-name"
+                  aria-label="Achternaam"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                />
+              </div>
             </div>
 
             <div>
@@ -367,6 +420,22 @@ export default function Account() {
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
               />
+            </div>
+
+            <div>
+              <label className="block text-sm mb-1">Functietitel / Rol</label>
+              <select
+                aria-label="Functietitel / Rol"
+                className="w-full border rounded px-3 py-2 text-sm"
+                value={preferences?.user_role || ''}
+                onChange={(e) => handlePreferenceChange('user_role', e.target.value)}
+              >
+                <option value="">Kies je rol…</option>
+                {roleOptions.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">Wordt gebruikt voor tips en rapporten in je dashboard.</p>
             </div>
 
             <fieldset>
@@ -654,15 +723,14 @@ export default function Account() {
             setTrackingMessage(null);
           }}
         >
-       <TabsList
-  className={[
-    "w-full bg-transparent p-0 border-b rounded-none",
-    // ↓ lager z-index + blur alleen waar ondersteund
-    "sticky top-0 z-[5] bg-white/90 supports-[backdrop-filter]:backdrop-blur supports-[backdrop-filter]:bg-white/70",
-    "overflow-x-auto whitespace-nowrap justify-start px-1",
-    "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-  ].join(" ")}
->
+          <TabsList
+            className={[
+              "w-full bg-transparent p-0 border-b rounded-none",
+              "sticky top-0 z-[5] bg-white/90 supports-[backdrop-filter]:backdrop-blur supports-[backdrop-filter]:bg-white/70",
+              "overflow-x-auto whitespace-nowrap justify-start px-1",
+              "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            ].join(" ")}
+          >
             <div className="flex gap-2 py-2">
               <TabsTrigger value="account"      className="px-3 py-2 text-sm rounded-full data-[state=active]:bg-black data-[state=active]:text-white">Account</TabsTrigger>
               <TabsTrigger value="instellingen" className="px-3 py-2 text-sm rounded-full data-[state=active]:bg-black data-[state=active]:text-white">Instellingen</TabsTrigger>
@@ -686,13 +754,13 @@ export default function Account() {
 
         {/* Uitloggen alleen mobiel */}
         <div className="mt-6 hidden md:block">
-  <button
-    onClick={handleLogout}
-    className="px-4 py-2 rounded border hover:bg-gray-50 text-red-600"
-  >
-    Uitloggen
-  </button>
-</div>
+          <button
+            onClick={handleLogout}
+            className="px-4 py-2 rounded border hover:bg-gray-50 text-red-600"
+          >
+            Uitloggen
+          </button>
+        </div>
       </div>
 
       {/* DESKTOP: sidebar links, content rechts */}

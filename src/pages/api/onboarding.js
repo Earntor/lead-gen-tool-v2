@@ -57,7 +57,7 @@ export default async function handler(req, res) {
   // Profiel ophalen of (veilig) bootstrap
   const { data: profile0 } = await supabaseAdmin
     .from('profiles')
-    .select('id, email, full_name, phone, preferences, current_org_id, onboarding_status')
+    .select('id, email, first_name, last_name, full_name, phone, preferences, current_org_id, onboarding_status')
     .eq('id', user.id)
     .maybeSingle()
 
@@ -66,7 +66,7 @@ export default async function handler(req, res) {
     const { data: created, error: cErr } = await supabaseAdmin
       .from('profiles')
       .insert({ id: user.id, email: user.email ?? null, preferences: {} })
-      .select('id, email, full_name, phone, preferences, current_org_id, onboarding_status')
+      .select('id, email, first_name, last_name, full_name, phone, preferences, current_org_id, onboarding_status')
       .single()
     if (cErr) return res.status(500).json({ error: cErr.message })
     profile = created
@@ -111,8 +111,10 @@ export default async function handler(req, res) {
       orgId,
       profile: {
         email: profile.email,
-        full_name: profile.full_name || '',
-        phone: profile.phone || '',
+        first_name: profile.first_name || '',
+        last_name:  profile.last_name  || '',
+        full_name:  profile.full_name  || '',
+        phone:      profile.phone      || '',
       },
       preferences: {
         user_role: prefs.user_role || '',
@@ -139,7 +141,7 @@ export default async function handler(req, res) {
   const action = String(body.action || '')
   const nowIso = new Date().toISOString()
 
-  // ---- saveProfile (nu met firstName/lastName)
+  // ---- saveProfile (met firstName/lastName kolommen)
   if (action === 'saveProfile') {
     const firstName = String(body.firstName || '').trim()
     const lastName = String(body.lastName || '').trim()
@@ -158,7 +160,9 @@ export default async function handler(req, res) {
     const { error: upErr } = await supabaseAdmin
       .from('profiles')
       .update({
-        full_name: fullName,
+        first_name: firstName,
+        last_name:  lastName,
+        full_name:  fullName,
         phone: phone || null,
         preferences: newPrefs,
         updated_at: nowIso
