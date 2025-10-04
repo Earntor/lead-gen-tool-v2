@@ -10,7 +10,8 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   const [orgId, setOrgId] = useState(null)
   const [token, setToken] = useState(null)
 
-  const [fullName, setFullName] = useState('')
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
   const [phone, setPhone] = useState('')
   const [role, setRole] = useState('')
 
@@ -23,6 +24,13 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   const [pollStatus, setPollStatus] = useState('idle')
 
   // ---------- helpers ----------
+  function splitFullName(name) {
+    const parts = (name || '').trim().split(/\s+/).filter(Boolean)
+    if (parts.length === 0) return ['', '']
+    if (parts.length === 1) return [parts[0], '']
+    return [parts.slice(0, -1).join(' '), parts[parts.length - 1]]
+  }
+
   async function sleep(ms) {
     return new Promise(r => setTimeout(r, ms))
   }
@@ -82,7 +90,11 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
 
       const prefs = json.preferences || {}
       const onboarding = prefs.onboarding || {}
-      setFullName(json?.profile?.full_name || '')
+
+      // Naam opknippen naar voornaam/achternaam (fallback als user al full_name heeft)
+      const [fn, ln] = splitFullName(json?.profile?.full_name || '')
+      setFirstName(fn)
+      setLastName(ln)
       setPhone(json?.profile?.phone || '')
       setRole(prefs.user_role || '')
 
@@ -113,13 +125,14 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
 
   // -------- actions via authedFetch --------
   async function saveProfile() {
-    if (!fullName.trim()) return alert('Vul je naam in')
+    if (!firstName.trim()) return alert('Vul je voornaam in')
+    if (!lastName.trim())  return alert('Vul je achternaam in')
     setLoading(true)
     try {
       const resp = await authedFetch('/api/onboarding', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'saveProfile', fullName, phone }),
+        body: JSON.stringify({ action: 'saveProfile', firstName, lastName, phone }),
       })
       if (!resp.ok) throw new Error((await parseJsonSafe(resp))?.error || 'Opslaan mislukt')
       setStep((s) => s + 1)
@@ -224,6 +237,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
     setPollStatus('idle')
   }
 
+  // Knoppen: Later afronden links, Volgende rechts
   const ActionBar = ({ onPrimary, primaryText, onSecondary, secondaryText, disabled }) => (
     <div className="mt-6 flex flex-col sm:flex-row gap-2 sm:gap-3">
       {/* ⬅️ Links: Later afronden */}
@@ -278,14 +292,32 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
             {step === 1 && (
               <>
                 <p className="text-sm text-gray-700 mb-4">Vul je gegevens in. We gebruiken dit voor je account en in de welkomstmail.</p>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Naam</label>
-                <input
-                  type="text"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  placeholder="Voornaam Achternaam"
-                  className="w-full rounded-lg border px-3 py-2 text-sm"
-                />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Voornaam <span className="text-red-500">*</span></label>
+                    <input
+                      type="text"
+                      required
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                      placeholder="Voornaam"
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Achternaam <span className="text-red-500">*</span></label>
+                    <input
+                      type="text"
+                      required
+                      value={lastName}
+                      onChange={(e) => setLastName(e.target.value)}
+                      placeholder="Achternaam"
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                    />
+                  </div>
+                </div>
+
                 <div className="mt-3">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Telefoon (optioneel)</label>
                   <input
@@ -296,6 +328,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
                     className="w-full rounded-lg border px-3 py-2 text-sm"
                   />
                 </div>
+
                 <ActionBar
                   onPrimary={saveProfile}
                   primaryText={loading ? 'Opslaan…' : 'Volgende'}

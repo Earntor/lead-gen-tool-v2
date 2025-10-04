@@ -139,20 +139,36 @@ export default async function handler(req, res) {
   const action = String(body.action || '')
   const nowIso = new Date().toISOString()
 
-  // ---- saveProfile
+  // ---- saveProfile (nu met firstName/lastName)
   if (action === 'saveProfile') {
-    const fullName = String(body.fullName || '').trim()
+    const firstName = String(body.firstName || '').trim()
+    const lastName = String(body.lastName || '').trim()
     const phone = String(body.phone || '').trim()
-    if (!fullName) return res.status(400).json({ error: 'fullName is required' })
 
-    const newPrefs = mergePrefs(profile.preferences, { onboarding: { step: 'profile_done' } })
+    if (!firstName) return res.status(400).json({ error: 'firstName is required' })
+    if (!lastName)  return res.status(400).json({ error: 'lastName is required' })
+
+    const fullName = `${firstName} ${lastName}`.trim()
+
+    const newPrefs = mergePrefs(profile.preferences, {
+      onboarding: { step: 'profile_done' },
+      profile_name: { first_name: firstName, last_name: lastName },
+    })
+
     const { error: upErr } = await supabaseAdmin
       .from('profiles')
-      .update({ full_name: fullName, phone: phone || null, preferences: newPrefs, updated_at: nowIso })
+      .update({
+        full_name: fullName,
+        phone: phone || null,
+        preferences: newPrefs,
+        updated_at: nowIso
+      })
       .eq('id', user.id)
     if (upErr) return res.status(500).json({ error: upErr.message })
 
-    await logEventSafe(user.id, orgId, 'profile_saved', { full_name: fullName, phone: phone || null })
+    await logEventSafe(user.id, orgId, 'profile_saved', {
+      first_name: firstName, last_name: lastName, phone: phone || null
+    })
     return res.status(200).json({ ok: true })
   }
 
@@ -230,7 +246,7 @@ export default async function handler(req, res) {
       .from('profiles')
       .update({
         preferences: prefs,
-        onboarding_status: 'done', // <-- kolom expliciet op done
+        onboarding_status: 'done',
         updated_at: nowIso
       })
       .eq('id', user.id)
