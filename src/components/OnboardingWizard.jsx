@@ -248,64 +248,71 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
     setPollStatus('idle')
   }
 
-  // Knoppen: Later afronden links, Volgende rechts
-  const ActionBar = ({ onPrimary, primaryText, onSecondary, secondaryText, disabled }) => (
-    <div className="mt-6 flex flex-col sm:flex-row gap-2 sm:gap-3">
-      {/* ⬅️ Links: Later afronden */}
-     <button
-  type="button"
-  onClick={async () => {
-    // sluit direct
-    setVisible(false);
-    onClose && onClose();
-    try {
-      await snooze(60 * 24);
-    } catch (e) {
-      // optioneel: meld fout maar laat modal dicht
-      console.warn('Snooze faalde:', e?.message || e);
-    }
-  }}
-  className="text-sm text-gray-500 hover:text-gray-700"
-  title="Later afronden (24 uur)"
->
-  Later afronden
-</button>
+ // Knoppen: Later afronden links, Volgende rechts
+const ActionBar = ({ onPrimary, primaryText, onSecondary, secondaryText, disabled }) => (
+  <div className="mt-6 flex flex-col sm:flex-row gap-2 sm:gap-3">
+    {/* ⬅️ Links: Later afronden */}
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        console.log('[Onboarding] SNOOZE CLICK');
+        // sluit direct (optimistic)
+        setVisible(false);
+        onClose && onClose();
+        // server-call fire-and-forget
+        snooze(60 * 24).catch(err => console.warn('Snooze faalde:', err));
+      }}
+      className="text-sm text-gray-500 hover:text-gray-700"
+      title="Later afronden (24 uur)"
+    >
+      Later afronden
+    </button>
 
-
-      {/* Midden: Vorige (optioneel) */}
-      {onSecondary && (
-        <button
-          type="button"
-          onClick={onSecondary}
-          className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50"
-        >
-          {secondaryText}
-        </button>
-      )}
-
-      {/* ➡️ Rechts: Primaire actie */}
+    {/* Midden: Vorige (optioneel) */}
+    {onSecondary && (
       <button
         type="button"
-        onClick={onPrimary}
-        disabled={disabled}
-        className="ml-auto inline-flex justify-center rounded-lg bg-black text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800 disabled:opacity-50"
+        onClick={(e) => {
+          e.stopPropagation();
+          console.log('[Onboarding] PREV CLICK');
+          onSecondary();
+        }}
+        className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50"
       >
-        {primaryText}
+        {secondaryText}
       </button>
-    </div>
-  )
+    )}
+
+    {/* ➡️ Rechts: Primaire actie */}
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        console.log('[Onboarding] PRIMARY CLICK');
+        onPrimary && onPrimary();
+      }}
+      disabled={disabled}
+      className="ml-auto inline-flex justify-center rounded-lg bg-black text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800 disabled:opacity-50"
+    >
+      {primaryText}
+    </button>
+  </div>
+);
+
 
   const modal = (
-  <div className="fixed inset-0 z-[2147483647]"> 
-    {/* Overlay: onder de modal, blokkeert achtergrondevents en zorgt voor blur */}
+  <div className="fixed inset-0 z-[2147483647]">
+    {/* Backdrop: ziet er hetzelfde uit, maar laat muisklikken DOOR */}
     <div
-      className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+      className="absolute inset-0 z-0 bg-black/40 backdrop-blur-sm pointer-events-none"
       aria-hidden="true"
     />
 
-    {/* Modal layer */}
-    <div className="absolute inset-0 flex items-center justify-center p-3 sm:p-6">
-      <div className="relative z-10 w-full max-w-xl rounded-2xl bg-white shadow-xl border">
+    {/* Laag met de modal: zelf ook geen events… */}
+    <div className="absolute inset-0 z-10 flex items-center justify-center p-3 sm:p-6 pointer-events-none">
+      {/* …maar de kaart WEL */}
+      <div className="relative z-20 w-full max-w-xl rounded-2xl bg-white shadow-xl border pointer-events-auto">
         <div className="p-4 sm:p-5 border-b">
           <div className="flex items-center justify-between">
             <h2 className="text-base sm:text-lg font-semibold text-gray-800">Snel aan de slag</h2>
@@ -422,6 +429,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
     </div>
   </div>
 );
+
 
   // Render bovenaan <body> → altijd klikbaar, ook met drawers/overlays eronder
   return typeof window !== 'undefined' ? createPortal(modal, document.body) : modal;
