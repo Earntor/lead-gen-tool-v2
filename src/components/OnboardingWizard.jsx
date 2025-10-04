@@ -275,10 +275,10 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   )
 
   const modal = (
-  <div className="fixed inset-0">
-      <div className="absolute inset-0 z-[1000] bg-black/40 backdrop-blur-sm pointer-events-auto" />
-<div className="absolute inset-0 z-[1001] pointer-events-auto flex items-center justify-center p-3 sm:p-6">
-        <div className="w-full max-w-xl rounded-2xl bg-white shadow-xl border">
+  <div className="fixed inset-0 isolate">
+      <div className="absolute inset-0 z-[2147483646] bg-black/40 backdrop-blur-sm pointer-events-auto" />
+<div className="absolute inset-0 z-[2147483647] pointer-events-auto flex items-center justify-center p-3 sm:p-6">
+<div className="w-full max-w-xl rounded-2xl bg-white shadow-xl border pointer-events-auto">
           <div className="p-4 sm:p-5 border-b">
             <div className="flex items-center justify-between">
               <h2 className="text-base sm:text-lg font-semibold text-gray-800">Snel aan de slag</h2>
