@@ -36,12 +36,9 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
     const started = Date.now();
     let t = null;
 
-    // direct proberen
-    {
-      const { data } = await supabase.auth.getSession();
-      t = data?.session?.access_token || null;
-    }
-    // geforceerd refreshen + retry
+    const { data } = await supabase.auth.getSession();
+    t = data?.session?.access_token || null;
+
     while (!t && (Date.now() - started) < maxWaitMs) {
       await supabase.auth.refreshSession().catch(() => {});
       const { data } = await supabase.auth.getSession();
@@ -123,7 +120,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
     };
   }, []);
 
-  // (diagnose) toont welk element kliks vangt zolang modal open is
+  // (diagnose) klik-capture zolang modal open is
   useEffect(() => {
     if (!visible) return;
     const capture = (e) => {
@@ -201,6 +198,50 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
     }
   }
 
+  // --------- 🔧 HIER TERUGGEZET: startPolling / stopPolling ----------
+  function startPolling() {
+    console.log('[Onboarding] startPolling()');
+    if (!orgId) return alert('Org ontbreekt, ververs de pagina en probeer opnieuw.');
+    if (pollRef.current) return;
+    setPolling(true);
+    setPollStatus('checking');
+
+    const tick = async () => {
+      try {
+        const resp = await authedFetch(`/api/check-tracking?projectId=${encodeURIComponent(orgId)}`);
+        if (!pollRef.current) return;
+        const json = await parseJsonSafe(resp);
+        if (!pollRef.current) return;
+
+        if (json?.status === 'ok') {
+          setPollStatus('ok');
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+          setPolling(false);
+        } else {
+          setPollStatus('not_found');
+        }
+      } catch {
+        if (!pollRef.current) return;
+        setPollStatus('error');
+      }
+    };
+
+    tick();
+    pollRef.current = setInterval(tick, 5000);
+  }
+
+  function stopPolling() {
+    console.log('[Onboarding] stopPolling()');
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    setPolling(false);
+    setPollStatus('idle');
+  }
+  // -------------------------------------------------------------------
+
   async function snooze(minutes = 60 * 24) {
     console.log('[Onboarding] snooze() start');
     setLoading(true);
@@ -220,9 +261,8 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
     }
   }
 
-  // -------- unified activators (werken op mousedown + keyboard) --------
+  // -------- unified activators (mousedown + keyboard) --------
   const activate = (handler) => (e) => {
-    // fire on mousedown / keyboard; click kan door extensions gesnoept worden
     if (e) {
       e.preventDefault();
       e.stopPropagation();
@@ -244,10 +284,8 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
         type="button"
         onMouseDown={activate(() => {
           console.log('[Onboarding] SNOOZE mousedown → run');
-          // sluit direct (optimistic)
           setVisible(false);
           onClose && onClose();
-          // server-call fire-and-forget
           snooze(60 * 24).catch(err => console.warn('Snooze faalde:', err));
         })}
         onKeyDown={keyActivate(() => {
@@ -255,7 +293,6 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
           onClose && onClose();
           snooze(60 * 24).catch(err => console.warn('Snooze faalde:', err));
         })}
-        // onClick blijft staan maar doet niets (voorkomt dubbele triggers)
         onClick={(e) => e.stopPropagation()}
         className="text-sm text-gray-500 hover:text-gray-700"
         title="Later afronden (24 uur)"
@@ -474,6 +511,5 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
     </div>
   );
 
-  // Render bovenaan <body> → altijd klikbaar, ook met drawers/overlays eronder
   return typeof window !== 'undefined' ? createPortal(modal, document.body) : modal;
 }
