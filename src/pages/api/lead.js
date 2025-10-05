@@ -2581,7 +2581,15 @@ try {
       site_id: site_id || null,
 page_url: page_url || null,
     });
-  } else {
+  } 
+  
+  // --- SIGNAL FLOOR: bewaar de gecombineerde signalen-score als ondergrens ---
+let signals_base_confidence = null;
+if (typeof likely?.confidence === 'number' && !Number.isNaN(likely.confidence)) {
+  signals_base_confidence = likely.confidence;
+}
+  
+  else {
     console.log('❌ Geen domein gekozen op basis van gecombineerde signalen');
 
     await supabaseAdmin.from('domain_signal_log').insert({
@@ -2707,6 +2715,35 @@ return res.status(200).json({ ignored: true, reason: 'no domain found' });
 
       try {
 domainEnrichment = await enrichFromDomain(company_domain);
+
+// --- MAPS GUARDRAIL: website eTLD+1 moet exact matchen met gekozen domein ---
+try {
+  // Gebruik de juiste key uit jouw enrichFromDomain-resultaat
+  const mapsUrl = domainEnrichment?.website_url || domainEnrichment?.website || null;
+
+  if (mapsUrl && company_domain) {
+    const mapsHost = new URL(mapsUrl).hostname.toLowerCase();
+    const mapsRoot = psl.parse(mapsHost)?.domain || null;
+    const chosenRoot = psl.parse(company_domain)?.domain || null;
+
+    if (!mapsRoot || !chosenRoot || mapsRoot !== chosenRoot) {
+      console.warn(`⚠️ Maps-website (${mapsRoot || 'n/a'}) ≠ chosen domain (${chosenRoot || 'n/a'}) → bedrijf/adres NIET overschrijven`);
+      // Blokkeer het overschrijven van naam/adres (domein en andere signalen blijven intact)
+      if (domainEnrichment) {
+        domainEnrichment.name = null;
+        domainEnrichment.domain_address = null;
+        domainEnrichment.domain_postal_code = null;
+        domainEnrichment.domain_city = null;
+        domainEnrichment.domain_country = null;
+      }
+      // Informatieve reden; PATCH 1 houdt confidence toch ≥ signalen-score
+      confidence_reason = (confidence_reason ? confidence_reason + ' + ' : '') + `Maps mismatch ${mapsRoot || '?'} ≠ ${chosenRoot || '?'}`;
+    }
+  }
+} catch (e) {
+  console.warn('⚠️ Maps guardrail: website parse error:', e.message);
+}
+
         if (domainEnrichment?.domain) {
   const cleaned = cleanAndValidateDomain(
     domainEnrichment.domain,
@@ -2839,12 +2876,23 @@ domainEnrichment = await enrichFromDomain(company_domain);
     }
 
 
-// ✅ Final confidence = max van alle kandidaten (huidig, cached, reuse was al verdisconteerd)
-const confCandidates = [];
-if (typeof confidence === 'number' && !Number.isNaN(confidence)) confCandidates.push(confidence);
-if (typeof cached?.confidence === 'number' && !Number.isNaN(cached.confidence)) confCandidates.push(cached.confidence);
+// ✅ Final confidence: signal floor (gecombineerde signalen) is leidend
+const confParts = [];
+if (typeof confidence === 'number' && !Number.isNaN(confidence)) confParts.push(confidence);
+if (typeof cached?.confidence === 'number' && !Number.isNaN(cached.confidence)) confParts.push(cached.confidence);
+if (typeof signals_base_confidence === 'number') confParts.push(signals_base_confidence);
 
-const finalConfidence = confCandidates.length ? Math.max(...confCandidates) : null;
+let finalConfidence = confParts.length ? Math.max(...confParts) : null;
+
+if (typeof finalConfidence === 'number') {
+  if (typeof signals_base_confidence === 'number') {
+    finalConfidence = Math.max(finalConfidence, signals_base_confidence);
+  }
+  confidence = clamp(Number(finalConfidence.toFixed(3)), 0, 0.99);
+} else {
+  confidence = null;
+}
+
 
 
 // ⛔️ Confidence-drempel check
@@ -3084,6 +3132,65 @@ try {
   // ⛔️ Belangrijk: geen insert in 'leads' vanuit /api/lead!
   // Deze endpoint verzorgt alleen enrichment + cache.
   // track.js schrijft de pageview en triggert KvK.
+
+// ✅ Retro-update: vul recente leads (IP + site_id, laatste 30 min) met enrichment
+try {
+  const THIRTY_MIN_AGO = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+
+  const { data: leadsToUpdate, error: leadFetchErr } = await supabaseAdmin
+    .from('leads')
+    .select('id')
+    .eq('ip_address', ip_address)
+    .eq('site_id', site_id)
+    .gte('created_at', THIRTY_MIN_AGO);
+
+  if (leadFetchErr) {
+    console.warn('⚠️ Retro-update: lead fetch faalde:', leadFetchErr.message);
+  } else if (leadsToUpdate?.length) {
+    const leadUpdatePayload = pruneEmpty({
+      company_domain: company_domain || undefined,
+      company_name: company_name || undefined,
+      confidence: (typeof confidence === 'number') ? confidence : undefined,
+      confidence_reason: confidence_reason || undefined,
+
+      // Domain-locatie is leidend (géén IP-geo overschrijven)
+      domain_address: domain_address || undefined,
+      domain_postal_code: domain_postal_code || undefined,
+      domain_city: domain_city || undefined,
+      domain_country: domain_country || undefined,
+      domain_lat: (typeof domain_lat === 'number') ? domain_lat : undefined,
+      domain_lon: (typeof domain_lon === 'number') ? domain_lon : undefined,
+
+      phone: phone || undefined,
+      email: email || undefined,
+      linkedin_url: linkedin_url || undefined,
+      facebook_url: facebook_url || undefined,
+      instagram_url: instagram_url || undefined,
+      twitter_url: twitter_url || undefined,
+      meta_description: meta_description || undefined,
+      rdns_hostname: reverseDnsDomain || undefined,
+      category: category || undefined,
+      category_nl: category_nl || undefined,
+      place_id: place_id || undefined,
+      place_types: place_types || undefined
+    });
+
+    const { error: leadUpdErr } = await supabaseAdmin
+      .from('leads')
+      .update(leadUpdatePayload)
+      .in('id', leadsToUpdate.map(r => r.id));
+
+    if (leadUpdErr) {
+      console.warn('⚠️ Retro-update: update faalde:', leadUpdErr.message);
+    } else {
+      console.log(`✅ Retro-update: ${leadsToUpdate.length} lead(s) geüpdatet voor IP ${ip_address} / site ${site_id}`);
+    }
+  } else {
+    console.log('ℹ️ Retro-update: geen recente leads om bij te werken');
+  }
+} catch (e) {
+  console.warn('⚠️ Retro-update: onverwachte fout:', e.message);
+}
 
 
   // Markeer alle pending jobs voor deze bezoeker als done

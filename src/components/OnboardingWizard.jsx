@@ -24,6 +24,12 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   const pollRef = useRef(null);
   const [pollStatus, setPollStatus] = useState('idle');
 
+  // 👇 nieuw voor stap 3 (script tonen + kopiëren + valideren)
+  const [trackingScript, setTrackingScript] = useState('');
+  const [copyMsg, setCopyMsg] = useState('');
+  const [validateMsg, setValidateMsg] = useState(null);
+  const [validating, setValidating] = useState(false);
+
   // ---------- helpers ----------
   function splitFullName(name) {
     const parts = (name || '').trim().split(/\s+/).filter(Boolean);
@@ -120,6 +126,17 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
     };
   }, []);
 
+  // 👉 bouw het tracking script zodra we een orgId hebben
+  useEffect(() => {
+    if (!orgId) { setTrackingScript(''); return; }
+    // zelfde logica als in account.js
+    const domain =
+      (process.env.NEXT_PUBLIC_TRACKING_DOMAIN || (typeof window !== 'undefined' ? window.location.origin : ''))
+        .replace(/\/$/, '');
+    const script = `<script src="${domain}/tracker.js" data-project-id="${orgId}" async></script>`;
+    setTrackingScript(script);
+  }, [orgId]);
+
   // (diagnose) klik-capture zolang modal open is
   useEffect(() => {
     if (!visible) return;
@@ -198,7 +215,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
     }
   }
 
-  // --------- 🔧 HIER TERUGGEZET: startPolling / stopPolling ----------
+  // --------- Polling (on change detect) ----------
   function startPolling() {
     console.log('[Onboarding] startPolling()');
     if (!orgId) return alert('Org ontbreekt, ververs de pagina en probeer opnieuw.');
@@ -240,24 +257,44 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
     setPolling(false);
     setPollStatus('idle');
   }
-  // -------------------------------------------------------------------
 
-  async function snooze(minutes = 60 * 24) {
-    console.log('[Onboarding] snooze() start');
-    setLoading(true);
+  // --------- Validate like account.js (one-shot) ----------
+  async function validateOnce() {
+    if (!orgId) return alert('Geen organisatie gekoppeld.');
+    setValidating(true);
+    setValidateMsg({ type: 'info', text: 'Bezig met valideren…' });
     try {
-      const resp = await authedFetch('/api/onboarding', {
+      await fetch(`/api/track`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'snooze', minutes }),
+        body: JSON.stringify({
+          projectId: orgId,
+          pageUrl: typeof window !== 'undefined' ? window.location.href : '',
+          anonId: 'validation-test',
+          durationSeconds: 1,
+          utmSource: 'validation',
+          utmMedium: 'internal',
+          utmCampaign: 'script-validation',
+          referrer: typeof document !== 'undefined' ? (document.referrer || null) : null,
+          validationTest: true,
+        }),
       });
-      if (!resp.ok) throw new Error((await parseJsonSafe(resp))?.error || 'Snoozen mislukt');
-      setVisible(false);
-      onClose && onClose();
+
+const res = await authedFetch(`/api/check-tracking?projectId=${encodeURIComponent(orgId)}`);
+      const json = await res.json();
+
+      if (json.status === 'ok') {
+        setValidateMsg({ type: 'success', text: '✅ Script gevonden en actief!' });
+        setPollStatus('ok');
+      } else if (json.status === 'stale') {
+        setValidateMsg({ type: 'error', text: 'Script gedetecteerd, maar geen recente activiteit. Laad je site opnieuw en probeer nog eens.' });
+      } else {
+        setValidateMsg({ type: 'error', text: 'Script niet gevonden. Controleer of je het script hebt geplaatst.' });
+      }
     } catch (e) {
-      alert(e.message || String(e));
+      setValidateMsg({ type: 'error', text: 'Validatie mislukt: ' + (e?.message || e) });
     } finally {
-      setLoading(false);
+      setValidating(false);
     }
   }
 
@@ -279,19 +316,30 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   // Knoppen: Later afronden links, Volgende rechts
   const ActionBar = ({ onPrimary, primaryText, onSecondary, secondaryText, disabled }) => (
     <div className="mt-6 flex flex-col sm:flex-row gap-2 sm:gap-3">
-      {/* ⬅️ Links: Later afronden */}
+      {/* Later afronden */}
       <button
         type="button"
         onMouseDown={activate(() => {
           console.log('[Onboarding] SNOOZE mousedown → run');
           setVisible(false);
           onClose && onClose();
-          snooze(60 * 24).catch(err => console.warn('Snooze faalde:', err));
+          // server call fire-and-forget
+          (async () => {
+            try {
+              const resp = await authedFetch('/api/onboarding', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'snooze', minutes: 60 * 24 }),
+              });
+              if (!resp.ok) console.warn('Snooze serverfout');
+            } catch (e) {
+              console.warn('Snooze faalde:', e);
+            }
+          })();
         })}
         onKeyDown={keyActivate(() => {
           setVisible(false);
           onClose && onClose();
-          snooze(60 * 24).catch(err => console.warn('Snooze faalde:', err));
         })}
         onClick={(e) => e.stopPropagation()}
         className="text-sm text-gray-500 hover:text-gray-700"
@@ -301,14 +349,11 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
         Later afronden
       </button>
 
-      {/* Midden: Vorige (optioneel) */}
+      {/* Vorige */}
       {onSecondary && (
         <button
           type="button"
-          onMouseDown={activate(() => {
-            console.log('[Onboarding] PREV mousedown → run');
-            onSecondary();
-          })}
+          onMouseDown={activate(onSecondary)}
           onKeyDown={keyActivate(onSecondary)}
           onClick={(e) => e.stopPropagation()}
           className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50"
@@ -317,13 +362,10 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
         </button>
       )}
 
-      {/* ➡️ Rechts: Primaire actie */}
+      {/* Volgende / Primaire */}
       <button
         type="button"
-        onMouseDown={activate(() => {
-          console.log('[Onboarding] PRIMARY mousedown → run');
-          onPrimary && onPrimary();
-        })}
+        onMouseDown={activate(onPrimary)}
         onKeyDown={keyActivate(onPrimary)}
         onClick={(e) => e.stopPropagation()}
         disabled={disabled}
@@ -356,6 +398,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
           </div>
 
           <div className="p-4 sm:p-6">
+            {/* Stap 1 */}
             {step === 1 && (
               <>
                 <p className="text-sm text-gray-700 mb-4">Vul je gegevens in. We gebruiken dit voor je account en in de welkomstmail.</p>
@@ -407,6 +450,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
               </>
             )}
 
+            {/* Stap 2 */}
             {step === 2 && (
               <>
                 <p className="text-sm text-gray-700 mb-4">Wat is je rol in jouw organisatie?</p>
@@ -436,29 +480,83 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
               </>
             )}
 
+            {/* Stap 3 (owner): script tonen + checken */}
             {step === 3 && isOwner && (
               <>
                 <p className="text-sm text-gray-700">
-                  Plaats het tracking script op je website. Klaar? Start de check hieronder – we herkennen automatisch zodra het script een “hello ping” doet.
+                  Plaats dit script in de &lt;head&gt; van je website. Daarna kun je hieronder de installatie testen.
                 </p>
-                <div className="mt-4 rounded-lg border bg-gray-50 p-3 text-sm text-gray-700">
-                  <p className="font-medium mb-1">Korte uitleg</p>
-                  <ol className="list-decimal ml-5 space-y-1">
-                    <li>Plak je script in de &lt;head&gt; van je site.</li>
-                    <li>Publiceer/refresh je site.</li>
-                    <li>Klik hieronder op <b>Start check</b>.</li>
-                  </ol>
+
+                {/* SCRIPT BLOK (zelfde als account.js) */}
+                <div className="mt-4 relative">
+                  <pre className="bg-gray-100 border rounded p-4 text-sm overflow-x-auto">
+                    {trackingScript || '…'}
+                  </pre>
+                  <button
+                    type="button"
+                    onMouseDown={activate(async () => {
+                      if (!trackingScript) return;
+                      try {
+                        await navigator.clipboard.writeText(trackingScript);
+                        setCopyMsg('Script gekopieerd!');
+                        setTimeout(() => setCopyMsg(''), 2000);
+                      } catch (e) {
+                        setCopyMsg('Kopiëren mislukt; selecteer en kopieer handmatig.');
+                        setTimeout(() => setCopyMsg(''), 3000);
+                      }
+                    })}
+                    onKeyDown={keyActivate(async () => {
+                      if (!trackingScript) return;
+                      try {
+                        await navigator.clipboard.writeText(trackingScript);
+                        setCopyMsg('Script gekopieerd!');
+                        setTimeout(() => setCopyMsg(''), 2000);
+                      } catch {}
+                    })}
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute top-2 right-2 bg-blue-600 text-white text-xs px-2 py-1 rounded hover:bg-blue-700"
+                  >
+                    Kopieer
+                  </button>
                 </div>
-                <div className="mt-4 flex items-center gap-2">
+                {copyMsg && <p className="text-green-600 text-sm mt-2">{copyMsg}</p>}
+
+                {/* One-shot validatie */}
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onMouseDown={activate(validateOnce)}
+                    onKeyDown={keyActivate(validateOnce)}
+                    onClick={(e) => e.stopPropagation()}
+                    disabled={!orgId || validating}
+                    className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50"
+                  >
+                    {validating ? 'Valideren…' : 'Valideer installatie'}
+                  </button>
+                  {validateMsg && (
+                    <div className={`mt-2 text-sm ${
+                      validateMsg.type === 'success'
+                        ? 'text-green-700'
+                        : validateMsg.type === 'info'
+                        ? 'text-blue-700'
+                        : 'text-red-700'
+                    }`}>
+                      {validateMsg.text}
+                    </div>
+                  )}
+                </div>
+
+                {/* Continue polling als alternatief */}
+                <div className="mt-6 flex items-center gap-2">
                   {!polling ? (
                     <button
                       type="button"
                       onMouseDown={activate(startPolling)}
                       onKeyDown={keyActivate(startPolling)}
                       onClick={(e) => e.stopPropagation()}
-                      className="rounded-lg bg-black text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800"
+                      className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50"
                     >
-                      Start check
+                      Start automatische check
                     </button>
                   ) : (
                     <button
@@ -468,7 +566,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
                       onClick={(e) => e.stopPropagation()}
                       className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50"
                     >
-                      Stop check
+                      Stop automatische check
                     </button>
                   )}
                   <span className="text-sm text-gray-600">
@@ -480,6 +578,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
                     {pollStatus === 'error' && 'fout bij check'}
                   </span>
                 </div>
+
                 <ActionBar
                   onPrimary={() => setStep((s) => s + 1)}
                   primaryText={pollStatus === 'ok' ? 'Volgende' : 'Sla voorlopig over'}
@@ -490,6 +589,7 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
               </>
             )}
 
+            {/* Stap 3 (niet-owner) of stap 4 (owner) – afronden */}
             {((!isOwner && step === 3) || (isOwner && step === 4)) && (
               <>
                 <h3 className="text-base font-semibold text-gray-800 mb-2">Klaar! 🎉</h3>
