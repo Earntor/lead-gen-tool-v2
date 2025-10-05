@@ -129,17 +129,20 @@ export default function Account() {
         setCurrentOrgId(profile.current_org_id || null)
 
         if (profile.current_org_id) {
-          const { data: org } = await supabase
-            .from('organizations')
-            .select('last_tracking_ping')
-            .eq('id', profile.current_org_id)
-            .single()
+          const { data: site } = await supabase
+  .from('sites')
+  .select('last_ping_at')
+  .eq('org_id', profile.current_org_id)
+  .order('last_ping_at', { ascending: false, nullsFirst: false })
+  .limit(1)
+  .maybeSingle();
 
-          setLastTrackingPing(org?.last_tracking_ping || null)
+setLastTrackingPing(site?.last_ping_at || null);
 
-          const domain = (process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin).replace(/\/$/, '')
-          const script = `<script src="${domain}/tracker.js" data-project-id="${profile.current_org_id}" async></script>`
-          setTrackingScript(script)
+const domain = (process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin).replace(/\/$/, '')
+const script = `<script src="${domain}/tracker.js" data-project-id="${profile.current_org_id}" async></script>`
+setTrackingScript(script)
+
         }
       }
 
@@ -162,13 +165,16 @@ export default function Account() {
 
       if (tab === 'tracking' && user?.id && currentOrgId) {
         supabase
-          .from('organizations')
-          .select('last_tracking_ping')
-          .eq('id', currentOrgId)
-          .single()
-          .then(({ data }) => {
-            if (data?.last_tracking_ping) setLastTrackingPing(data.last_tracking_ping);
-          });
+  .from('sites')
+  .select('last_ping_at')
+  .eq('org_id', currentOrgId)
+  .order('last_ping_at', { ascending: false, nullsFirst: false })
+  .limit(1)
+  .maybeSingle()
+  .then(({ data }) => {
+    setLastTrackingPing(data?.last_ping_at || null);
+  });
+
       }
     };
 
@@ -203,23 +209,28 @@ export default function Account() {
   }, [user?.id])
 
   useEffect(() => {
-    if (!user?.id || !currentOrgId) return;
-    const channel = supabase
-      .channel('profile-org-tracking')
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'organizations', filter: `id=eq.${currentOrgId}` },
-        (payload) => {
-          if (payload.new?.last_tracking_ping) {
-            setLastTrackingPing(payload.new.last_tracking_ping);
-          }
+  if (!user?.id || !currentOrgId) return;
+  const channel = supabase
+    .channel('org-sites-tracking')
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'sites', filter: `org_id=eq.${currentOrgId}` },
+      (payload) => {
+        if (payload.new?.last_ping_at) {
+          setLastTrackingPing((prev) => {
+            const newTs = new Date(payload.new.last_ping_at).getTime();
+            const prevTs = prev ? new Date(prev).getTime() : 0;
+            return newTs > prevTs ? payload.new.last_ping_at : prev;
+          });
         }
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user, currentOrgId])
+      }
+    )
+    .subscribe();
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}, [user, currentOrgId]);
+
 
   const handleUpdate = async () => {
     setUpdating(true)
@@ -687,15 +698,17 @@ export default function Account() {
   }
 
   // 3) Timestamp verversen
-  const refreshed = await supabase
-    .from('organizations')
-    .select('last_tracking_ping')
-    .eq('id', currentOrgId)
-    .single();
+  // 3) Timestamp verversen op basis van echte snippet-pings
+const refreshed = await supabase
+  .from('sites')
+  .select('last_ping_at')
+  .eq('org_id', currentOrgId)
+  .order('last_ping_at', { ascending: false, nullsFirst: false })
+  .limit(1)
+  .maybeSingle();
 
-  if (refreshed?.data?.last_tracking_ping) {
-    setLastTrackingPing(refreshed.data.last_tracking_ping);
-  }
+setLastTrackingPing(refreshed?.data?.last_ping_at || null);
+
 }}
 
                 className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
