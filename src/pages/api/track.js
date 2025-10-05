@@ -195,7 +195,40 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Invalid body' });
   }
 
-  // Bearer-token (JWT) i.p.v. HMAC
+    // JSON parsen (altijd eerst doen, want we willen eventueel vroegtijdig kunnen stoppen)
+  let body = {};
+  try {
+    body = JSON.parse(rawBody);
+  } catch (err) {
+    console.error('❌ JSON parse error:', err.message);
+    return res.status(400).json({ error: 'Invalid JSON body' });
+  }
+
+  // 🔰 EARLY EXIT: VALIDATIE (géén ingest-JWT/siteId/IP nodig)
+  if (body && body.validationTest === true) {
+    const orgIdFromBody = body.projectId || body.orgId || null;
+    if (!orgIdFromBody) {
+      return res.status(400).json({ error: 'projectId is required for validationTest' });
+    }
+    try {
+      const nowIso = new Date().toISOString();
+      await supabase
+        .from('organizations')
+        .update({ last_tracking_ping: nowIso })
+        .eq('id', orgIdFromBody);
+
+      return res.status(200).json({
+        success: true,
+        validation: true,
+        org_id: orgIdFromBody
+      });
+    } catch (e) {
+      console.warn('⚠️ validationTest update faalde:', e?.message || e);
+      return res.status(500).json({ error: 'validation update failed' });
+    }
+  }
+
+  // Bearer-token (JWT) i.p.v. HMAC — pas ná de validatie early-exit
   let tokenPayload = null;
   if (REQUIRE_TOKEN) {
     const auth = req.headers['authorization'] || '';
@@ -206,22 +239,13 @@ export default async function handler(req, res) {
     try {
       tokenPayload = jwt.verify(token, INGEST_JWT_SECRET, { algorithms: ['HS256'] });
       if (!tokenPayload?.site_id || !tokenPayload?.org_id) {
-  return res.status(401).json({ error: 'invalid token payload' });
-}
-
+        return res.status(401).json({ error: 'invalid token payload' });
+      }
     } catch {
       return res.status(401).json({ error: 'bad token' });
     }
   }
 
-  // JSON parsen
-  let body = {};
-  try {
-    body = JSON.parse(rawBody);
-  } catch (err) {
-    console.error('❌ JSON parse error:', err.message);
-    return res.status(400).json({ error: 'Invalid JSON body' });
-  }
 
     // 🔰 EARLY EXIT: VALIDATIE (géén ingest-JWT/siteId/IP nodig)
   if (body && body.validationTest === true) {
