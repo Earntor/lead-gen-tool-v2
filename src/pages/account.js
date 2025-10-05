@@ -640,54 +640,64 @@ export default function Account() {
             <div className="mt-6">
               <button
                 onClick={async () => {
-                  if (!currentOrgId) {
-                    setTrackingMessage({ type: 'error', text: 'Geen organisatie gekoppeld aan dit account.' });
-                    return;
-                  }
-                  setTrackingMessage({ type: 'info', text: 'Bezig met valideren...' });
-                  await fetch(`/api/track`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      projectId: currentOrgId,
-                      pageUrl: window.location.href,
-                      anonId: 'validation-test',
-                      durationSeconds: 1,
-                      utmSource: 'validation',
-                      utmMedium: 'internal',
-                      utmCampaign: 'script-validation',
-                      referrer: document.referrer || null,
-                      validationTest: true
-                    })
-                  });
+  if (!currentOrgId) {
+    setTrackingMessage({ type: 'error', text: 'Geen organisatie gekoppeld aan dit account.' });
+    return;
+  }
+  setTrackingMessage({ type: 'info', text: 'Bezig met valideren...' });
 
-                  const res = await fetch(`/api/check-tracking?projectId=${currentOrgId}`);
-                  const json = await res.json();
+  // 1) Validatie-ping (geen auth nodig)
+  await fetch(`/api/track`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      projectId: currentOrgId,
+      pageUrl: window.location.href,
+      anonId: 'validation-test',
+      durationSeconds: 1,
+      utmSource: 'validation',
+      utmMedium: 'internal',
+      utmCampaign: 'script-validation',
+      referrer: document.referrer || null,
+      validationTest: true
+    })
+  });
 
-                  if (json.status === 'ok') {
-                    setTrackingMessage({ type: 'success', text: 'Script gevonden en actief!' });
-                  } else if (json.status === 'stale') {
-                    setTrackingMessage({
-                      type: 'error',
-                      text: 'Script gedetecteerd, maar geen recente activiteit. Probeer opnieuw te laden.'
-                    });
-                  } else {
-                    setTrackingMessage({
-                      type: 'error',
-                      text: 'Script niet gevonden. Controleer of je het script hebt geplaatst.'
-                    });
-                  }
+  // 2) Controle (met user Bearer token)
+  const { data } = await supabase.auth.getSession();
+  const t = data?.session?.access_token || null;
 
-                  const refreshed = await supabase
-                    .from('organizations')
-                    .select('last_tracking_ping')
-                    .eq('id', currentOrgId)
-                    .single();
+  const res = await fetch(`/api/check-tracking?projectId=${currentOrgId}`, {
+    headers: t ? { Authorization: `Bearer ${t}` } : {}
+  });
+  const json = await res.json();
 
-                  if (refreshed?.data?.last_tracking_ping) {
-                    setLastTrackingPing(refreshed.data.last_tracking_ping);
-                  }
-                }}
+  if (json.status === 'ok') {
+    setTrackingMessage({ type: 'success', text: 'Script gevonden en actief!' });
+  } else if (json.status === 'stale') {
+    setTrackingMessage({
+      type: 'error',
+      text: 'Script gedetecteerd, maar geen recente activiteit. Probeer opnieuw te laden.'
+    });
+  } else {
+    setTrackingMessage({
+      type: 'error',
+      text: 'Script niet gevonden. Controleer of je het script hebt geplaatst.'
+    });
+  }
+
+  // 3) Timestamp verversen
+  const refreshed = await supabase
+    .from('organizations')
+    .select('last_tracking_ping')
+    .eq('id', currentOrgId)
+    .single();
+
+  if (refreshed?.data?.last_tracking_ping) {
+    setLastTrackingPing(refreshed.data.last_tracking_ping);
+  }
+}}
+
                 className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
               >
                 Valideer installatie

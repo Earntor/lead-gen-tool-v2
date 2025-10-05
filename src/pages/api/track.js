@@ -223,6 +223,31 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Invalid JSON body' });
   }
 
+    // 🔰 EARLY EXIT: VALIDATIE (géén ingest-JWT/siteId/IP nodig)
+  if (body && body.validationTest === true) {
+    const orgIdFromBody = body.projectId || body.orgId || null;
+    if (!orgIdFromBody) {
+      return res.status(400).json({ error: 'projectId is required for validationTest' });
+    }
+    try {
+      const nowIso = new Date().toISOString();
+      await supabase
+        .from('organizations')
+        .update({ last_tracking_ping: nowIso })
+        .eq('id', orgIdFromBody);
+
+      return res.status(200).json({
+        success: true,
+        validation: true,
+        org_id: orgIdFromBody
+      });
+    } catch (e) {
+      console.warn('⚠️ validationTest update faalde:', e?.message || e);
+      return res.status(500).json({ error: 'validation update failed' });
+    }
+  }
+
+
   // (optioneel) header-site (alleen voor logging/safety)
   const siteIdHdr = req.headers['x-site-id'];
 
