@@ -72,30 +72,72 @@ export default async function handler(req, res) {
     }
 
     // user mag alleen zijn eigen org checken
-    if (String(projectId) !== String(currentOrgId)) {
-      return res.status(403).json({ error: 'forbidden' })
-    }
+   // 🔎 Standaard: check op organisatieniveau — gebruik primair organizations.last_tracking_ping
+if (!projectId) {
+  return res.status(400).json({ error: 'projectId is required (organization id)' })
+}
 
-    const { data: anyVerifiedSite, error } = await supabase
-      .from('sites')
-      .select('site_id, first_ping_at')
-      .eq('org_id', String(projectId))
-      .not('first_ping_at', 'is', null)
-      .limit(1)
-      .maybeSingle()
+// user mag alleen zijn eigen org checken
+if (String(projectId) !== String(currentOrgId)) {
+  return res.status(403).json({ error: 'forbidden' })
+}
 
-    if (error) return res.status(500).json({ error: error.message })
+// 1) Primair: kijk naar organizations.last_tracking_ping
+const { data: orgRow, error: orgErr } = await supabase
+  .from('organizations')
+  .select('last_tracking_ping')
+  .eq('id', String(projectId))
+  .maybeSingle()
 
-    if (anyVerifiedSite) {
+if (orgErr) return res.status(500).json({ error: orgErr.message })
+
+if (orgRow?.last_tracking_ping) {
+  const last = new Date(orgRow.last_tracking_ping).getTime()
+  const now = Date.now()
+  const recentWindow = 10 * 60 * 1000        // 10 minuten als "recent"
+  const twentyFourHours = 24 * 60 * 60 * 1000
+
+  if (isFinite(last)) {
+    if (now - last <= recentWindow) {
       return res.status(200).json({
         status: 'ok',
         mode: 'org',
-        siteId: anyVerifiedSite.site_id,
-        first_ping_at: anyVerifiedSite.first_ping_at
+        last_tracking_ping: orgRow.last_tracking_ping
       })
     }
+    if (now - last <= twentyFourHours) {
+      return res.status(200).json({
+        status: 'stale',
+        mode: 'org',
+        last_tracking_ping: orgRow.last_tracking_ping
+      })
+    }
+  }
+}
 
-    return res.status(200).json({ status: 'not_found', mode: 'org' })
+// 2) Fallback: legacy check – is er een site met first_ping_at?
+const { data: anyVerifiedSite, error } = await supabase
+  .from('sites')
+  .select('site_id, first_ping_at')
+  .eq('org_id', String(projectId))
+  .not('first_ping_at', 'is', null)
+  .order('first_ping_at', { ascending: false })
+  .limit(1)
+  .maybeSingle()
+
+if (error) return res.status(500).json({ error: error.message })
+
+if (anyVerifiedSite) {
+  return res.status(200).json({
+    status: 'ok',
+    mode: 'org',
+    siteId: anyVerifiedSite.site_id,
+    first_ping_at: anyVerifiedSite.first_ping_at
+  })
+}
+
+return res.status(200).json({ status: 'not_found', mode: 'org' })
+
   } catch (err) {
     console.error('❌ check-tracking error:', err)
     return res.status(500).json({ error: 'Unexpected error' })
