@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/router'
 import dynamic from 'next/dynamic'
 import { supabase } from '../lib/supabaseClient'
@@ -18,12 +18,6 @@ const TeamTab = dynamic(() => import('../components/TeamTab'), {
   ssr: false,
   loading: () => <p>Team laden…</p>,
 })
-
-function getTodayDomNL() {
-  const now = new Date();
-  const dayStr = new Intl.DateTimeFormat('nl-NL', { timeZone: 'Europe/Amsterdam', day: '2-digit' }).format(now);
-  return parseInt(dayStr, 10);
-}
 
 function Toggle({ checked, disabled, onChange, label }) {
   return (
@@ -72,22 +66,31 @@ export default function Account() {
   const [digest, setDigest] = useState({ daily: false, weekly: false, monthly: false, monthlyDom: null });
   const [digestLoading, setDigestLoading] = useState(false);
   const [digestSaving, setDigestSaving] = useState(false);
-const pollRef = useRef(null);
+  const pollRef = useRef(null);
 
   const getTrackingStatusBadge = () => {
-  // We zetten lastTrackingPing alleen als /api/check-tracking 'active' teruggeeft (≤ 7 dagen)
-  const isActive = !!lastTrackingPing;
-  return isActive ? (
-    <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded text-xs font-medium">
-      Actief
-    </span>
-  ) : (
-    <span className="bg-gray-200 text-gray-800 px-2 py-0.5 rounded text-xs font-medium">
-      Geen recente activiteit
-    </span>
-  );
-};
+    // We zetten lastTrackingPing alleen als /api/check-tracking 'active' teruggeeft (≤ 7 dagen)
+    const isActive = !!lastTrackingPing;
+    return isActive ? (
+      <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded text-xs font-medium">
+        Actief
+      </span>
+    ) : (
+      <span className="bg-gray-200 text-gray-800 px-2 py-0.5 rounded text-xs font-medium">
+        Geen recente activiteit
+      </span>
+    );
+  };
 
+  // ✅ Helper: altijd met Bearer token checken
+  const checkTracking = async (orgId) => {
+    const { data } = await supabase.auth.getSession();
+    const t = data?.session?.access_token || null;
+    const r = await fetch(`/api/check-tracking?orgId=${encodeURIComponent(orgId)}`, {
+      headers: t ? { Authorization: `Bearer ${t}` } : {}
+    });
+    return r.json();
+  };
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -122,15 +125,14 @@ const pollRef = useRef(null);
         setCurrentOrgId(profile.current_org_id || null)
 
         if (profile.current_org_id) {
-  try {
-    const r = await fetch(`/api/check-tracking?orgId=${encodeURIComponent(profile.current_org_id)}`);
-    const j = await r.json();
-    setLastTrackingPing(j?.status === 'active' ? (j.last_ping_at || null) : null);
-  } catch {}
-  const domain = (process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin).replace(/\/$/, '');
-  const script = `<script src="${domain}/tracker.js" data-project-id="${profile.current_org_id}" async></script>`;
-  setTrackingScript(script);
-}
+          try {
+            const j = await checkTracking(profile.current_org_id);
+            setLastTrackingPing(j?.status === 'active' ? (j.last_ping_at || null) : null);
+          } catch {}
+          const domain = (process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin).replace(/\/$/, '')
+          const script = `<script src="${domain}/tracker.js" data-project-id="${profile.current_org_id}" async></script>`
+          setTrackingScript(script)
+        }
       }
 
       if (!profile) {
@@ -151,15 +153,13 @@ const pollRef = useRef(null);
       setTrackingMessage(null);
 
       if (tab === 'tracking' && user?.id && currentOrgId) {
-  fetch(`/api/check-tracking?orgId=${encodeURIComponent(currentOrgId)}`)
-    .then(r => r.json())
-    .then(j => {
-      if (j?.status === 'active') setLastTrackingPing(j.last_ping_at || null);
-      else setLastTrackingPing(null);
-    })
-    .catch(() => {});
-}
-
+        checkTracking(currentOrgId)
+          .then(j => {
+            if (j?.status === 'active') setLastTrackingPing(j.last_ping_at || null);
+            else setLastTrackingPing(null);
+          })
+          .catch(() => {});
+      }
     };
 
     const hash = window.location.hash.replace('#', '');
@@ -169,10 +169,10 @@ const pollRef = useRef(null);
     }
 
     window.addEventListener('hashchange', onHashChange);
-return () => {
-  if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-  window.removeEventListener('hashchange', onHashChange);
-};
+    return () => {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      window.removeEventListener('hashchange', onHashChange);
+    };
   }, [user, currentOrgId]);
 
   // 🔔 Realtime: update velden live als onboarding ze opslaat
@@ -587,24 +587,21 @@ return () => {
             <h2 className="text-xl font-semibold mb-4">Tracking script</h2>
 
             <div className="mb-2 text-sm flex items-start flex-col gap-1">
-  {lastTrackingPing ? (
-    <>
-      <div className="flex items-center gap-2 text-green-800 font-medium">
-        ✅ Script gevonden en actief
-      </div>
-      <p className="text-xs text-gray-600">
-        Laatste ping: {formatDutchDateTime(lastTrackingPing)}
-      </p>
-    </>
-  ) : (
-    <div className="text-red-600 font-medium">
-      ❌ Script niet gevonden
-    </div>
-  )}
-</div>
-
-
-
+              {lastTrackingPing ? (
+                <>
+                  <div className="flex items-center gap-2 text-green-800 font-medium">
+                    ✅ Script gevonden en actief
+                  </div>
+                  <p className="text-xs text-gray-600">
+                    Laatste ping: {formatDutchDateTime(lastTrackingPing)}
+                  </p>
+                </>
+              ) : (
+                <div className="text-red-600 font-medium">
+                  ❌ Script niet gevonden
+                </div>
+              )}
+            </div>
 
             <p className="text-gray-600 mb-4">
               Plaats dit script in de &lt;head&gt; van je website om bezoekers te meten.
@@ -626,59 +623,62 @@ return () => {
             )}
 
             <div className="mt-6">
- onClick={async () => {
-  if (!currentOrgId) {
-    setTrackingMessage({ type: 'error', text: 'Geen organisatie gekoppeld aan dit account.' });
-    return;
-  }
+              <button
+                onClick={async () => {
+                  if (!currentOrgId) {
+                    setTrackingMessage({ type: 'error', text: 'Geen organisatie gekoppeld aan dit account.' });
+                    return;
+                  }
 
-  setTrackingMessage({
-    type: 'info',
-    text: 'Open je website in een nieuw tabblad en vernieuw de pagina. We controleren elke 5 seconden of het script een ping stuurt (venster 7 dagen).'
-  });
+                  setTrackingMessage({
+                    type: 'info',
+                    text: 'Open je website in een nieuw tabblad en vernieuw de pagina. We controleren elke 5 seconden of het script een ping stuurt (venster 7 dagen).'
+                  });
 
-  const POLL_MS = 5000;
-  const TIMEOUT_MS = 2 * 60 * 1000; // 2 minuten
-  const deadline = Date.now() + TIMEOUT_MS;
+                  const POLL_MS = 5000;
+                  const TIMEOUT_MS = 2 * 60 * 1000; // 2 minuten
+                  const deadline = Date.now() + TIMEOUT_MS;
 
-  // Veiligheidsnet: stop een eventuele eerdere poll
-  if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+                  // Veiligheidsnet: stop een eventuele eerdere poll
+                  if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
 
-  const check = async () => {
-    const r = await fetch(`/api/check-tracking?orgId=${encodeURIComponent(currentOrgId)}`);
-    const j = await r.json();
-    return j?.status === 'active' ? (j.last_ping_at || null) : null;
-  };
+                  const check = async () => {
+                    const j = await checkTracking(currentOrgId);
+                    return j?.status === 'active' ? (j.last_ping_at || null) : null;
+                  };
 
-  // Eerste check
-  let last = await check();
-  if (last) {
-    setLastTrackingPing(last);
-    setTrackingMessage({ type: 'success', text: 'Script gevonden en actief!' });
-    return;
-  }
+                  // Eerste check
+                  let last = await check();
+                  if (last) {
+                    setLastTrackingPing(last);
+                    setTrackingMessage({ type: 'success', text: 'Script gevonden en actief!' });
+                    return;
+                  }
 
-  // Poll tot actief of timeout
-  pollRef.current = setInterval(async () => {
-    if (Date.now() > deadline) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-      setTrackingMessage({
-        type: 'error',
-        text: 'Script niet gevonden. Controleer of je het script hebt geplaatst en laad je site opnieuw.'
-      });
-      return;
-    }
-    last = await check();
-    if (last) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-      setLastTrackingPing(last);
-      setTrackingMessage({ type: 'success', text: 'Script gevonden en actief!' });
-    }
-  }, POLL_MS);
-}}
-
+                  // Poll tot actief of timeout
+                  pollRef.current = setInterval(async () => {
+                    if (Date.now() > deadline) {
+                      clearInterval(pollRef.current);
+                      pollRef.current = null;
+                      setTrackingMessage({
+                        type: 'error',
+                        text: 'Script niet gevonden. Controleer of je het script hebt geplaatst en laad je site opnieuw.'
+                      });
+                      return;
+                    }
+                    last = await check();
+                    if (last) {
+                      clearInterval(pollRef.current);
+                      pollRef.current = null;
+                      setLastTrackingPing(last);
+                      setTrackingMessage({ type: 'success', text: 'Script gevonden en actief!' });
+                    }
+                  }, POLL_MS);
+                }}
+                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+              >
+                Valideer installatie
+              </button>
             </div>
           </div>
         </Section>
