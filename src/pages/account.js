@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/router'
 import dynamic from 'next/dynamic'
 import { supabase } from '../lib/supabaseClient'
@@ -72,29 +72,22 @@ export default function Account() {
   const [digest, setDigest] = useState({ daily: false, weekly: false, monthly: false, monthlyDom: null });
   const [digestLoading, setDigestLoading] = useState(false);
   const [digestSaving, setDigestSaving] = useState(false);
+const pollRef = useRef(null);
 
   const getTrackingStatusBadge = () => {
-    if (!lastTrackingPing) {
-      return (
-        <span className="bg-red-100 text-red-800 px-2 py-0.5 rounded text-xs font-medium">
-          Geen ping
-        </span>
-      );
-    }
-    const diff = new Date() - new Date(lastTrackingPing);
-    if (diff > 1000 * 60 * 60 * 24) {
-      return (
-        <span className="bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded text-xs font-medium">
-          Inactief
-        </span>
-      );
-    }
-    return (
-      <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded text-xs font-medium">
-        Actief
-      </span>
-    );
-  };
+  // We zetten lastTrackingPing alleen als /api/check-tracking 'active' teruggeeft (≤ 7 dagen)
+  const isActive = !!lastTrackingPing;
+  return isActive ? (
+    <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded text-xs font-medium">
+      Actief
+    </span>
+  ) : (
+    <span className="bg-gray-200 text-gray-800 px-2 py-0.5 rounded text-xs font-medium">
+      Geen recente activiteit
+    </span>
+  );
+};
+
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -129,18 +122,15 @@ export default function Account() {
         setCurrentOrgId(profile.current_org_id || null)
 
         if (profile.current_org_id) {
-          const { data: org } = await supabase
-            .from('organizations')
-            .select('last_tracking_ping')
-            .eq('id', profile.current_org_id)
-            .single()
-
-          setLastTrackingPing(org?.last_tracking_ping || null)
-
-          const domain = (process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin).replace(/\/$/, '')
-          const script = `<script src="${domain}/tracker.js" data-project-id="${profile.current_org_id}" async></script>`
-          setTrackingScript(script)
-        }
+  try {
+    const r = await fetch(`/api/check-tracking?orgId=${encodeURIComponent(profile.current_org_id)}`);
+    const j = await r.json();
+    setLastTrackingPing(j?.status === 'active' ? (j.last_ping_at || null) : null);
+  } catch {}
+  const domain = (process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin).replace(/\/$/, '');
+  const script = `<script src="${domain}/tracker.js" data-project-id="${profile.current_org_id}" async></script>`;
+  setTrackingScript(script);
+}
       }
 
       if (!profile) {
@@ -161,15 +151,15 @@ export default function Account() {
       setTrackingMessage(null);
 
       if (tab === 'tracking' && user?.id && currentOrgId) {
-        supabase
-          .from('organizations')
-          .select('last_tracking_ping')
-          .eq('id', currentOrgId)
-          .single()
-          .then(({ data }) => {
-            if (data?.last_tracking_ping) setLastTrackingPing(data.last_tracking_ping);
-          });
-      }
+  fetch(`/api/check-tracking?orgId=${encodeURIComponent(currentOrgId)}`)
+    .then(r => r.json())
+    .then(j => {
+      if (j?.status === 'active') setLastTrackingPing(j.last_ping_at || null);
+      else setLastTrackingPing(null);
+    })
+    .catch(() => {});
+}
+
     };
 
     const hash = window.location.hash.replace('#', '');
@@ -179,7 +169,10 @@ export default function Account() {
     }
 
     window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
+return () => {
+  if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  window.removeEventListener('hashchange', onHashChange);
+};
   }, [user, currentOrgId]);
 
   // 🔔 Realtime: update velden live als onboarding ze opslaat
@@ -593,30 +586,25 @@ export default function Account() {
           <div>
             <h2 className="text-xl font-semibold mb-4">Tracking script</h2>
 
-            {lastTrackingPing ? (
-              <div className="mb-2 text-sm flex items-start flex-col gap-1">
-                {new Date() - new Date(lastTrackingPing) > 1000 * 60 * 60 * 24 ? (
-                  <>
-                    <div className="flex items-center gap-2 text-red-600 font-medium">
-                      ⚠️ Laatste tracking ping:{" "}
-                      <span>{formatDutchDateTime(lastTrackingPing)}</span>
-                    </div>
-                    <p className="text-red-600">
-                      Je hebt al meer dan 24 uur geen trackingactiviteit ontvangen.
-                    </p>
-                  </>
-                ) : (
-                  <div className="flex items-center gap-2 text-green-800 font-medium">
-                    ✅ Laatste tracking ping:{" "}
-                    <span>{formatDutchDateTime(lastTrackingPing)}</span>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="mb-2 text-sm text-red-600 flex items-center gap-2">
-                ❌ Nog geen tracking ping ontvangen.
-              </div>
-            )}
+            <div className="mb-2 text-sm flex items-start flex-col gap-1">
+  {lastTrackingPing ? (
+    <>
+      <div className="flex items-center gap-2 text-green-800 font-medium">
+        ✅ Script gevonden en actief
+      </div>
+      <p className="text-xs text-gray-600">
+        Laatste ping: {formatDutchDateTime(lastTrackingPing)}
+      </p>
+    </>
+  ) : (
+    <div className="text-red-600 font-medium">
+      ❌ Script niet gevonden
+    </div>
+  )}
+</div>
+
+
+
 
             <p className="text-gray-600 mb-4">
               Plaats dit script in de &lt;head&gt; van je website om bezoekers te meten.
@@ -638,70 +626,59 @@ export default function Account() {
             )}
 
             <div className="mt-6">
-              <button
-                onClick={async () => {
+ onClick={async () => {
   if (!currentOrgId) {
     setTrackingMessage({ type: 'error', text: 'Geen organisatie gekoppeld aan dit account.' });
     return;
   }
-  setTrackingMessage({ type: 'info', text: 'Bezig met valideren...' });
 
-  // 1) Validatie-ping (geen auth nodig)
-  await fetch(`/api/track`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      projectId: currentOrgId,
-      pageUrl: window.location.href,
-      anonId: 'validation-test',
-      durationSeconds: 1,
-      utmSource: 'validation',
-      utmMedium: 'internal',
-      utmCampaign: 'script-validation',
-      referrer: document.referrer || null,
-      validationTest: true
-    })
+  setTrackingMessage({
+    type: 'info',
+    text: 'Open je website in een nieuw tabblad en vernieuw de pagina. We controleren elke 5 seconden of het script een ping stuurt (venster 7 dagen).'
   });
 
-  // 2) Controle (met user Bearer token)
-  const { data } = await supabase.auth.getSession();
-  const t = data?.session?.access_token || null;
+  const POLL_MS = 5000;
+  const TIMEOUT_MS = 2 * 60 * 1000; // 2 minuten
+  const deadline = Date.now() + TIMEOUT_MS;
 
-  const res = await fetch(`/api/check-tracking?projectId=${currentOrgId}`, {
-    headers: t ? { Authorization: `Bearer ${t}` } : {}
-  });
-  const json = await res.json();
+  // Veiligheidsnet: stop een eventuele eerdere poll
+  if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
 
-  if (json.status === 'ok') {
+  const check = async () => {
+    const r = await fetch(`/api/check-tracking?orgId=${encodeURIComponent(currentOrgId)}`);
+    const j = await r.json();
+    return j?.status === 'active' ? (j.last_ping_at || null) : null;
+  };
+
+  // Eerste check
+  let last = await check();
+  if (last) {
+    setLastTrackingPing(last);
     setTrackingMessage({ type: 'success', text: 'Script gevonden en actief!' });
-  } else if (json.status === 'stale') {
-    setTrackingMessage({
-      type: 'error',
-      text: 'Script gedetecteerd, maar geen recente activiteit. Probeer opnieuw te laden.'
-    });
-  } else {
-    setTrackingMessage({
-      type: 'error',
-      text: 'Script niet gevonden. Controleer of je het script hebt geplaatst.'
-    });
+    return;
   }
 
-  // 3) Timestamp verversen
-  const refreshed = await supabase
-    .from('organizations')
-    .select('last_tracking_ping')
-    .eq('id', currentOrgId)
-    .single();
-
-  if (refreshed?.data?.last_tracking_ping) {
-    setLastTrackingPing(refreshed.data.last_tracking_ping);
-  }
+  // Poll tot actief of timeout
+  pollRef.current = setInterval(async () => {
+    if (Date.now() > deadline) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+      setTrackingMessage({
+        type: 'error',
+        text: 'Script niet gevonden. Controleer of je het script hebt geplaatst en laad je site opnieuw.'
+      });
+      return;
+    }
+    last = await check();
+    if (last) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+      setLastTrackingPing(last);
+      setTrackingMessage({ type: 'success', text: 'Script gevonden en actief!' });
+    }
+  }, POLL_MS);
 }}
 
-                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
-              >
-                Valideer installatie
-              </button>
             </div>
           </div>
         </Section>

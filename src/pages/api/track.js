@@ -246,32 +246,6 @@ export default async function handler(req, res) {
     }
   }
 
-
-    // 🔰 EARLY EXIT: VALIDATIE (géén ingest-JWT/siteId/IP nodig)
-  if (body && body.validationTest === true) {
-    const orgIdFromBody = body.projectId || body.orgId || null;
-    if (!orgIdFromBody) {
-      return res.status(400).json({ error: 'projectId is required for validationTest' });
-    }
-    try {
-      const nowIso = new Date().toISOString();
-      await supabase
-        .from('organizations')
-        .update({ last_tracking_ping: nowIso })
-        .eq('id', orgIdFromBody);
-
-      return res.status(200).json({
-        success: true,
-        validation: true,
-        org_id: orgIdFromBody
-      });
-    } catch (e) {
-      console.warn('⚠️ validationTest update faalde:', e?.message || e);
-      return res.status(500).json({ error: 'validation update failed' });
-    }
-  }
-
-
   // (optioneel) header-site (alleen voor logging/safety)
   const siteIdHdr = req.headers['x-site-id'];
 
@@ -349,24 +323,13 @@ if (!orgId) {
     console.warn('⚠️ sites insert check faalde:', e.message);
   }
 
-  // 🔔 Hello ping op site-niveau (idempotent first_ping_at, altijd last_ping_at)
-const nowIso = new Date().toISOString();
+ // 🔔 Hello ping op site-niveau (één atomaire call via RPC)
 try {
-  // Zet first_ping_at alleen als hij nog NULL is
-  await supabase
-    .from('sites')
-    .update({ first_ping_at: nowIso })
-    .eq('site_id', siteId)
-    .is('first_ping_at', null);
-
-  // Altijd bijwerken
-  await supabase
-    .from('sites')
-    .update({ last_ping_at: nowIso })
-    .eq('site_id', siteId);
+  await supabase.rpc('upsert_site_ping', { p_site_id: siteId });
 } catch (e) {
-  console.warn('⚠️ site hello-ping update faalde:', e.message);
+  console.warn('⚠️ site hello-ping (rpc) faalde:', e?.message || e);
 }
+
 
 
   // Enrichment uit cache

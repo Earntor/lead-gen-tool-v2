@@ -74,8 +74,11 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
 
   useEffect(() => {
     if (open === true) setVisible(true);
-    if (open === false) setVisible(false);
-  }, [open]);
+if (open === false) {
+   setVisible(false);
+   stopPolling(); // ⬅️ hier ook opruimen
+ }  
+}, [open]);
 
   useEffect(() => {
     let cancelled = false;
@@ -217,36 +220,53 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
 
   // --------- Polling (on change detect) ----------
   function startPolling() {
-    console.log('[Onboarding] startPolling()');
-    if (!orgId) return alert('Org ontbreekt, ververs de pagina en probeer opnieuw.');
-    if (pollRef.current) return;
-    setPolling(true);
-    setPollStatus('checking');
+  console.log('[Onboarding] startPolling()');
+  if (!orgId) return alert('Org ontbreekt, ververs de pagina en probeer opnieuw.');
+  if (pollRef.current) return; // al bezig
 
-    const tick = async () => {
-      try {
-        const resp = await authedFetch(`/api/check-tracking?projectId=${encodeURIComponent(orgId)}`);
-        if (!pollRef.current) return;
-        const json = await parseJsonSafe(resp);
-        if (!pollRef.current) return;
+  setPolling(true);
+  setPollStatus('checking');
 
-        if (json?.status === 'ok') {
-          setPollStatus('ok');
-          clearInterval(pollRef.current);
-          pollRef.current = null;
-          setPolling(false);
-        } else {
-          setPollStatus('not_found');
-        }
-      } catch {
-        if (!pollRef.current) return;
-        setPollStatus('error');
+  const deadline = Date.now() + 2 * 60 * 1000; // ⬅️ stopt na 2 minuten automatisch (optie)
+
+  const tick = async () => {
+    try {
+      const resp = await authedFetch(`/api/check-tracking?orgId=${encodeURIComponent(orgId)}`);
+      if (!pollRef.current) return;
+      const json = await parseJsonSafe(resp);
+      if (!pollRef.current) return;
+
+      if (json?.status === 'active') {
+        setPollStatus('ok');
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+        setPolling(false);
+      } else {
+        setPollStatus('not_found');
       }
-    };
 
-    tick();
-    pollRef.current = setInterval(tick, 5000);
-  }
+      // timeout na 2 minuten
+      if (Date.now() > deadline && pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+        setPolling(false);
+        // laat status staan op 'not_found' of 'checking'
+      }
+    } catch {
+      if (!pollRef.current) return;
+      setPollStatus('error');
+      // bij error ook stoppen na timeout
+      if (Date.now() > deadline && pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+        setPolling(false);
+      }
+    }
+  };
+
+  tick(); // eerste check meteen
+  pollRef.current = setInterval(tick, 5000);
+}
 
   function stopPolling() {
     console.log('[Onboarding] stopPolling()');
@@ -259,44 +279,33 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   }
 
   // --------- Validate like account.js (one-shot) ----------
-  async function validateOnce() {
-    if (!orgId) return alert('Geen organisatie gekoppeld.');
-    setValidating(true);
-    setValidateMsg({ type: 'info', text: 'Bezig met valideren…' });
-    try {
-      await fetch(`/api/track`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: orgId,
-          pageUrl: typeof window !== 'undefined' ? window.location.href : '',
-          anonId: 'validation-test',
-          durationSeconds: 1,
-          utmSource: 'validation',
-          utmMedium: 'internal',
-          utmCampaign: 'script-validation',
-          referrer: typeof document !== 'undefined' ? (document.referrer || null) : null,
-          validationTest: true,
-        }),
-      });
+async function validateOnce() {
+  if (!orgId) return alert('Geen organisatie gekoppeld.');
+  setValidating(true);
+  setValidateMsg({
+    type: 'info',
+    text: 'Open je website in een nieuw tabblad en vernieuw de pagina. We controleren elke 5 seconden of het script een ping stuurt (venster 7 dagen).'
+  });
 
-const res = await authedFetch(`/api/check-tracking?projectId=${encodeURIComponent(orgId)}`);
-      const json = await res.json();
-
-      if (json.status === 'ok') {
-        setValidateMsg({ type: 'success', text: '✅ Script gevonden en actief!' });
-        setPollStatus('ok');
-      } else if (json.status === 'stale') {
-        setValidateMsg({ type: 'error', text: 'Script gedetecteerd, maar geen recente activiteit. Laad je site opnieuw en probeer nog eens.' });
-      } else {
-        setValidateMsg({ type: 'error', text: 'Script niet gevonden. Controleer of je het script hebt geplaatst.' });
-      }
-    } catch (e) {
-      setValidateMsg({ type: 'error', text: 'Validatie mislukt: ' + (e?.message || e) });
-    } finally {
+  // 1) Eén directe check
+  try {
+    const res = await authedFetch(`/api/check-tracking?orgId=${encodeURIComponent(orgId)}`);
+    const json = await res.json();
+    if (json?.status === 'active') {
+      setValidateMsg({ type: 'success', text: '✅ Script gevonden en actief!' });
+      setPollStatus('ok');
       setValidating(false);
+      return;
     }
+  } catch {
+    // negeren; we gaan pollen
   }
+
+  // 2) Start automatische check (hergebruikt bestaande flow)
+  setValidating(false);
+  startPolling();
+}
+
 
   // -------- unified activators (mousedown + keyboard) --------
   const activate = (handler) => (e) => {
@@ -321,6 +330,7 @@ const res = await authedFetch(`/api/check-tracking?projectId=${encodeURIComponen
         type="button"
         onMouseDown={activate(() => {
           console.log('[Onboarding] SNOOZE mousedown → run');
+          stopPolling();
           setVisible(false);
           onClose && onClose();
           // server call fire-and-forget

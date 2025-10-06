@@ -1,145 +1,94 @@
 // pages/api/check-tracking.js
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-)
+  process.env.SUPABASE_SERVICE_ROLE_KEY // service role voor server-side check
+);
 
-function getBearer(req) {
-  const h = req.headers.authorization || ''
-  return h.startsWith('Bearer ') ? h.slice(7) : null
-}
+const TTL_DAYS = 7;
 
 export default async function handler(req, res) {
-  // CORS (mag blijven; je callt same-origin, maar dit schaadt niet)
-  res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Site-Id')
-  if (req.method === 'OPTIONS') return res.status(200).end()
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Site-Id, X-Org-Id');
 
-  const { projectId, siteId } = req.query
-
-  // ✅ VEREIS USER JWT en valideer org-toegang
-  const token = getBearer(req)
-  if (!token) return res.status(401).json({ error: 'missing bearer token' })
-
-  // user ophalen uit JWT
-  const { data: uData, error: uErr } = await supabase.auth.getUser(token)
-  if (uErr || !uData?.user) return res.status(401).json({ error: 'invalid token' })
-  const uid = uData.user.id
-
-  // user → profiel → huidige org
-  const { data: profile, error: pErr } = await supabase
-    .from('profiles')
-    .select('current_org_id')
-    .eq('id', uid)
-    .maybeSingle()
-
-  if (pErr) return res.status(500).json({ error: pErr.message })
-  const currentOrgId = profile?.current_org_id || null
-  if (!currentOrgId) return res.status(403).json({ error: 'no org on profile' })
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
+    const { siteId, orgId } = req.query;
+    const thresholdIso = new Date(Date.now() - TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+    const toStatus = (last_ping_at) => {
+      if (last_ping_at && last_ping_at >= thresholdIso) return { status: 'active' };
+      return { status: 'not_found' };
+    };
+
+    // 1) Check per site
     if (siteId) {
-      // 🔎 Check specifieke site, maar **alleen** als die site bij de org van de user hoort
-      const { data: site, error } = await supabase
+      let query = supabase
         .from('sites')
-        .select('site_id, first_ping_at, org_id')
-        .eq('site_id', String(siteId))
-        .maybeSingle()
+        .select('id, site_id, org_id, last_ping_at')
+        .eq('site_id', siteId)
+        .limit(1);
 
-      if (error) return res.status(500).json({ error: error.message })
-      if (!site || String(site.org_id) !== String(currentOrgId)) {
-        return res.status(403).json({ error: 'forbidden' })
+      if (orgId) query = query.eq('org_id', orgId);
+
+      const { data, error } = await query.single();
+      if (error && error.code !== 'PGRST116') {
+        return res.status(500).json({ error: 'db', detail: error.message });
       }
-
-      if (site.first_ping_at) {
+      if (!data) {
         return res.status(200).json({
-          status: 'ok',
-          mode: 'site',
-          siteId: site.site_id,
-          first_ping_at: site.first_ping_at
-        })
+          status: 'not_found',
+          reason: 'site_not_found',
+          siteId,
+          ttl_days: TTL_DAYS,
+        });
       }
-      return res.status(200).json({ status: 'not_found', mode: 'site' })
-    }
-
-    // 🔎 Standaard: check op organisatieniveau (minstens 1 site met first_ping_at)
-    if (!projectId) {
-      return res.status(400).json({ error: 'projectId is required (organization id)' })
-    }
-
-    // user mag alleen zijn eigen org checken
-   // 🔎 Standaard: check op organisatieniveau — gebruik primair organizations.last_tracking_ping
-if (!projectId) {
-  return res.status(400).json({ error: 'projectId is required (organization id)' })
-}
-
-// user mag alleen zijn eigen org checken
-if (String(projectId) !== String(currentOrgId)) {
-  return res.status(403).json({ error: 'forbidden' })
-}
-
-// 1) Primair: kijk naar organizations.last_tracking_ping
-const { data: orgRow, error: orgErr } = await supabase
-  .from('organizations')
-  .select('last_tracking_ping')
-  .eq('id', String(projectId))
-  .maybeSingle()
-
-if (orgErr) return res.status(500).json({ error: orgErr.message })
-
-if (orgRow?.last_tracking_ping) {
-  const last = new Date(orgRow.last_tracking_ping).getTime()
-  const now = Date.now()
-  const recentWindow = 10 * 60 * 1000        // 10 minuten als "recent"
-  const twentyFourHours = 24 * 60 * 60 * 1000
-
-  if (isFinite(last)) {
-    if (now - last <= recentWindow) {
+      const result = toStatus(data.last_ping_at);
       return res.status(200).json({
-        status: 'ok',
-        mode: 'org',
-        last_tracking_ping: orgRow.last_tracking_ping
-      })
+        ...result,
+        siteId: data.site_id,
+        last_ping_at: data.last_ping_at,
+        ttl_days: TTL_DAYS,
+      });
     }
-    if (now - last <= twentyFourHours) {
-      return res.status(200).json({
-        status: 'stale',
-        mode: 'org',
-        last_tracking_ping: orgRow.last_tracking_ping
-      })
+
+    // 2) Check per org: is er iéts actief binnen 7 dagen?
+    if (orgId) {
+      const { data, error } = await supabase
+        .from('sites')
+        .select('id, site_id, last_ping_at')
+        .eq('org_id', orgId)
+        .gte('last_ping_at', thresholdIso)
+        .limit(1);
+
+      if (error) {
+        return res.status(500).json({ error: 'db', detail: error.message });
+      }
+
+      if (data && data.length > 0) {
+        return res.status(200).json({
+          status: 'active',
+          any_active_site: data[0].site_id,
+          last_ping_at: data[0].last_ping_at,
+          ttl_days: TTL_DAYS,
+        });
+      } else {
+        return res.status(200).json({
+          status: 'not_found',
+          reason: 'no_recent_pings',
+          ttl_days: TTL_DAYS,
+        });
+      }
     }
-  }
-}
 
-// 2) Fallback: legacy check – is er een site met first_ping_at?
-const { data: anyVerifiedSite, error } = await supabase
-  .from('sites')
-  .select('site_id, first_ping_at')
-  .eq('org_id', String(projectId))
-  .not('first_ping_at', 'is', null)
-  .order('first_ping_at', { ascending: false })
-  .limit(1)
-  .maybeSingle()
-
-if (error) return res.status(500).json({ error: error.message })
-
-if (anyVerifiedSite) {
-  return res.status(200).json({
-    status: 'ok',
-    mode: 'org',
-    siteId: anyVerifiedSite.site_id,
-    first_ping_at: anyVerifiedSite.first_ping_at
-  })
-}
-
-return res.status(200).json({ status: 'not_found', mode: 'org' })
-
-  } catch (err) {
-    console.error('❌ check-tracking error:', err)
-    return res.status(500).json({ error: 'Unexpected error' })
+    // 3) Parameters missen
+    return res.status(400).json({ error: 'missing_parameters', message: 'Provide siteId or orgId' });
+  } catch (e) {
+    return res.status(500).json({ error: 'server', detail: e.message });
   }
 }
