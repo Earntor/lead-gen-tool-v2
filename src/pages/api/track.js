@@ -206,27 +206,60 @@ export default async function handler(req, res) {
   }
 
   // 🔰 EARLY EXIT: VALIDATIE (géén ingest-JWT/siteId/IP nodig)
+// 🔰 EARLY EXIT: VALIDATIE (géén ingest-JWT/siteId/IP nodig)
 if (body && body.validationTest === true) {
   const orgIdFromBody = body.projectId || body.orgId || null;
+  // Probeer ook de site te bepalen zodat we de site-ping kunnen zetten
+  const siteIdCandidate = body.siteId || req.headers['x-site-id'] || null;
+
   if (!orgIdFromBody) {
     return res.status(400).json({ error: 'projectId is required for validationTest' });
   }
+
   try {
+    // 1) Org ping bijwerken (blijven we gewoon doen)
     await supabase
       .from('organizations')
-      .update({ last_tracking_ping: nowIso })   // gebruikt de globale nowIso
+      .update({ last_tracking_ping: nowIso })
       .eq('id', orgIdFromBody);
+
+    // 2) Site ping upserten (DIT ontbrak → hierdoor zag check-tracking niets)
+    if (siteIdCandidate) {
+      try {
+        // optioneel: eerste registratie van site als hij nog niet bestaat
+        const cleanedDomain = String(siteIdCandidate).replace(/^www\./, '');
+        const { data: existingSite } = await supabase
+          .from('sites')
+          .select('id')
+          .eq('site_id', siteIdCandidate)
+          .maybeSingle();
+
+        if (!existingSite) {
+          await supabase.from('sites').insert({
+            site_id: siteIdCandidate,
+            org_id: orgIdFromBody,
+            domain_name: cleanedDomain
+          });
+        }
+
+        // zet/refresh last_ping_at via je RPC
+        await supabase.rpc('upsert_site_ping', { p_site_id: siteIdCandidate });
+      } catch (e) {
+        console.warn('⚠️ validation site ping faalde:', e?.message || e);
+      }
+    }
 
     return res.status(200).json({
       success: true,
       validation: true,
-      org_id: orgIdFromBody
+      org_id: orgIdFromBody,
+      site_id: siteIdCandidate || null
     });
   } catch (e) {
-      console.warn('⚠️ validationTest update faalde:', e?.message || e);
-      return res.status(500).json({ error: 'validation update failed' });
-    }
+    console.warn('⚠️ validationTest update faalde:', e?.message || e);
+    return res.status(500).json({ error: 'validation update failed' });
   }
+}
 
   // Bearer-token (JWT) i.p.v. HMAC — pas ná de validatie early-exit
   let tokenPayload = null;

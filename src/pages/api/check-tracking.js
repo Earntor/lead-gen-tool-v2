@@ -58,34 +58,50 @@ export default async function handler(req, res) {
       });
     }
 
-    // 2) Check per org: is er iéts actief binnen 7 dagen?
-    if (orgId) {
-      const { data, error } = await supabase
-        .from('sites')
-        .select('id, site_id, last_ping_at')
-        .eq('org_id', orgId)
-        .gte('last_ping_at', thresholdIso)
-        .limit(1);
+ // 2) Check per org: is er iéts actief binnen 7 dagen?
+if (orgId) {
+  // a) primair: een site met recente ping
+  const { data: sitesData, error: sitesErr } = await supabase
+    .from('sites')
+    .select('id, site_id, last_ping_at')
+    .eq('org_id', orgId)
+    .gte('last_ping_at', thresholdIso)
+    .limit(1);
 
-      if (error) {
-        return res.status(500).json({ error: 'db', detail: error.message });
-      }
+  if (!sitesErr && sitesData && sitesData.length > 0) {
+    return res.status(200).json({
+      status: 'active',
+      any_active_site: sitesData[0].site_id,
+      last_ping_at: sitesData[0].last_ping_at,
+      ttl_days: TTL_DAYS,
+    });
+  }
 
-      if (data && data.length > 0) {
-        return res.status(200).json({
-          status: 'active',
-          any_active_site: data[0].site_id,
-          last_ping_at: data[0].last_ping_at,
-          ttl_days: TTL_DAYS,
-        });
-      } else {
-        return res.status(200).json({
-          status: 'not_found',
-          reason: 'no_recent_pings',
-          ttl_days: TTL_DAYS,
-        });
-      }
-    }
+  // b) fallback: organisatie-ping recent?
+  const { data: orgRow, error: orgErr } = await supabase
+    .from('organizations')
+    .select('last_tracking_ping')
+    .eq('id', orgId)
+    .maybeSingle();
+
+  if (!orgErr && orgRow?.last_tracking_ping && orgRow.last_tracking_ping >= thresholdIso) {
+    return res.status(200).json({
+      status: 'active',
+      any_active_site: null,
+      last_ping_at: orgRow.last_tracking_ping,
+      source: 'org_fallback',
+      ttl_days: TTL_DAYS,
+    });
+  }
+
+  // anders: niets gevonden
+  return res.status(200).json({
+    status: 'not_found',
+    reason: 'no_recent_pings',
+    ttl_days: TTL_DAYS,
+  });
+}
+
 
     // 3) Parameters missen
     return res.status(400).json({ error: 'missing_parameters', message: 'Provide siteId or orgId' });

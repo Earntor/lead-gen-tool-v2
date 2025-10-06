@@ -632,7 +632,7 @@ export default function Account() {
 
                   setTrackingMessage({
                     type: 'info',
-                    text: 'Open je website in een nieuw tabblad en vernieuw de pagina. We controleren elke 5 seconden of het script een ping stuurt (venster 7 dagen).'
+                    text: 'Open je website in een nieuw tabblad en vernieuw de pagina. We controleren elke 5 seconden of het script een ping stuurt.'
                   });
 
                   const POLL_MS = 5000;
