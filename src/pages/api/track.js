@@ -169,6 +169,7 @@ const COOLDOWN_MINUTES = { pending: Infinity, running: 5, done: 720, skipped: 72
 
 
 export default async function handler(req, res) {
+    const nowIso = new Date().toISOString();
   // CORS (voeg Authorization toe)
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -205,24 +206,23 @@ export default async function handler(req, res) {
   }
 
   // 🔰 EARLY EXIT: VALIDATIE (géén ingest-JWT/siteId/IP nodig)
-  if (body && body.validationTest === true) {
-    const orgIdFromBody = body.projectId || body.orgId || null;
-    if (!orgIdFromBody) {
-      return res.status(400).json({ error: 'projectId is required for validationTest' });
-    }
-    try {
-      const nowIso = new Date().toISOString();
-      await supabase
-        .from('organizations')
-        .update({ last_tracking_ping: nowIso })
-        .eq('id', orgIdFromBody);
+if (body && body.validationTest === true) {
+  const orgIdFromBody = body.projectId || body.orgId || null;
+  if (!orgIdFromBody) {
+    return res.status(400).json({ error: 'projectId is required for validationTest' });
+  }
+  try {
+    await supabase
+      .from('organizations')
+      .update({ last_tracking_ping: nowIso })   // gebruikt de globale nowIso
+      .eq('id', orgIdFromBody);
 
-      return res.status(200).json({
-        success: true,
-        validation: true,
-        org_id: orgIdFromBody
-      });
-    } catch (e) {
+    return res.status(200).json({
+      success: true,
+      validation: true,
+      org_id: orgIdFromBody
+    });
+  } catch (e) {
       console.warn('⚠️ validationTest update faalde:', e?.message || e);
       return res.status(500).json({ error: 'validation update failed' });
     }
