@@ -11,8 +11,11 @@ const INGEST_JWT_SECRET = process.env.INGEST_JWT_SECRET
 
 // ---- Bot UA helper (conservatief) ----
 const BOT_UA = [
-  'bot','spider','crawl','slurp','bingpreview',
-  'googlebot','applebot','baiduspider','yandex','duckduckbot',
+  'bot','spider','crawl','slurp',
+  'bingbot','bingpreview',
+  'googlebot','applebot','baiduspider',
+  'yandex','yandexbot',
+  'duckduckbot',
   'vercel-screenshot-bot','vercel-favicon-bot'
 ]
 function isBotUA(ua) {
@@ -22,14 +25,22 @@ function isBotUA(ua) {
 }
 
 export default async function handler(req, res) {
-  // CORS + anti-index headers (veilig)
+  // CORS + anti-index + response meta
   res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Site-Id')
+  res.setHeader('Content-Type', 'application/json; charset=utf-8')
+  res.setHeader('Vary', 'Origin, Referer, User-Agent')
   res.setHeader('X-Robots-Tag', 'noindex, nofollow, nosnippet, noarchive')
 
   if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Site-Id')
     return res.status(200).end()
+  }
+  if (req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method not allowed' })
+  }
+  if (!INGEST_JWT_SECRET) {
+    return res.status(500).json({ error: 'missing INGEST_JWT_SECRET' })
   }
 
   // 🛡️ Vroege bot-cutoff (scheelt Edge-requests/compute)
@@ -38,14 +49,7 @@ export default async function handler(req, res) {
     return res.status(204).end()
   }
 
-  if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' })
-  }
-
-  if (!INGEST_JWT_SECRET) {
-    return res.status(500).json({ error: 'missing INGEST_JWT_SECRET' })
-  }
-
+  // Query parameters
   const siteId = String((req.query.site || '')).toLowerCase().trim()
   const projectId = (req.query.projectId || '').trim()
   if (!siteId) {
@@ -62,7 +66,7 @@ export default async function handler(req, res) {
       (refHost && refHost.endsWith('.localhost'))
 
     if (
-      refHost &&
+      refHost &&                       // alleen checken als er een referer is
       !isLocalDev &&
       refHost !== siteId &&
       !refHost.endsWith('.' + siteId)
@@ -73,23 +77,41 @@ export default async function handler(req, res) {
     // Geen geldige referer → laten we toe
   }
 
-  // 🧠 Lookup org_id voor dit siteId
+  // 🧠 Lookup org_id met subdomein → apex fallback
   let orgId = null
   try {
-    const { data: site, error } = await supabase
+    // 1) exacte hostmatch op sites.site_id
+    let { data: row, error } = await supabase
       .from('sites')
       .select('org_id')
       .eq('site_id', siteId)
       .maybeSingle()
 
-    if (error) {
+    if (error && error.code !== 'PGRST116') {
       return res.status(500).json({ error: 'site lookup failed' })
     }
 
-    if (site?.org_id) {
-      orgId = site.org_id
+    if (row?.org_id) {
+      orgId = row.org_id
     } else {
-      // ❌ Geen site gevonden → fout teruggeven (site moet eerst gekoppeld zijn)
+      // 2) fallback: basisdomein match op sites.domain_name
+      // bv. shop.klant.nl → klant.nl
+      const base = siteId.replace(/^[^.]+\./, '')
+      if (base && base !== siteId) {
+        const { data: row2, error: err2 } = await supabase
+          .from('sites')
+          .select('org_id')
+          .eq('domain_name', base)
+          .maybeSingle()
+
+        if (err2 && err2.code !== 'PGRST116') {
+          return res.status(500).json({ error: 'site fallback lookup failed' })
+        }
+        if (row2?.org_id) orgId = row2.org_id
+      }
+    }
+
+    if (!orgId) {
       return res.status(400).json({ error: 'site not linked to any org' })
     }
   } catch {
@@ -102,8 +124,8 @@ export default async function handler(req, res) {
     {
       sub: `ingest:${siteId}`,
       site_id: siteId,
-      org_id: orgId,              // 👈 verplicht voor track.js
-      project_id: projectId || null, // optioneel
+      org_id: orgId,                 // 👈 verplicht voor /api/track
+      project_id: projectId || null, // optioneel, informatief
       iat: now,
       nbf: now - 5,
       exp: now + 3600

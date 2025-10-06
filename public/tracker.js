@@ -1,30 +1,58 @@
 (function () {
   try {
-    const ORIGIN = new URL((document.currentScript && document.currentScript.src) || window.location.href).origin;
+    // --- Vind het <script> element robuust ---
+    const scriptEl = document.currentScript || (function () {
+      const s = document.getElementsByTagName('script');
+      return s[s.length - 1];
+    })();
+
+    // --- Bepaal het origin van JOUW tracking-server (van de script src) ---
+    let ORIGIN = window.location.origin;
+    try { ORIGIN = new URL(scriptEl && scriptEl.src ? scriptEl.src : window.location.href).origin; } catch {}
     const TRACK_URL = ORIGIN + '/api/track';
     const TOKEN_URL = ORIGIN + '/api/ingest-token';
 
-    // Niet tracken op je eigen dashboard
-    if (window.location.hostname.endsWith('vercel.app')) return;
+    // --- Parameters uit snippet ---
+    const projectId = scriptEl && scriptEl.getAttribute('data-project-id') || null; // = org_id
+    const siteId = window.location.hostname;
 
-    // 🛡️ Extra: respecteer DNT + simpele bot-check
+    // --- ALTIJD: Éénmalige VALIDATIE-PING (zonder token) ---
+    // Dit zet organizations.last_tracking_ping én sites.last_ping_at (server patch nodig zoals besproken)
+    (function sendValidationPing() {
+      if (!projectId) return; // zonder org_id geen validatie
+      try {
+        fetch(TRACK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            validationTest: true,
+            projectId: projectId,
+            siteId: siteId,
+            pageUrl: window.location.href
+          }),
+          keepalive: true
+        }).catch(function () { /* stil */ });
+      } catch { /* stil */ }
+    })();
+
+    // --- Vanaf hier: echte tracking. Respecteer DNT/bot, en sla vercel.app over ---
     const ua = navigator.userAgent || '';
     const dnt = (navigator.doNotTrack === '1' || window.doNotTrack === '1');
     const BOT_HINTS = /(bot|spider|crawl|slurp|bingbot|bingpreview|googlebot|applebot|baiduspider|yandexbot|duckduckbot|vercel-(screenshot|favicon)-bot|dataproviderbot)/i;
+
+    // Niet tracken op je eigen dashboard domein
+    if (window.location.hostname.endsWith('vercel.app')) return;
+    // Respecteer DNT en bots voor echte tracking (validatie is hierboven al verstuurd)
     if (dnt || BOT_HINTS.test(ua)) return;
 
-    const scriptTag = document.currentScript;
-    const projectId = scriptTag?.getAttribute('data-project-id') || null;
-    const siteId = window.location.hostname;
-
-    // Anonieme ID per browser
+    // --- IDs ---
     let anonId = localStorage.getItem('anonId');
     if (!anonId) { anonId = crypto.randomUUID(); localStorage.setItem('anonId', anonId); }
 
-    // Session ID per tab
     let sessionId = sessionStorage.getItem('sessionId');
     if (!sessionId) { sessionId = crypto.randomUUID(); sessionStorage.setItem('sessionId', sessionId); }
 
+    // --- Context ---
     const pageUrl = window.location.href;
     const referrer = document.referrer || null;
 
@@ -33,10 +61,10 @@
     const utmMedium = utm.get('utm_medium') || null;
     const utmCampaign = utm.get('utm_campaign') || null;
 
-    // Zelfde klok voor start én eind
+    // --- Tijdmeting ---
     const startPerf = performance.now();
     let ended = false;
-    let lastEndAt = 0; // race-guard tegen dubbel eind-event
+    let lastEndAt = 0;
     let ingestToken = null;
 
     // --- Token cache (1 uur) ---
@@ -52,17 +80,13 @@
         return token;
       } catch { return null; }
     }
-
     function setCachedToken(token) {
       try {
-        const exp = Date.now() + ONE_HOUR_MS; // 1 uur geldig
+        const exp = Date.now() + ONE_HOUR_MS;
         localStorage.setItem(TOKEN_CACHE_KEY, JSON.stringify({ token, exp }));
       } catch {}
     }
-
-    function clearCachedToken() {
-      try { localStorage.removeItem(TOKEN_CACHE_KEY); } catch {}
-    }
+    function clearCachedToken() { try { localStorage.removeItem(TOKEN_CACHE_KEY); } catch {} }
 
     async function getToken() {
       const cached = getCachedToken();
@@ -81,7 +105,6 @@
       } catch { /* stil */ }
     }
 
-    // Payload helper
     function basePayload(extra = {}) {
       return {
         projectId,
@@ -100,7 +123,7 @@
       };
     }
 
-    // Post met Bearer, bij 401 één keer token verversen + retry
+    // Post met Bearer; bij 401 één keer token verversen + retry
     async function sendSigned(bodyObj) {
       if (!ingestToken) return;
       const payload = JSON.stringify(bodyObj);
@@ -119,13 +142,10 @@
       try {
         let res = await doPost();
         if (res && res.status === 401) {
-          // token verlopen → cache leeg, opnieuw halen en één retry
           clearCachedToken();
           ingestToken = null;
           await getToken();
-          if (ingestToken) {
-            res = await doPost();
-          }
+          if (ingestToken) res = await doPost();
         }
       } catch { /* stil */ }
     }
@@ -137,7 +157,7 @@
     async function sendEndOnce(reason) {
       const now = Date.now();
       if (ended) return;
-      if (now - lastEndAt < 1000) return; // extra guard tegen dubbele end binnen 1s
+      if (now - lastEndAt < 1000) return;
       lastEndAt = now;
 
       ended = true;
