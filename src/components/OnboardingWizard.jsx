@@ -29,6 +29,10 @@ export default function OnboardingWizard({ open, onClose, onComplete }) {
   const [copyMsg, setCopyMsg] = useState('');
   const [validateMsg, setValidateMsg] = useState(null);
   const [validating, setValidating] = useState(false);
+  const [companyName, setCompanyName] = useState('');
+  const [domain, setDomain] = useState(''); // gebruiker typt alleen "bedrijf.nl"
+  const [companyMsg, setCompanyMsg] = useState(null);
+
 
   // ---------- helpers ----------
   function splitFullName(name) {
@@ -108,16 +112,18 @@ if (open === false) {
       setRole(prefs.user_role || '');
 
       const owner = !!json.isOwner;
-      setTotalSteps(owner ? 4 : 3);
+      setTotalSteps(owner ? 5 : 3);
 
       let s = 1;
-      if (onboarding.step === 'profile_done') s = 2;
-      if (onboarding.step === 'role_done') s = owner ? 3 : 3;
-      if (onboarding.completed) {
-        setVisible(false);
-        return;
-      }
-      setStep(s);
+if (onboarding.step === 'profile_done') s = 2;
+if (onboarding.step === 'role_done') s = owner ? 3 : 3;
+if (onboarding.step === 'company_done') s = owner ? 4 : 3;
+if (onboarding.completed) {
+  setVisible(false);
+  return;
+}
+setStep(s);
+
     })();
 
     return () => {
@@ -198,6 +204,37 @@ if (open === false) {
       setLoading(false);
     }
   }
+
+    async function saveCompany() {
+    setCompanyMsg(null);
+    const nm = String(companyName || '').trim();
+    const dm = String(domain || '').trim();
+
+    if (!nm) { setCompanyMsg({ type: 'error', text: 'Vul je bedrijfsnaam in.' }); return; }
+    if (!dm) { setCompanyMsg({ type: 'error', text: 'Vul je domein in, bijv. bedrijf.nl' }); return; }
+    if (/\s/.test(dm) || dm.includes('/')) {
+      setCompanyMsg({ type: 'error', text: 'Alleen het domein, zonder http(s) en zonder pad. Voorbeeld: bedrijf.nl' });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const resp = await authedFetch('/api/onboarding', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'saveCompany', companyName: nm, domain: dm }),
+      });
+      const json = await parseJsonSafe(resp);
+      if (!resp.ok) throw new Error(json?.error || 'Opslaan mislukt');
+      setCompanyMsg({ type: 'success', text: 'Bedrijfsgegevens opgeslagen.' });
+      setStep((s) => s + 1);
+    } catch (e) {
+      setCompanyMsg({ type: 'error', text: e.message || 'Opslaan mislukt' });
+    } finally {
+      setLoading(false);
+    }
+  }
+
 
   async function complete() {
     console.log('[Onboarding] complete() start');
@@ -284,7 +321,7 @@ async function validateOnce() {
   setValidating(true);
   setValidateMsg({
     type: 'info',
-    text: 'Open je website in een nieuw tabblad en vernieuw de pagina. We controleren elke 5 seconden of het script een ping stuurt (venster 7 dagen).'
+    text: 'Open je website in een nieuw tabblad en vernieuw de pagina. We controleren elke 5 seconden of het script een ping stuurt.'
   });
 
   // 1) Eén directe check
@@ -490,8 +527,8 @@ async function validateOnce() {
               </>
             )}
 
-            {/* Stap 3 (owner): script tonen + checken */}
-            {step === 3 && isOwner && (
+            {/* Stap 4 (owner): script tonen + checken */}
+            {step === 4 && isOwner && (
               <>
                 <p className="text-sm text-gray-700">
                   Plaats dit script in de &lt;head&gt; van je website. Daarna kun je hieronder de installatie testen.
@@ -599,8 +636,85 @@ async function validateOnce() {
               </>
             )}
 
+                        {/* Stap 3 (owner): Bedrijfsnaam + Domein */}
+            {step === 3 && isOwner && (
+              <>
+                <p className="text-sm text-gray-700 mb-4">
+                  Vul je <b>bedrijfsnaam</b> en je <b>hoofddomein</b> in.
+                </p>
+
+                <div className="space-y-4">
+                  {/* Bedrijfsnaam */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Bedrijfsnaam <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={companyName}
+                      onChange={(e) => setCompanyName(e.target.value)}
+                      placeholder="Bijv. Interfloor BV"
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                    />
+                  </div>
+
+                  {/* Domein met grijze prefix "https://" */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Domein (zonder https://) <span className="text-red-500">*</span>
+                    </label>
+                    <div className="flex items-stretch">
+                      <span className="inline-flex items-center px-3 rounded-l-lg border border-r-0 bg-gray-100 text-gray-600 text-sm select-none">
+                        https://
+                      </span>
+                      <input
+                        type="text"
+                        required
+                        inputMode="url"
+                        pattern="^[^\\s/]+$"
+                        value={domain}
+                        onChange={(e) => {
+                          let v = e.target.value.trim();
+                          v = v.replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+                          setDomain(v);
+                        }}
+                        placeholder="bedrijf.nl"
+                        className="w-full rounded-r-lg border px-3 py-2 text-sm"
+                        aria-describedby="domain-help"
+                      />
+                    </div>
+                    <p id="domain-help" className="text-xs text-gray-500 mt-1">
+                      Alleen het domein invullen. Voorbeeld: <code>bedrijf.nl</code>
+                    </p>
+                  </div>
+
+                  {companyMsg && (
+                    <div
+                      className={`p-2 rounded text-sm ${
+                        companyMsg.type === 'success'
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-red-100 text-red-700'
+                      }`}
+                    >
+                      {companyMsg.text}
+                    </div>
+                  )}
+                </div>
+
+                <ActionBar
+                  onPrimary={saveCompany}
+                  primaryText={loading ? 'Opslaan…' : 'Volgende'}
+                  onSecondary={() => setStep((s) => Math.max(1, s - 1))}
+                  secondaryText="Vorige"
+                  disabled={loading}
+                />
+              </>
+            )}
+
+
             {/* Stap 3 (niet-owner) of stap 4 (owner) – afronden */}
-            {((!isOwner && step === 3) || (isOwner && step === 4)) && (
+            {((!isOwner && step === 3) || (isOwner && step === 5)) && (
               <>
                 <h3 className="text-base font-semibold text-gray-800 mb-2">Klaar! 🎉</h3>
                 <p className="text-sm text-gray-700">

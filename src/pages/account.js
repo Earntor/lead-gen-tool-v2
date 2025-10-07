@@ -67,6 +67,15 @@ export default function Account() {
   const [digestLoading, setDigestLoading] = useState(false);
   const [digestSaving, setDigestSaving] = useState(false);
   const pollRef = useRef(null);
+  // ← bedrijf + domein
+const [companyName, setCompanyName] = useState('');
+const [companyDomain, setCompanyDomain] = useState('');
+const [websiteUrl, setWebsiteUrl] = useState('');
+const [isOrgOwner, setIsOrgOwner] = useState(false);
+const [companyMsg, setCompanyMsg] = useState(null);
+const [savingCompany, setSavingCompany] = useState(false);
+
+
 
   const getTrackingStatusBadge = () => {
     // We zetten lastTrackingPing alleen als /api/check-tracking 'active' teruggeeft (≤ 7 dagen)
@@ -132,6 +141,21 @@ export default function Account() {
           const domain = (process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin).replace(/\/$/, '')
           const script = `<script src="${domain}/tracker.js" data-project-id="${profile.current_org_id}" async></script>`
           setTrackingScript(script)
+
+          // --- Nieuw: organisatiegegevens inladen ---
+const { data: org } = await supabase
+  .from('organizations')
+  .select('id, name, company_domain, website_url, owner_user_id')
+  .eq('id', profile.current_org_id)
+  .maybeSingle();
+
+if (org) {
+  setCompanyName(org.name || '');
+  setCompanyDomain(org.company_domain || '');
+  setWebsiteUrl(org.website_url || '');
+  setIsOrgOwner(org.owner_user_id === user.id);
+}
+
         }
       }
 
@@ -203,10 +227,26 @@ export default function Account() {
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'organizations', filter: `id=eq.${currentOrgId}` },
         (payload) => {
-          if (payload.new?.last_tracking_ping) {
-            setLastTrackingPing(payload.new.last_tracking_ping);
-          }
-        }
+  const o = payload.new || {};
+
+  // altijd zetten (ook als null) → UI blijft in sync
+  if (typeof o.last_tracking_ping !== 'undefined') {
+    setLastTrackingPing(o.last_tracking_ping || null);
+  }
+  if (typeof o.name !== 'undefined') {
+    setCompanyName(o.name || '');
+  }
+  if (typeof o.company_domain !== 'undefined') {
+    setCompanyDomain(o.company_domain || '');
+  }
+  if (typeof o.website_url !== 'undefined') {
+    setWebsiteUrl(o.website_url || '');
+  }
+  if (typeof o.owner_user_id !== 'undefined' && user?.id) {
+    setIsOrgOwner(o.owner_user_id === user.id);
+  }
+}
+
       )
       .subscribe();
     return () => {
@@ -346,6 +386,50 @@ export default function Account() {
     }
   }
 
+async function getBearer() {
+  const { data } = await supabase.auth.getSession();
+  return data?.session?.access_token || null;
+}
+
+async function saveCompanyFromAccount() {
+  setCompanyMsg(null);
+
+  if (!isOrgOwner) {
+    setCompanyMsg({ type: 'error', text: 'Alleen de eigenaar kan dit wijzigen.' });
+    return;
+  }
+
+  const nm = String(companyName || '').trim();
+  let dm = String(companyDomain || '').trim();
+  dm = dm.replace(/^https?:\/\//i, '').replace(/\/.*$/, ''); // alleen eTLD+1
+
+  if (!nm) { setCompanyMsg({ type: 'error', text: 'Vul je bedrijfsnaam in.' }); return; }
+  if (!dm) { setCompanyMsg({ type: 'error', text: 'Vul je domein in (bijv. bedrijf.nl).' }); return; }
+
+  setSavingCompany(true);
+  try {
+    const t = await getBearer();
+    const resp = await fetch('/api/onboarding', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+      body: JSON.stringify({ action: 'saveCompany', companyName: nm, domain: dm }),
+    });
+    const json = await resp.json().catch(() => null);
+    if (!resp.ok) throw new Error(json?.error || 'Opslaan mislukt');
+
+    // direct lokale UI syncen
+    setCompanyDomain(json?.company_domain || dm);
+    setWebsiteUrl(json?.website_url || (`https://${dm}/`));
+    setCompanyMsg({ type: 'success', text: 'Opgeslagen.' });
+  } catch (e) {
+    setCompanyMsg({ type: 'error', text: e.message || 'Opslaan mislukt' });
+  } finally {
+    setSavingCompany(false);
+  }
+}
+
+
+
   // ⬇️ alle tab-inhoud in één interne component
   function Panels() {
     return (
@@ -446,6 +530,95 @@ export default function Account() {
                 </Label>
               </div>
             </fieldset>
+
+{/* --- Bedrijf & Domein (stap 6) --- */}
+<div className="mt-8 border-t pt-6">
+  <h3 className="text-lg font-semibold mb-3">Bedrijf &amp; Domein</h3>
+  {!isOrgOwner && (
+    <p className="text-sm text-gray-600 mb-3">
+      Alleen de <b>eigenaar</b> kan deze gegevens wijzigen. Je kunt ze wel bekijken.
+    </p>
+  )}
+
+  <div className="space-y-4">
+    {/* Bedrijfsnaam */}
+    <div>
+      <label className="block text-sm mb-1">Bedrijfsnaam</label>
+      <Input
+        type="text"
+        value={companyName}
+        onChange={(e) => setCompanyName(e.target.value)}
+        disabled={!isOrgOwner}
+        placeholder="Bijv. Interfloor BV"
+      />
+    </div>
+
+    {/* Domein met grijze prefix "https://" */}
+    <div>
+      <label className="block text-sm mb-1">Domein (zonder https://)</label>
+      <div className="flex items-stretch">
+        <span className="inline-flex items-center px-3 rounded-l-lg border border-r-0 bg-gray-100 text-gray-600 text-sm select-none">
+          https://
+        </span>
+        <input
+          type="text"
+          inputMode="url"
+          pattern="^[^\\s/]+$"
+          value={companyDomain}
+          onChange={(e) => {
+            let v = e.target.value.trim();
+            v = v.replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+            setCompanyDomain(v);
+          }}
+          disabled={!isOrgOwner}
+          placeholder="bedrijf.nl"
+          className="w-full rounded-r-lg border px-3 py-2 text-sm"
+          aria-describedby="acc-domain-help"
+        />
+      </div>
+      <p id="acc-domain-help" className="text-xs text-gray-500 mt-1">
+        Alleen het hoofddomein invullen (eTLD+1). Voorbeeld: <code>bedrijf.nl</code>
+      </p>
+    </div>
+
+    {/* Website URL (alleen tonen als bekend) */}
+    {websiteUrl && (
+      <p className="text-xs text-gray-500">
+        Website URL: <span className="font-mono">{websiteUrl}</span>
+      </p>
+    )}
+
+    {/* Meldingen */}
+    {companyMsg && (
+      <div
+        className={`p-2 rounded text-sm ${
+          companyMsg.type === 'success'
+            ? 'bg-green-100 text-green-700'
+            : 'bg-red-100 text-red-700'
+        }`}
+      >
+        {companyMsg.text}
+      </div>
+    )}
+
+    {/* Opslaan */}
+    <div>
+      <button
+        onClick={saveCompanyFromAccount}
+        disabled={!isOrgOwner || savingCompany}
+        className="bg-black text-white px-4 py-2 rounded hover:bg-neutral-800 disabled:opacity-50"
+      >
+        {savingCompany ? 'Opslaan…' : 'Opslaan'}
+      </button>
+      {!isOrgOwner && (
+        <span className="ml-3 text-xs text-gray-500">
+          Je bent geen eigenaar van deze organisatie.
+        </span>
+      )}
+    </div>
+  </div>
+</div>
+
 
             <button
               onClick={handleUpdate}

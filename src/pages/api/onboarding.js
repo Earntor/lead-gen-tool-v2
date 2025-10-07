@@ -1,5 +1,7 @@
 // pages/api/onboarding.js
 import { supabaseAdmin } from '../../lib/supabaseAdminClient'
+import psl from 'psl';
+import punycode from 'node:punycode';
 
 // ===== helpers ===================================================
 
@@ -19,6 +21,56 @@ function mergePrefs(prev = {}, patch = {}) {
   }
   return next
 }
+
+// ========== Domein-helpers ==========
+const BLOCKED_SUFFIXES = ['vercel.app'];
+const BLOCKED_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+const DOMAIN_MIN_LEN = 4;
+
+function looksLikeIp(host) {
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+}
+function stripProtocol(hostOrUrl) {
+  const s = String(hostOrUrl || '').trim();
+  return s.replace(/^\s*https?:\/\//i, '').replace(/\/.*$/, '');
+}
+function toAsciiHost(hostRaw) {
+  const h = String(hostRaw || '').trim().toLowerCase();
+  if (!h) return '';
+  try { return punycode.toASCII(h); } catch { return h; }
+}
+function publicSuffixRoot(hostAscii) {
+  const parsed = psl.parse(hostAscii);
+  if (parsed.error || !parsed.domain) return null;
+  return parsed.domain.toLowerCase();
+}
+function isBlockedDomain(hostAscii) {
+  if (!hostAscii) return true;
+  if (BLOCKED_HOSTS.has(hostAscii)) return true;
+  if (looksLikeIp(hostAscii)) return true;
+  if (BLOCKED_SUFFIXES.some(suf => hostAscii.endsWith('.' + suf) || hostAscii === suf)) return true;
+  return false;
+}
+/** Normaliseert input naar { domainRoot, websiteUrl } */
+function normalizeDomainInput(input) {
+  const raw = String(input || '').trim();
+  if (!raw) throw new Error('Vul een domein in.');
+  const stripped = stripProtocol(raw);
+  const hostAscii = toAsciiHost(stripped);
+  if (!hostAscii || hostAscii.length < DOMAIN_MIN_LEN) {
+    throw new Error('Vul een geldig domein in (bijv. bedrijf.nl).');
+  }
+  if (isBlockedDomain(hostAscii)) {
+    throw new Error('Dit domein is niet toegestaan (staging/localhost/vercel/ip).');
+  }
+  const root = publicSuffixRoot(hostAscii);
+  if (!root || root.length < DOMAIN_MIN_LEN) {
+    throw new Error('Kon geen geldig hoofddomein bepalen. Probeer bijvoorbeeld: bedrijf.nl');
+  }
+  const websiteUrl = `https://${root}/`;
+  return { domainRoot: root, websiteUrl };
+}
+
 
 const ALLOWED_ROLES = ['Sales', 'Marketing', 'Management', 'Technisch', 'Overig']
 
@@ -232,6 +284,181 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ ok: true })
   }
+
+  // ---- saveCompany (owner-only): bedrijfsnaam + domein
+  if (action === 'saveCompany') {
+    if (!orgId) return res.status(400).json({ error: 'Geen organisatie gekoppeld.' });
+
+    // owner check
+    let ownerCheck = false;
+    {
+      const { data: org } = await supabaseAdmin
+        .from('organizations')
+        .select('owner_user_id')
+        .eq('id', orgId)
+        .maybeSingle();
+      ownerCheck = !!org && org.owner_user_id === user.id;
+    }
+    if (!ownerCheck) return res.status(403).json({ error: 'Alleen de eigenaar kan dit instellen.' });
+
+    const companyName = String(body.companyName || '').trim();
+    const domainInput = String(body.domain || '').trim();
+    if (!companyName) return res.status(400).json({ error: 'Bedrijfsnaam is verplicht.' });
+    if (!domainInput) return res.status(400).json({ error: 'Domein is verplicht.' });
+
+    let norm;
+    try {
+      norm = normalizeDomainInput(domainInput);
+    } catch (e) {
+      return res.status(400).json({ error: e.message || 'Ongeldig domein' });
+    }
+    const { domainRoot, websiteUrl } = norm;
+
+    // unieke claim check tegen andere orgs
+    {
+      const { data: clash } = await supabaseAdmin
+        .from('organizations')
+        .select('id')
+        .eq('company_domain', domainRoot)
+        .neq('id', orgId)
+        .maybeSingle();
+      if (clash && clash.id) {
+        return res.status(409).json({ error: 'Dit domein is al geclaimd door een andere organisatie.' });
+      }
+    }
+
+// 1) sites upsert (op (org_id, domain_name)) - race safe + site_id fallback
+let primarySiteId = null;
+{
+  const { data: existingSite, error: selErr } = await supabaseAdmin
+    .from('sites')
+    .select('id, site_id')
+    .eq('org_id', orgId)
+    .eq('domain_name', domainRoot)
+    .maybeSingle();
+  if (selErr) return res.status(500).json({ error: selErr.message });
+
+  if (existingSite?.id) {
+    // Alleen URL bijwerken; primary regelen we dadelijk in twee stappen (clear → set)
+    const { data: upd, error: upErr } = await supabaseAdmin
+      .from('sites')
+      .update({ website_url: websiteUrl })
+      .eq('id', existingSite.id)
+      .select('id')
+      .single();
+    if (upErr) return res.status(500).json({ error: upErr.message });
+    primarySiteId = upd.id;
+  } else {
+    // Insert met is_primary=false om partial unique (max 1 true) te ontwijken
+    let insRes = await supabaseAdmin
+      .from('sites')
+      .insert({
+        org_id: orgId,
+        site_id: domainRoot,
+        domain_name: domainRoot,
+        website_url: websiteUrl,
+        is_primary: false
+      })
+      .select('id')
+      .single();
+
+    if (insRes.error) {
+      const code = insRes.error.code || '';
+      const msg  = (insRes.error.message || '').toLowerCase();
+
+      // 23505 kan van site_id (globaal unique) of van (org_id, domain_name) komen
+      if (code === '23505' || msg.includes('duplicate') || msg.includes('unique')) {
+        // 1) proberen: botsing op site_id → fallback op alternatieve site_id
+        if (msg.includes('site_id') || /site_id/i.test(msg)) {
+          const altId = `${domainRoot}--${Math.random().toString(36).slice(2,8)}`;
+          insRes = await supabaseAdmin
+            .from('sites')
+            .insert({
+              org_id: orgId,
+              site_id: altId,
+              domain_name: domainRoot,
+              website_url: websiteUrl,
+              is_primary: false
+            })
+            .select('id')
+            .single();
+          if (insRes.error) return res.status(500).json({ error: insRes.error.message });
+        } else {
+          // 2) waarschijnlijk botsing op (org_id, domain_name) → reselecteer en gebruik die
+          const { data: ex2, error: sel2 } = await supabaseAdmin
+            .from('sites')
+            .select('id')
+            .eq('org_id', orgId)
+            .eq('domain_name', domainRoot)
+            .maybeSingle();
+          if (sel2) return res.status(500).json({ error: sel2.message });
+          if (!ex2?.id) return res.status(409).json({ error: 'Domein bestaat al (org), maar niet terug te vinden.' });
+          primarySiteId = ex2.id;
+        }
+      }
+    }
+
+    if (!primarySiteId) {
+      if (insRes.error) return res.status(500).json({ error: insRes.error.message });
+      primarySiteId = insRes.data.id;
+    }
+  }
+
+  // Twee-fasen toggle om partial unique collision te voorkomen:
+  // 1) clear alles in org → false
+  const { error: clrErr } = await supabaseAdmin
+    .from('sites')
+    .update({ is_primary: false })
+    .eq('org_id', orgId);
+  if (clrErr) return res.status(500).json({ error: clrErr.message });
+
+  // 2) zet exact deze op true
+  const { error: setErr } = await supabaseAdmin
+    .from('sites')
+    .update({ is_primary: true })
+    .eq('id', primarySiteId);
+  if (setErr) return res.status(500).json({ error: setErr.message });
+}
+
+
+
+    // 2) organizations bijwerken
+    {
+      const { error: upOrgErr } = await supabaseAdmin
+        .from('organizations')
+        .update({
+          name: companyName,
+          company_domain: domainRoot,
+          website_url: websiteUrl,
+          primary_site_id: primarySiteId
+        })
+        .eq('id', orgId);
+      if (upOrgErr) {
+        if ((upOrgErr.code || '') === '23505') {
+          return res.status(409).json({ error: 'Dit domein is al geclaimd door een andere organisatie.' });
+        }
+        return res.status(500).json({ error: upOrgErr.message });
+      }
+    }
+
+    // 3) onboarding stap markeren
+    {
+      const prefsNext = mergePrefs(profile.preferences, { onboarding: { step: 'company_done' } });
+      const { error: upPrefErr } = await supabaseAdmin
+        .from('profiles')
+        .update({ preferences: prefsNext, updated_at: nowIso })
+        .eq('id', user.id);
+      if (upPrefErr) return res.status(500).json({ error: upPrefErr.message });
+    }
+
+    await logEventSafe(user.id, orgId, 'company_saved', {
+      company_name: companyName, company_domain: domainRoot
+    });
+
+    return res.status(200).json({ ok: true, company_domain: domainRoot, website_url: websiteUrl });
+  }
+
+
 
   // ---- complete (niet blokkeren op tracking)
   if (action === 'complete') {
