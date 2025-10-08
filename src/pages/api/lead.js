@@ -965,6 +965,8 @@ let location = null;
 
 
 // Queue-status bijwerken voor alle pending jobs van deze bezoeker (ip+site)
+// Queue-status bijwerken voor deze bezoeker (ip+site)
+// ✅ werkt voor zowel 'pending' als 'running'
 const markQueue = async (status, reason) => {
   try {
     await supabaseAdmin
@@ -976,11 +978,30 @@ const markQueue = async (status, reason) => {
       })
       .eq('ip_address', ip_address)
       .eq('site_id', site_id)
-      .eq('status', 'pending');
+      .in('status', ['pending','running']); // 👈 belangrijk
   } catch (e) {
     console.warn('⚠️ queue status update faalde:', e.message);
   }
 };
+
+// Optioneel: zet pending → running zodra we echt starten
+const markQueueRunning = async () => {
+  try {
+    await supabaseAdmin
+      .from('enrichment_queue')
+      .update({
+        status: 'running',
+        updated_at: new Date().toISOString(),
+        error_text: null
+      })
+      .eq('ip_address', ip_address)
+      .eq('site_id', site_id)
+      .eq('status', 'pending');
+  } catch (e) {
+    console.warn('⚠️ queue running-set faalde:', e.message);
+  }
+};
+
 
 
   // ⛔️ Skip ALLE app-bezoeken (host of bekende paden) – vóór welk heavy werk dan ook
@@ -1022,6 +1043,7 @@ try {
 
 
   try {
+    await markQueueRunning(); // 👈 zet pending → running
     console.log('--- API LEAD DEBUG ---');
     console.log('Request body:', { ip_address, org_id, page_url });
 
@@ -1087,11 +1109,13 @@ if (cached && !needsDomainEnrichment && !manualLock) {
       const ipapiRes = await fetch(`http://ip-api.com/json/${ip_address}`);
       const contentType = ipapiRes.headers.get("content-type");
 
-      if (!ipapiRes.ok || !contentType?.includes("application/json")) {
+            if (!ipapiRes.ok || !contentType?.includes("application/json")) {
         const fallbackText = await ipapiRes.text();
         console.error("❌ IP-API gaf geen JSON terug:", fallbackText.slice(0, 300));
+        await markQueue('error', 'ip-api non-json'); // 👈 queue niet laten hangen
         return res.status(500).json({ error: 'IP-API gaf geen JSON terug' });
       }
+
 
       const ipapi = await ipapiRes.json();
 
@@ -1543,6 +1567,16 @@ try {
     const og = /<meta[^>]+property=["']og:url["'][^>]*content=["']([^"']+)/i.exec(html);
     if (og?.[1])    { try { ogHost = new URL(og[1], 'http://dummy').hostname; } catch {} }
 
+    // META refresh → mogelijke client-side "redirect"
+let metaRefreshHost = null;
+try {
+  const m = /<meta[^>]+http-equiv=["']refresh["'][^>]*content=["'][^"']*url=([^"']+)["']/i.exec(html);
+  if (m?.[1]) {
+    metaRefreshHost = new URL(m[1], 'http://dummy').hostname;
+  }
+} catch {}
+
+
     const manifest = /<link[^>]+rel=["']manifest["'][^>]*href=["']([^"']+)/i.exec(html);
     if (manifest?.[1]) manifestUrl = manifest[1];
 
@@ -1763,23 +1797,25 @@ try {
 
 
     // 3c) canonical/og hosts
-    for (const rawHost of [canonicalHost, ogHost].filter(Boolean)) {
-      const cand = cleanAndValidateDomain(
-        rawHost,
-        ENRICHMENT_SOURCES.HTTP_FETCH,
-        asname, org_id, page_url, ip_address,
-        confidence, confidence_reason
-      );
-      if (!cand) continue;
-      const sig = await logDomainSignal({
-        ip_address,
-        domain: cand,
-        source: ENRICHMENT_SOURCES.HTTP_FETCH,
-        confidence: 0.6,
-        confidence_reason: 'HTML canonical/og'
-      });
-      if (sig) domainSignals.push(sig);
-    }
+    for (const rawHost of [canonicalHost, ogHost, metaRefreshHost].filter(Boolean)) {
+  const cand = cleanAndValidateDomain(
+    rawHost,
+    ENRICHMENT_SOURCES.HTTP_FETCH,
+    asname, org_id, page_url, ip_address,
+    confidence, confidence_reason
+  );
+  if (!cand) continue;
+  const reason = (rawHost === metaRefreshHost) ? 'HTML meta refresh' : 'HTML canonical/og';
+  const sig = await logDomainSignal({
+    ip_address,
+    domain: cand,
+    source: ENRICHMENT_SOURCES.HTTP_FETCH,
+    confidence: (rawHost === metaRefreshHost) ? 0.58 : 0.6,
+    confidence_reason: reason
+  });
+  if (sig) domainSignals.push(sig);
+}
+
     // 3d) CSP header(s) → hosts
     try {
       const cspHeader = hdrs['content-security-policy'] || hdrs['content-security-policy-report-only'] || null;
@@ -2482,6 +2518,8 @@ try {
 
    // ✅ Stap 9 – Combineer signalen
 // Kleine dedupe: dezelfde bron + hetzelfde domein telt maar één keer
+// ✅ Stap 9 – Combineer signalen (ALTIJD draaien) en log precies één "final pick"
+// 9.0 Dedupe: dezelfde bron + hetzelfde domein telt maar één keer
 if (domainSignals.length) {
   const seen = new Set();
   domainSignals = domainSignals.filter(s => {
@@ -2492,118 +2530,125 @@ if (domainSignals.length) {
   });
 }
 
-if (!company_domain && domainSignals.length > 0) {
-  const likely = getLikelyDomainFromSignals(domainSignals);
+let signals_base_confidence = null; // wordt gevuld als we 'likely' hebben
+let likely = null;
+
+// 9.1 Bereken 'likely' ALS er signalen zijn
+if (domainSignals.length > 0) {
+  likely = getLikelyDomainFromSignals(domainSignals);
+
   if (likely?.breakdown) {
-  console.log('🧮 voting breakdown', {
-    chosen: likely.domain,
-    hardCount: likely.breakdown.hardCount,
-    hardMax: likely.breakdown.hardMax,
-    diversityBonus: likely.breakdown.diversityBonus,
-    topContributors: likely.breakdown.topContributors
-  });
-}
+    console.log('🧮 voting breakdown', {
+      chosen: likely.domain,
+      hardCount: likely.breakdown.hardCount,
+      hardMax: likely.breakdown.hardMax,
+      diversityBonus: likely.breakdown.diversityBonus,
+      topContributors: likely.breakdown.topContributors
+    });
+  }
 
-
+  // Frequentieboost op likely
   if (likely?.domain) {
     const freqBoost = await calculateConfidenceByFrequency(ip_address, likely.domain);
-    if (freqBoost && freqBoost.confidence > likely.confidence) {
+    if (freqBoost && freqBoost.confidence > (likely.confidence ?? 0)) {
       likely.confidence = freqBoost.confidence;
       likely.confidence_reason = freqBoost.reason;
       console.log('🔁 Confidence aangepast op basis van frequentieboost:', freqBoost);
     }
   }
 
-// BEGIN PATCH: confirmed by form (directe query, snel dankzij indexen)
-try {
-  if (likely?.domain) {
-    // 1) Exacte match: (ip, domain)
-    const q1 = await supabaseAdmin
-      .from('form_submission_log')
-      .select('id', { count: 'exact', head: true })
-      .eq('ip', ip_address)
-      .eq('domain', likely.domain);
-    const count1 = (q1 && typeof q1.count === 'number') ? q1.count : 0;
+  // Confirmed-by-form check
+  try {
+    if (likely?.domain) {
+      const q1 = await supabaseAdmin
+        .from('form_submission_log')
+        .select('id', { count: 'exact', head: true })
+        .eq('ip', ip_address)
+        .eq('domain', likely.domain);
+      const count1 = (q1 && typeof q1.count === 'number') ? q1.count : 0;
 
-    // 2) Fallback: (ip, email eindigt op @domain) — trigram index helpt
-    const q2 = await supabaseAdmin
-      .from('form_submission_log')
-      .select('id', { count: 'exact', head: true })
-      .eq('ip', ip_address)
-      .ilike('email', `%@${likely.domain}`);
-    const count2 = (q2 && typeof q2.count === 'number') ? q2.count : 0;
+      const q2 = await supabaseAdmin
+        .from('form_submission_log')
+        .select('id', { count: 'exact', head: true })
+        .eq('ip', ip_address)
+        .ilike('email', `%@${likely.domain}`);
+      const count2 = (q2 && typeof q2.count === 'number') ? q2.count : 0;
 
-    if ((count1 + count2) > 0) {
-      likely.confidence = Math.max(likely.confidence ?? 0, 0.8);
-      likely.confidence_reason = (likely.confidence_reason ? likely.confidence_reason + ' + ' : '') + 'confirmed by form';
+      if ((count1 + count2) > 0) {
+        likely.confidence = Math.max(likely.confidence ?? 0, 0.8);
+        likely.confidence_reason = (likely.confidence_reason ? likely.confidence_reason + ' + ' : '') + 'confirmed by form';
+      }
     }
+  } catch (e) {
+    console.warn('⚠️ confirmed-by-form live check faalde:', e.message);
   }
-} catch (e) {
-  console.warn('⚠️ confirmed-by-form live check faalde:', e.message);
-}
-// END PATCH
 
-
-  if (likely) {
-    // Laat ook het 'likely domain' via onze centrale validatie gaan
-    const validatedLikely = cleanAndValidateDomain(
-      likely.domain,
-      ENRICHMENT_SOURCES.FINAL_LIKELY,
-      asname,
-      org_id,
-      page_url,
-      ip_address,
-      likely.confidence,
-      likely.confidence_reason
-    );
-
-    if (!validatedLikely) {
-  console.log(`⛔ Domein uit signals geblokkeerd door cleanAndValidateDomain: ${likely.domain}`);
-  await markQueue('skipped', 'skipped: blocked by cleanAndValidateDomain');
-  return res.status(200).json({ ignored: true, reason: 'blocked by cleanAndValidateDomain' });
-}
-
-
-    company_domain = validatedLikely;
-    enrichment_source = likely.enrichment_source || ENRICHMENT_SOURCES.FINAL_LIKELY;
-    confidence = likely.confidence;
-    confidence_reason = likely.confidence_reason;
-
-    console.log('🧠 Gekozen domein op basis van signalen:', company_domain);
-
-    await supabaseAdmin.from('domain_signal_log').insert({
-      ip_address,
-      signals: domainSignals,
-      chosen_domain: company_domain,
-      enrichment_source,
-      confidence,
-      confidence_reason,
-      site_id: site_id || null,
-page_url: page_url || null,
-    });
-  } 
-  
-  // --- SIGNAL FLOOR: bewaar de gecombineerde signalen-score als ondergrens ---
-let signals_base_confidence = null;
-if (typeof likely?.confidence === 'number' && !Number.isNaN(likely.confidence)) {
-  signals_base_confidence = likely.confidence;
-}
-  
-  else {
-    console.log('❌ Geen domein gekozen op basis van gecombineerde signalen');
-
-    await supabaseAdmin.from('domain_signal_log').insert({
-      ip_address,
-      signals: domainSignals,
-      chosen_domain: null,
-      enrichment_source: ENRICHMENT_SOURCES.FINAL_LIKELY,
-      confidence: null,
-confidence_reason: CONFIDENCE_REASONS.FINAL_LIKELY,
-site_id: site_id || null,
-page_url: page_url || null,
-    });
+  // Signalen-basisconfidence opslaan als floor
+  if (typeof likely?.confidence === 'number' && !Number.isNaN(likely.confidence)) {
+    signals_base_confidence = likely.confidence;
   }
 }
+
+// 9.2 Kies de final pick ter logging, met respect voor een eerder gekozen domein
+let finalChosenDomain = null;
+let finalChosenSource = null;
+let finalChosenConfidence = null;   // ← hernoemd
+let finalChosenReason = null;       // ← hernoemd
+
+if (company_domain) {
+  // Eerder gekozen (bijv. RDNS) – neem die als final pick voor logging
+  finalChosenDomain = company_domain;
+  finalChosenSource = enrichment_source || ENRICHMENT_SOURCES.FINAL_LIKELY;
+  finalChosenConfidence = typeof confidence === 'number' ? confidence : (likely?.confidence ?? null);
+  finalChosenReason = confidence_reason || likely?.confidence_reason || CONFIDENCE_REASONS.FINAL_LIKELY;
+} else if (likely?.domain) {
+  // Nog geen domein gekozen → valideer + neem 'likely'
+  const validatedLikely = cleanAndValidateDomain(
+    likely.domain,
+    ENRICHMENT_SOURCES.FINAL_LIKELY,
+    asname, org_id, page_url, ip_address,
+    likely.confidence,
+    likely.confidence_reason
+  );
+
+  if (validatedLikely) {
+    company_domain     = validatedLikely;
+    enrichment_source  = likely.enrichment_source || ENRICHMENT_SOURCES.FINAL_LIKELY;
+    confidence         = likely.confidence ?? confidence;
+    confidence_reason  = likely.confidence_reason || confidence_reason;
+
+    finalChosenDomain = company_domain;
+    finalChosenSource = enrichment_source;
+    finalChosenConfidence = confidence;
+    finalChosenReason = confidence_reason;
+  }
+}
+
+// 9.3 Log ALTIJD één samenvattende regel in domain_signal_log
+if (!finalChosenDomain) {
+  await supabaseAdmin.from('domain_signal_log').insert({
+    ip_address,
+    signals: domainSignals,
+    chosen_domain: null,
+    enrichment_source: ENRICHMENT_SOURCES.FINAL_LIKELY,
+    confidence: null,
+    confidence_reason: CONFIDENCE_REASONS.FINAL_LIKELY,
+    site_id: site_id || null,
+    page_url: page_url || null,
+  });
+} else {
+  await supabaseAdmin.from('domain_signal_log').insert({
+    ip_address,
+    signals: domainSignals,
+    chosen_domain: finalChosenDomain,
+    enrichment_source: finalChosenSource,
+    confidence: finalChosenConfidence,     // ← hernoemd
+    confidence_reason: finalChosenReason,  // ← hernoemd
+    site_id: site_id || null,
+    page_url: page_url || null,
+  });
+}
+
 
 
     // ---- BASELINE PATHS -----------------------------------------------------
@@ -3007,6 +3052,8 @@ const domainLonOk = validNum(domain_lon);
 // Payload bouwen + lege waarden weggooien (GEEN IP lat/lon)
 const cachePayload = pruneEmpty({
   ip_address,
+  org_id,     
+  site_id,
   company_name,
   company_domain,
   location,
