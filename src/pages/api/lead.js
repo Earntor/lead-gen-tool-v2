@@ -455,18 +455,56 @@ async function probeServiceBanners(ip) {
       if (c) { cleaned.push(c); allDomains.add(c); }
     }
 
-    try {
+    // --- service_banner_log: zuinig loggen (skip leeg, throttle 12u, alleen bij verandering) ---
+try {
+  const snippetNorm = (snippet || '').trim().slice(0, 512);     // compacte opslag
+  const hasContent = !!snippetNorm || cleaned.length > 0;        // alleen loggen als er iets is
+  if (!hasContent) {
+    // niets te loggen
+  } else {
+    // laatste log voor dit ip+port ophalen
+    const { data: prev } = await supabaseAdmin
+      .from('service_banner_log')
+      .select('id, created_at, banner_snippet, matched_domains')
+      .eq('ip_address', ip)
+      .eq('port', port)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const withinThrottle = (() => {
+      if (!prev?.created_at) return false;
+      const t = new Date(prev.created_at).getTime();
+      return Number.isFinite(t) && (Date.now() - t) < (12 * 60 * 60 * 1000); // 12 uur
+    })();
+
+    const arrEq = (a, b) => {
+      const A = Array.isArray(a) ? [...a].sort() : [];
+      const B = Array.isArray(b) ? [...b].sort() : [];
+      if (A.length !== B.length) return false;
+      for (let i = 0; i < A.length; i++) if (A[i] !== B[i]) return false;
+      return true;
+    };
+
+    const prevSnippet = (prev?.banner_snippet || '').trim().slice(0, 512);
+    const sameContent = arrEq(prev?.matched_domains, cleaned) && prevSnippet === snippetNorm;
+
+    // alleen schrijven als buiten throttle OF inhoud echt anders is
+    if (!withinThrottle || !sameContent) {
       await supabaseAdmin.from('service_banner_log').insert({
         ip_address: ip,
         port,
         tls: useTls,
         verb,
-        banner_snippet: snippet || null,
+        banner_snippet: snippetNorm || null,
         matched_domains: cleaned.length ? cleaned : null
       });
-    } catch (e) {
-      console.warn('⚠️ service_banner_log insert faalde:', e.message);
     }
+  }
+} catch (e) {
+  console.warn('⚠️ service_banner_log insert faalde:', e.message);
+}
+
 
     results.push({ port, tls: useTls, verb, snippet, domains: cleaned });
   }
@@ -711,34 +749,18 @@ async function httpFetchIpPort(ip, port, timeoutMs = 3000) {
   }
 }
 
-// Loop over de alt-poorten; log altijd; stop bij eerste sterke hit
+// Loop over de alt-poorten; log NIET meer per poort; stop bij eerste sterke hit
 async function tryHttpOnAltPorts(ip) {
   for (const port of ALT_HTTP_PORTS) {
     const r = await httpFetchIpPort(ip, port);
-
-    // Altijd loggen in http_fetch_log (inclusief 'port')
-    await supabaseAdmin.from('http_fetch_log').insert({
-      ip_address: ip,
-      fetched_at: new Date().toISOString(),
-      success: r.success,
-      port: r.port,
-      extracted_domain: r.extracted_domain || null,
-      enrichment_source: ENRICHMENT_SOURCES.HTTP_FETCH,
-      confidence: r.confidence || null,
-      confidence_reason: r.confidence_reason || null,
-      redirect_location: r.redirect_location || null,
-      headers: r.headers || null,
-      html_snippet: r.raw_html ? r.raw_html.slice(0, 5000) : null,
-      error_message: r.error_message || null
-    });
-
     // Stop zodra we een domein te pakken hebben
     if (r.success && r.extracted_domain) {
-      return r;
+      return r; // { success, port, extracted_domain, ... }
     }
   }
-  return null;
+  return null; // geen hit
 }
+
 
 
 // === CNAME chain helper (NIEUW) ===
@@ -1380,12 +1402,15 @@ try {
 
 
 // 🔐 Stap 3 – TLS-certificaatinspectie → SIGNAL (audit-proof)
+// BEGIN PATCH: TLS-cert alleen loggen bij échte hit
 try {
   const certInfo = await getTlsCertificateFromIp(ip_address);
-  let extracted = null;
+  if (!certInfo) {
+    // ⛔ Geen bruikbare cert-info → NIET loggen (stil overslaan)
+  } else {
+    let extracted = null;
 
-  if (certInfo && (certInfo.commonName || certInfo.subjectAltName)) {
-    // 1) Probeer CN
+    // 1) CN proberen
     if (certInfo.commonName?.includes('.')) {
       extracted = cleanAndValidateDomain(
         certInfo.commonName,
@@ -1395,10 +1420,10 @@ try {
       );
     }
 
-    // 2) Anders: pak kortste SAN
+    // 2) Anders: kortste SAN pakken
     if (!extracted && certInfo.subjectAltName) {
       const matches = certInfo.subjectAltName.match(/DNS:([A-Za-z0-9.-]+\.[A-Za-z0-9-]{2,})/g);
-      if (matches && matches.length > 0) {
+      if (matches?.length) {
         const cleaned = matches
           .map(m => stripSubdomain(m.replace('DNS:', '').trim()))
           .filter(Boolean);
@@ -1415,7 +1440,7 @@ try {
     }
 
     if (extracted) {
-      // ✅ Succes: signal + log used=true
+      // ✅ Alleen bij succesvolle extractie → signaal + log used=true
       const signal = await logDomainSignal({
         ip_address,
         domain: extracted,
@@ -1433,48 +1458,18 @@ try {
         used: true,
         confidence: 0.75,
         confidence_reason: CONFIDENCE_REASONS.TLS,
-        enrichment_source: ENRICHMENT_SOURCES.TLS
-      });
-    } else {
-      // ❌ Geen domein uit TLS te halen
-      await supabaseAdmin.from('tls_log').insert({
-        ip_address,
-        common_name: certInfo?.commonName || null,
-        subject_alt_name: certInfo?.subjectAltName || null,
-        extracted_domain: null,
-        used: false,
-        confidence: null,
-        confidence_reason: 'no domain extracted from TLS',
-        enrichment_source: ENRICHMENT_SOURCES.TLS
+        enrichment_source: ENRICHMENT_SOURCES.TLS,
+        checked_at: new Date().toISOString()
       });
     }
-  } else {
-    // ❌ Geen certificate info beschikbaar
-    await supabaseAdmin.from('tls_log').insert({
-      ip_address,
-      common_name: null,
-      subject_alt_name: null,
-      extracted_domain: null,
-      used: false,
-      confidence: null,
-      confidence_reason: 'no TLS certificate info',
-      enrichment_source: ENRICHMENT_SOURCES.TLS
-    });
+    // ⛔ Geen else-log: bij geen extractie loggen we niks
   }
 } catch (e) {
   console.warn('⚠️ TLS-certificaat ophalen mislukt:', e.message);
-  // ❌ Exception: log altijd een rij met used=false
-  await supabaseAdmin.from('tls_log').insert({
-    ip_address,
-    common_name: null,
-    subject_alt_name: null,
-    extracted_domain: null,
-    used: false,
-    confidence: null,
-    confidence_reason: 'tls fetch error',
-    enrichment_source: ENRICHMENT_SOURCES.TLS
-  });
+  // ⛔ Geen DB-log bij exception (voorkomt ruis)
 }
+// END PATCH
+
 
 
     // 🌐 Stap 6 – HTTP fetch naar IP → SIGNAL
@@ -1895,11 +1890,13 @@ try {
         confidence_reason: alt.confidence_reason || 'HTTP alt-port'
       });
       if (sig) domainSignals.push(sig);
+      // LET OP: geen insert in http_fetch_log hier — bewust stil (geen spam)
     }
   }
 } catch (e) {
   console.warn('⚠️ ALT-HTTP ports probe faalde:', e.message);
 }
+
 
 
 
@@ -2138,92 +2135,71 @@ try {
 
 
     // 🧪 Stap 8 – Host header probing → SIGNAL
+// 🧪 Stap 8 – Host header probing → SIGNAL (stil, alleen succes loggen)
 try {
   const { data: fdnsResults } = await supabaseAdmin
     .from('fdns_lookup')
     .select('domain')
     .eq('ip', ip_address);
 
-const domainsToTry = [
-  ...(fdnsResults?.map(r => r.domain).filter(Boolean) || []),
-  ...ptrGenerated,
-  ...cnameDerived,
-  ...ptrWordCandidates,
-  ...asNameCandidates
-]
-  .filter(Boolean)
-  .filter((v, i, a) => a.indexOf(v) === i)
-  .slice(0, 12); // iets ruimer cap
+  const domainsToTry = [
+    ...(fdnsResults?.map(r => r.domain).filter(Boolean) || []),
+    ...ptrGenerated,
+    ...cnameDerived,
+    ...ptrWordCandidates,
+    ...asNameCandidates
+  ]
+    .filter(Boolean)
+    .filter((v, i, a) => a.indexOf(v) === i)
+    .slice(0, 12);
 
-
-
-  if (domainsToTry?.length > 0) {
-    const result = await probeHostHeader(ip_address, domainsToTry);
+  if (domainsToTry.length > 0) {
+    const result = await probeHostHeader(ip_address, domainsToTry, {
+      timeoutMs: 3000,
+      requireBranding: true,
+      maxTrials: 0 // NIET terugloggen per trial
+    });
 
     if (result?.domain) {
-  const cleanedDomain = cleanAndValidateDomain(
-    result.domain,
-    ENRICHMENT_SOURCES.HOST_HEADER,
-    asname,
-    org_id,
-    page_url,
-    ip_address,
-    confidence,
-    confidence_reason
-  );
+      const cleanedDomain = cleanAndValidateDomain(
+        result.domain,
+        ENRICHMENT_SOURCES.HOST_HEADER,
+        asname,
+        org_id,
+        page_url,
+        ip_address,
+        confidence,
+        confidence_reason
+      );
 
-  if (cleanedDomain) {
-    const signal = await logDomainSignal({
-      ip_address,
-      domain: cleanedDomain,
-      source: ENRICHMENT_SOURCES.HOST_HEADER,
-      confidence: result.confidence || 0.6,
-      confidence_reason: result.reason || CONFIDENCE_REASONS.HOST_HEADER
-    });
-    if (signal) domainSignals.push(signal);
-  }
+      if (cleanedDomain) {
+        const signal = await logDomainSignal({
+          ip_address,
+          domain: cleanedDomain,
+          source: ENRICHMENT_SOURCES.HOST_HEADER,
+          confidence: result.confidence || 0.85,
+          confidence_reason: result.reason || CONFIDENCE_REASONS.HOST_HEADER
+        });
+        if (signal) domainSignals.push(signal);
 
-  // ✨ Log naar host_probe_log i.p.v. host_header_log
-if (Array.isArray(result?.trials) && result.trials.length > 0) {
-  // Als probeHostHeader per domein trials teruggeeft, log elke poging apart
-  const rows = result.trials.map(t => ({
-    ip_address,
-    tested_domain: t.domain || null,
-    status_code: (typeof t.status === 'number') ? t.status : null,
-    content_snippet: (t.snippet || t.reason || null)?.slice(0, 500) || null,
-    success: !!t.ok
-  }));
-  await supabaseAdmin.from('host_probe_log').insert(rows);
-} else {
-  // Fallback: 1 samenvattende rij
-  await supabaseAdmin.from('host_probe_log').insert({
-    ip_address,
-    tested_domain: cleanedDomain || (Array.isArray(domainsToTry) ? domainsToTry[0] : null),
-    status_code: (typeof result?.status_code === 'number') ? result.status_code : null,
-    content_snippet: (result?.html_snippet || result?.snippet || result?.reason || null)?.slice(0, 500) || null,
-    success: !!cleanedDomain
-  });
-// Extra logging: markeer PTR-gegenereerde testen (generated=true)
-try {
-  if (ptrGenerated?.length) {
-    const rows = ptrGenerated.map(d => ({
-      ip_address,
-      tested_domain: d,
-      generated: true,
-      success: false  // puur markering; echte successes zijn al apart gelogd
-    }));
-    await supabaseAdmin.from('host_probe_log').insert(rows);
-  }
-} catch (e) {
-  console.warn('⚠️ host_probe_log generated-marking faalde:', e.message);
-}
-}
-}
+        // ✅ Eén enkele audit-rij — ALLEEN bij succes
+        await supabaseAdmin.from('host_probe_log').insert({
+          ip_address,
+          tested_domain: cleanedDomain,
+          status_code: (typeof result.status_code === 'number') ? result.status_code : 200,
+          content_snippet: result.snippet ? result.snippet.slice(0, 500) : null,
+          success: true
+        });
+      }
+    }
 
+    // ❌ GEEN per-trial logging meer
+    // ❌ GEEN extra "generated:true" marker-rows meer
   }
 } catch (e) {
   console.warn('⚠️ Host header probing faalde:', e.message);
 }
+
 
 // Email-SRV hints op topkandidaten (max 10) → kleine boost + cache
 try {
@@ -2467,6 +2443,77 @@ try {
            : (heur.classification === 'low' && heur.liveMatchCount > 0) ? 'low cohosting + live match'
            : 'no change'
   });
+
+// --- Co-hosting audit logging: zuinig & alleen bij betekenisvolle wijziging ---
+try {
+  // 1) “Lege” snapshots overslaan (alles 0 → geen waarde)
+  const emptySnapshot =
+    (heur.fdnsTotal === 0) &&
+    (heur.liveChecked === 0) &&
+    (heur.liveMatchCount === 0);
+
+  if (!emptySnapshot) {
+    // 2) Laatste log voor dit IP ophalen (voor throttle/diff)
+    const { data: prevRow } = await supabaseAdmin
+      .from('ip_cohost_log')
+      .select('checked_at, fdns_total, live_checked, live_match_count, classification, penalty_applied')
+      .eq('ip_address', ip_address)
+      .order('checked_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    // 3) Throttle van 6 uur
+    let withinThrottle = false;
+    if (prevRow?.checked_at) {
+      const last = new Date(prevRow.checked_at).getTime();
+      withinThrottle = Number.isFinite(last) && (Date.now() - last) < (6 * 60 * 60 * 1000);
+    }
+
+    // 4) Betekenisvolle wijzigingen bepalen
+    const prevFdns     = Number(prevRow?.fdns_total ?? 0);
+    const prevLive     = Number(prevRow?.live_match_count ?? 0);
+    const prevClass    = String(prevRow?.classification ?? 'unknown');
+    const prevPenalty  = Number(prevRow?.penalty_applied ?? 0);
+
+    const penaltyNow = (heur.classification === 'heavy-multitenant') ? -0.07
+                    : (heur.classification === 'moderate')          ? -0.04
+                    : (heur.classification === 'low' && heur.liveMatchCount > 0) ? 0.03
+                    : 0;
+
+    const bigFdnsJump     = Math.abs(heur.fdnsTotal - prevFdns) >= 5; // sprong ≥ 5
+    const liveChanged     = heur.liveMatchCount !== prevLive;
+    const classChanged    = String(heur.classification) !== prevClass;
+    const penaltyChanged  = penaltyNow !== prevPenalty;
+
+    const meaningfulChange = bigFdnsJump || liveChanged || classChanged || penaltyChanged;
+
+    // 5) Alleen loggen als (a) buiten throttle, of (b) betekenisvolle wijziging
+    if (!withinThrottle || meaningfulChange) {
+      await supabaseAdmin.from('ip_cohost_log').insert({
+        ip_address,
+        fdns_total: heur.fdnsTotal,
+        live_checked: heur.liveChecked,
+        live_match_count: heur.liveMatchCount,
+        live_matches: heur.liveMatches.length ? heur.liveMatches : null,
+        classification: heur.classification,
+        penalty_applied: penaltyNow,
+        reason: (heur.classification === 'heavy-multitenant') ? 'many fdns domains'
+              : (heur.classification === 'moderate')          ? 'some fdns domains'
+              : (heur.classification === 'low' && heur.liveMatchCount > 0) ? 'low cohosting + live match'
+              : 'no change'
+      });
+    }
+    // binnen throttle én geen meaningfulChange → niets loggen
+  }
+
+  // 6) Signalen licht bijsturen (dit liet je al doen)
+  const { adjusted, applied, reason } = applyCohostingAdjustments(domainSignals, heur);
+  domainSignals = adjusted;
+  if (applied !== 0) console.log(`ℹ️ co-hosting adjustment: ${applied} (${reason})`);
+} catch (e) {
+  console.warn('⚠️ ip_cohost_log logging faalde:', e.message);
+}
+
 
   // Signalen licht bijsturen
   const { adjusted, applied, reason } = applyCohostingAdjustments(domainSignals, heur);
