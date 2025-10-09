@@ -577,7 +577,7 @@ async function saveCompanyFromAccount() {
         />
       </div>
       <p id="acc-domain-help" className="text-xs text-gray-500 mt-1">
-        Alleen het domein, zonder http(s) en zonder pad. Voorbeeld: <code>bedrijf.nl</code> 
+        Alleen het hoofddomein invullen (eTLD+1). Voorbeeld: <code>bedrijf.nl</code>
       </p>
     </div>
 

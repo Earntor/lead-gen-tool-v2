@@ -8,16 +8,15 @@ import psl from 'psl';
 const HARD_SOURCES = new Set(['reverse_dns', 'tls_cert', 'host_header']);
 const SOFT_SOURCES = new Set(['http_fetch', 'favicon_hash', 'website_scrape']);
 
-
-// Gewichten per bron (service_banner toegevoegd)
+// Baseline gewichten per bron (kalibreer later op eigen data)
 const SOURCE_WEIGHT = {
   reverse_dns:    0.35,
   tls_cert:       0.30,  // incl. SNI confirm
   host_header:    0.20,
   http_fetch:     0.15,  // redirect/canonical/og/cookie/cors vallen hier ook onder
   favicon_hash:   0.15,  // bytes-hash of pHash
-  website_scrape: 0.10,
-  service_banner: 0.12   // <-- toegevoegd zodat banner-signalen meetellen
+  website_scrape: 0.10
+  // onbekende bronnen => 0
 };
 
 // eTLD+1 (apex) voor tie-break op “kortste betekenisvolle naam”
