@@ -2,6 +2,7 @@
 import { supabaseAdmin } from '../../lib/supabaseAdminClient';
 import { enrichFromDomain } from '../../lib/enrichFromDomain';
 import { scrapeWebsiteData } from '../../lib/scrapeWebsite';
+import { scrapePeopleForDomain } from '../../lib/peopleScraper'; // ✅ NIEUW
 
 function extractDomainFromUrl(u) {
   if (!u) return null;
@@ -18,27 +19,12 @@ function decodeMaybe(s) {
   try { return decodeURIComponent(String(s)); } catch { return s; }
 }
 
-
-function normalizePhone(raw, opts = {}) {
-  // opts = { mapsCountryCode: 'NL' | 'BE' | ..., domain: 'example.nl' }
+function normalizePhone(raw) {
   if (!raw) return null;
   let s = decodeMaybe(String(raw)).replace(/^tel:/i, '').trim();
-
-  // Al internationale vorm? Dan alleen opschonen
-  if (s.startsWith('+')) {
-    return s.replace(/[^\d+]+/g, '');
-  }
-  if (s.startsWith('00')) {
-    // 00 → + en opschonen
-    s = `+${s.slice(2)}`;
-    return s.replace(/[^\d+]+/g, '');
-  }
-
-  // Verder opschonen, maar '+' kunnen we nu niet meer hebben
-  s = s.replace(/[^\d]+/g, '');
-
-  // Geen betrouwbare hint → laat lokaal nummer schoon terug
-  return s;
+  if (s.startsWith('+')) return s.replace(/[^\d+]+/g, '');
+  if (s.startsWith('00')) return `+${s.slice(2)}`.replace(/[^\d+]+/g, '');
+  return s.replace(/[^\d]+/g, '');
 }
 
 function pruneEmpty(obj) {
@@ -49,6 +35,24 @@ function pruneEmpty(obj) {
     out[k] = v;
   }
   return out;
+}
+
+// ==== Helpers voor people_cache upsert (zelfde logica als /api/people) ====
+
+function isImproved(oldRow, neu) {
+  if (!oldRow) return true;
+  if ((neu.people_count || 0) > (oldRow.people_count || 0)) return true;
+  if ((neu.source_quality || 0) > (oldRow.source_quality || 0)) return true;
+  if (neu.team_page_hash && neu.team_page_hash !== oldRow.team_page_hash && (neu.people_count || 0) >= 1) return true;
+  const order = { empty:0, error:1, blocked:2, no_team:3, stale:4, fresh:5 };
+  if ((order[oldRow.status] ?? 0) < (order[neu.status] ?? 0)) return true;
+  return false;
+}
+
+function nextAllowedOnSuccess(ttlDays) {
+  const d = new Date();
+  d.setDate(d.getDate() + (ttlDays || 14));
+  return d.toISOString();
 }
 
 export default async function manualEnrich(req, res) {
@@ -80,7 +84,7 @@ export default async function manualEnrich(req, res) {
     let usedNameLookup = false;
 
     try {
-      // 1) We gebruiken IP alleen voor lat/lon keus in Maps (niet voor telefoon)
+      // 1) Locatiehint (alleen voor Maps keus)
       let ipLat = null, ipLon = null;
       try {
         const ipapiRes = await fetch(`http://ip-api.com/json/${ip}`);
@@ -91,7 +95,7 @@ export default async function manualEnrich(req, res) {
         }
       } catch {}
 
-      // 2) Geen domein maar wél naam? → via Maps website → domein
+      // 2) Geen domein maar wel naam → via Maps website → domein
       let mapsFromName = null;
       if (!domain && row.company_name) {
         mapsFromName = await enrichFromDomain(row.company_name, ipLat, ipLon);
@@ -106,7 +110,7 @@ export default async function manualEnrich(req, res) {
         }
       }
 
-      // 3) Maps enrichment met domein (of fallback naar mapsFromName)
+      // 3) Maps enrichment met domein (of fallback)
       let maps = null;
       if (domain) {
         maps = await enrichFromDomain(domain, ipLat, ipLon);
@@ -114,18 +118,15 @@ export default async function manualEnrich(req, res) {
         maps = mapsFromName;
       }
 
-      // 4) Scrape website (alleen als we domein hebben)
+      // 4) Scrape website (home) voor bedrijfsdata
       let scraped = null;
       if (domain) {
         scraped = await scrapeWebsiteData(domain);
       }
 
-      // 5) Merge en telefoon-normalisatie ZONDER IP-land
+      // 5) Merge bedrijfsdata en telefoon-normalisatie
       const phoneRaw = scraped?.phone || maps?.phone || null;
-      const phone = normalizePhone(phoneRaw, {
-        mapsCountryCode: maps?.domain_country_code || null,
-        domain
-      });
+      const phone = normalizePhone(phoneRaw);
 
       const payload = pruneEmpty({
         company_name: row.company_name || maps?.name || null,
@@ -160,13 +161,140 @@ export default async function manualEnrich(req, res) {
         .update({ ...payload, manual_enrich: false })
         .eq('ip_address', ip);
 
+      // 6) ✅ TEAMS SCRAPEN & UPDATEN VAN people_cache
+      let peopleResult = null;
+      let peopleOutcome = null;
+      let upsertedPeople = false;
+      let peopleCount = 0;
+
+      if (domain) {
+        try {
+          peopleResult = await scrapePeopleForDomain(domain);
+
+          // Bestaand cache-record ophalen (kan ontbreken)
+          let { data: existing, error: selErr } = await supabaseAdmin
+            .from('people_cache')
+            .select('*')
+            .eq('company_domain', domain)
+            .single();
+
+          if (selErr && selErr.code === 'PGRST116') {
+            // nieuw record initialiseren
+            const init = {
+              company_domain: domain,
+              status: 'empty',
+              people: [],
+              people_count: 0,
+              ttl_days: 14,
+              next_allowed_crawl_at: new Date(0).toISOString(),
+              processing: false,
+            };
+            const { data: inserted } = await supabaseAdmin
+              .from('people_cache')
+              .insert(init)
+              .select('*')
+              .single();
+            existing = inserted;
+          } else if (selErr) {
+            console.error('people_cache select error:', selErr);
+          }
+
+          if (peopleResult?.accept) {
+            // Succes — fresh
+            peopleOutcome = {
+              status: 'fresh',
+              people: peopleResult.people,            // rol exact zoals gevonden
+              people_count: peopleResult.people_count,
+              team_page_url: peopleResult.team_page_url,
+              team_page_hash: peopleResult.team_page_hash,
+              team_page_etag: peopleResult.etag || null,
+              team_page_last_modified: peopleResult.last_modified
+                ? new Date(peopleResult.last_modified).toISOString()
+                : null,
+              evidence_urls: peopleResult.evidence_urls || [],
+              detection_reason: peopleResult.detection_reason,
+              source_quality: peopleResult.source_quality || 0,
+              last_verified: new Date().toISOString(),
+              retry_count: 0,
+              next_allowed_crawl_at: nextAllowedOnSuccess(existing?.ttl_days || 14),
+              last_error_code: null,
+              last_error_at: null,
+              render_state: 'not_needed',
+            };
+          } else {
+            // Niet geaccepteerd → geen team / mogelijk render nodig
+            peopleOutcome = {
+              status: 'no_team',
+              people: existing?.people || [],
+              people_count: existing?.people_count || 0,
+              team_page_url: existing?.team_page_url || null,
+              team_page_hash: peopleResult?.team_page_hash || existing?.team_page_hash || null,
+              team_page_etag: peopleResult?.etag || existing?.team_page_etag || null,
+              team_page_last_modified: peopleResult?.last_modified
+                ? new Date(peopleResult.last_modified).toISOString()
+                : existing?.team_page_last_modified || null,
+              evidence_urls: existing?.evidence_urls || [],
+              detection_reason: peopleResult?.reason || 'no-accept',
+              source_quality: Math.max(existing?.source_quality || 0, peopleResult?.source_quality || 0),
+              last_verified: new Date().toISOString(),
+              retry_count: (existing?.retry_count || 0) + 1,
+              next_allowed_crawl_at: nextAllowedOnSuccess(existing?.ttl_days || 14), // milde cooldown na manual
+              last_error_code: null,
+              last_error_at: null,
+              render_state: 'needed',
+            };
+          }
+
+          // Upsert alleen als beter (of als er nog niets is)
+          const improved = isImproved(existing, peopleOutcome);
+          const patch = {
+            ...(improved ? {
+              status: peopleOutcome.status,
+              people: peopleOutcome.people,
+              people_count: peopleOutcome.people_count,
+              team_page_url: peopleOutcome.team_page_url,
+              team_page_hash: peopleOutcome.team_page_hash,
+              team_page_etag: peopleOutcome.team_page_etag,
+              team_page_last_modified: peopleOutcome.team_page_last_modified,
+              evidence_urls: peopleOutcome.evidence_urls,
+              detection_reason: peopleOutcome.detection_reason,
+              source_quality: peopleOutcome.source_quality,
+              last_verified: peopleOutcome.last_verified,
+            } : {
+              detection_reason: peopleOutcome.detection_reason,
+              source_quality: Math.max(existing?.source_quality || 0, peopleOutcome.source_quality || 0),
+              last_verified: peopleOutcome.last_verified || existing?.last_verified,
+            }),
+            retry_count: peopleOutcome.retry_count,
+            next_allowed_crawl_at: peopleOutcome.next_allowed_crawl_at,
+            last_error_code: peopleOutcome.last_error_code,
+            last_error_at: peopleOutcome.last_error_at,
+            render_state: peopleOutcome.render_state || existing?.render_state || 'unknown',
+            processing: false,
+          };
+
+          await supabaseAdmin
+            .from('people_cache')
+            .update(patch)
+            .eq('company_domain', domain);
+
+          upsertedPeople = improved || !!existing;
+          peopleCount = peopleOutcome.people_count || 0;
+        } catch (pe) {
+          console.error(`❌ People scrape/update error for ${domain}:`, pe);
+        }
+      }
+
       results.push({
         ip_address: ip,
         ok: true,
         derived_domain_from_name: usedNameLookup,
         used_domain: domain || null,
         maps_found: !!maps,
-        scraped: !!scraped
+        scraped: !!scraped,
+        people_scraped: !!(peopleResult && (peopleResult.accept || peopleResult.source_quality >= 1)),
+        people_upserted: !!upsertedPeople,
+        people_count: peopleCount
       });
     } catch (e) {
       console.error(`❌ Manual enrich fout voor ${ip}:`, e);
@@ -175,7 +303,7 @@ export default async function manualEnrich(req, res) {
   }
 
   return res.status(200).json({
-    message: 'Handmatige enrichment uitgevoerd (zonder IP-land voor telefoon)',
+    message: 'Handmatige enrichment uitgevoerd (incl. teamleden in people_cache)',
     processed: results
   });
 }

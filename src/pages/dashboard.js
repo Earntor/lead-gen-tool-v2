@@ -46,7 +46,7 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from "@/components/ui/accordion";
-import { ArrowLeft, Menu, User } from "lucide-react";
+import { ArrowLeft, Menu, User, ExternalLink } from "lucide-react";
 import SocialIcons from "../components/SocialIcons";
 import dynamic from 'next/dynamic';
 const OnboardingWizard = dynamic(() => import('../components/OnboardingWizard'), { ssr: false });
@@ -222,6 +222,143 @@ function formatDuration(sec) {
   const r = s % 60;
   return m ? `${m}m ${r}s` : `${r}s`;
 }
+
+// --- Personenblok (cache-first, 2 → 20 paginatie, LinkedIn kolom) ---
+function PeopleBlock({ companyDomain }) {
+  const [data, setData] = React.useState(null);
+  const [page, setPage] = React.useState(0); // 0 = 2 items, daarna stappen van 20
+
+  async function load(refresh = false) {
+    if (!companyDomain) return;
+    try {
+      const url = `/api/people?domain=${encodeURIComponent(companyDomain)}${refresh ? '&refresh=1' : ''}`;
+      const res = await fetch(url, { cache: 'no-store' });
+      const json = await res.json();
+      setData(json);
+      setPage(0);
+    } catch (e) {
+      setData({ people: [], people_count: 0, status: 'error', detection_reason: e?.message });
+    }
+  }
+
+  React.useEffect(() => { load(false); }, [companyDomain]);
+
+  if (!companyDomain) return null;
+  if (!data) {
+    return (
+      <div className="mt-6">
+        <div className="h-6 w-40 bg-gray-200 rounded mb-2" />
+        <div className="border rounded-xl p-3">
+          <div className="h-4 w-3/4 bg-gray-100 rounded mb-2" />
+          <div className="h-4 w-2/3 bg-gray-100 rounded" />
+        </div>
+      </div>
+    );
+  }
+
+  const total = data.people_count || 0;
+  const initial = 2;
+  const pageSize = page === 0 ? initial : 20 * page; // 2, 20, 40, ...
+  const rows = (data.people || []).slice(0, pageSize);
+
+  const allowRefresh = !data.next_allowed_crawl_at || new Date(data.next_allowed_crawl_at) <= new Date();
+
+  function StatusBadge({ status, lastVerified }) {
+    const base = "inline-flex items-center rounded-full px-2 py-0.5 text-xs";
+    if (status === "fresh") return <span className={`${base} bg-green-100 text-green-800`}>Fresh</span>;
+    if (status === "stale") return <span className={`${base} bg-yellow-100 text-yellow-800`}>Stale · {formatDutchDateTime(data.last_verified)}</span>;
+    if (status === "blocked") return <span className={`${base} bg-red-100 text-red-800`}>Blocked</span>;
+    if (status === "no_team") return <span className={`${base} bg-gray-100 text-gray-800`}>No team</span>;
+    if (status === "error") return <span className={`${base} bg-red-100 text-red-800`}>Error</span>;
+    return <span className={`${base} bg-gray-100 text-gray-800`}>Empty</span>;
+  }
+
+  return (
+    <div className="mt-6">
+      {/* Kop + acties */}
+      <div className="mb-2 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <h3 className="text-base font-semibold">
+            Personen · <span className="font-normal">Totaal {total}</span>
+          </h3>
+          <StatusBadge status={data.status} lastVerified={data.last_verified} />
+        </div>
+        <button
+          className={`text-sm underline ${allowRefresh ? 'opacity-100' : 'opacity-40 cursor-not-allowed'}`}
+          disabled={!allowRefresh}
+          onClick={() => load(true)}
+          title={allowRefresh ? 'Nu verversen' : (data.next_allowed_crawl_at ? `Beschikbaar na ${formatDutchDateTime(data.next_allowed_crawl_at)}` : '')}
+        >
+          Vernieuw nu
+        </button>
+      </div>
+
+      {/* Tabel */}
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Naam</TableHead>
+            <TableHead>Telefoon</TableHead>
+            <TableHead>E-mail</TableHead>
+            <TableHead>LinkedIn</TableHead>
+            <TableHead>Laatste update</TableHead>
+            <TableHead>Bron</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.length > 0 ? rows.map((p, i) => (
+            <TableRow key={`${p.full_name || 'n/a'}-${i}`}>
+              <TableCell>
+                <div className="flex flex-col">
+                  <span className="font-medium">{p.full_name || ''}</span>
+                  {p.role_title ? (
+                    <span className="text-xs text-muted-foreground">{p.role_title}</span>
+                  ) : null}
+                </div>
+              </TableCell>
+              <TableCell>{p.phone || ''}</TableCell>
+              <TableCell>{p.email || ''}</TableCell>
+              <TableCell>
+                {p.linkedin_url ? (
+                  <a href={p.linkedin_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline">
+                    Profiel <ExternalLink className="h-3 w-3" />
+                  </a>
+                ) : ''}
+              </TableCell>
+              <TableCell>{formatDutchDateTime(data.last_verified)}</TableCell>
+              <TableCell>
+                {data.team_page_url ? (
+                  <a href={data.team_page_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline">
+                    Website <ExternalLink className="h-3 w-3" />
+                  </a>
+                ) : ''}
+              </TableCell>
+            </TableRow>
+          )) : (
+            <TableRow>
+              <TableCell colSpan={6} className="text-muted-foreground">
+                {data.status === 'no_team' ? 'Geen team gevonden.' : 'Geen personen gevonden.'}
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
+
+      {/* Paginatie-knop (2 → +20 → +20) */}
+      {total > rows.length && (
+        <div className="mt-3 flex justify-center">
+          <button
+            className="px-3 py-2 text-sm rounded-md hover:bg-muted border"
+            onClick={() => setPage(prev => (prev === 0 ? 1 : prev + 1))}
+          >
+            Volgende ({page === 0 ? 20 : 20})
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 // Skeletons loading
 function FiltersSkeleton() {
@@ -3051,6 +3188,12 @@ try {
        {/* ──────────────────────────────────────────────── */}
 
       <div className="px-4 md:px-6">
+{/* Personen (team/medewerkers) – staat boven Activiteiten */}
+{selectedCompanyData?.company_domain && (
+  <PeopleBlock companyDomain={selectedCompanyData.company_domain} />
+)}
+        
+        
   <h2 className="text-lg font-semibold text-gray-800 mb-2">
     Activiteiten
   </h2>
