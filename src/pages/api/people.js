@@ -136,27 +136,37 @@ export default async function handler(req, res) {
           last_error_at: null,
           render_state: 'not_needed',
         };
-      } else {
-        // Niet geaccepteerd → no_team of needed render
+            } else {
+        // Niet geaccepteerd → no_team of (mogelijk) render nodig
+        // Bewaar ALTIJD de bekeken URL + hash/headers, zodat we weten welke pagina beoordeeld is
+        const mergedEvidence = Array.from(new Set([
+          ...(locked.evidence_urls || []),
+          ...(result.evidence_urls || []),
+          ...(result.url ? [result.url] : []),
+        ]));
+
         outcome = {
           status: 'no_team',
-          people: locked.people,
-          people_count: locked.people_count,
-          team_page_url: locked.team_page_url,
-          team_page_hash: result.team_page_hash || locked.team_page_hash,
-          team_page_etag: result.etag || locked.team_page_etag,
-          team_page_last_modified: result.last_modified ? new Date(result.last_modified).toISOString() : locked.team_page_last_modified,
-          evidence_urls: locked.evidence_urls,
+          people: locked.people,                 // hou vorige mensen (indien er waren) vast
+          people_count: locked.people_count,     // en tel
+          team_page_url: result.url || locked.team_page_url || null, // <<-- BEWAAR URL
+          team_page_hash: result.team_page_hash || locked.team_page_hash || null,
+          team_page_etag: result.etag || locked.team_page_etag || null,
+          team_page_last_modified: result.last_modified
+            ? new Date(result.last_modified).toISOString()
+            : (locked.team_page_last_modified || null),
+          evidence_urls: mergedEvidence,         // <<-- voeg URL toe aan bewijs
           detection_reason: result.reason || 'no-accept',
           source_quality: Math.max(locked.source_quality || 0, result.source_quality || 0),
           last_verified: new Date().toISOString(),
-          retry_count: locked.retry_count + 1,
+          retry_count: (locked.retry_count || 0) + 1,
           next_allowed_crawl_at: nextAllowedOnTempError((locked.retry_count || 0) + 1),
           last_error_code: null,
           last_error_at: null,
           render_state: 'needed',
         };
       }
+
     } catch (e) {
       // Tijdelijke fout → backoff
       outcome = {

@@ -94,7 +94,7 @@ function extractPeople($, baseUrl) {
       || '').replace(/\s+/g,' ').trim() || null;
 
     // contact links
-    const links = $el.find('a[href]').map((_,a)=>$el.find(a).attr('href')).get();
+const links = $el.find('a[href]').map((_,a)=>$el.find(a).attr('href')).get();
     const email = links.find(h=>/^mailto:/i.test(h))?.replace(/^mailto:/i,'').trim() || null;
     const phone = links.find(h=>/^tel:/i.test(h))?.replace(/^tel:/i,'').replace(/\s+/g,'').trim() || null;
     const linkedin = links.find(h=>/linkedin\.com/i.test(h)) || null;
@@ -115,6 +115,53 @@ function extractPeople($, baseUrl) {
       _evidence: ['card'],
     });
   });
+
+  // 2b) Fallback: heading-gedreven blokken (h1/h2/h3 met context)
+  $('h1, h2, h3').each((_, h) => {
+    const $h = $(h);
+    const full_name = $h.text().replace(/\s+/g, ' ').trim();
+
+    // minimaal voor+achternaam (2 woorden)
+    if (!full_name || full_name.split(' ').length < 2) return;
+
+    // context: dichtstbijzijnde section/article/div
+    const $ctx = $h.closest('section, article, div').length ? $h.closest('section, article, div') : $h.parent();
+
+    // eerste paragraaf onder de heading (vaak rol of korte intro)
+    let role_title = null;
+    const $p = $ctx.find('p').filter(function () {
+      return $(this).text().trim().length > 0;
+    }).first();
+
+    if ($p.length) {
+      const txt = $p.text().replace(/\s+/g, ' ').trim();
+      // beschouw dit als rol/ondertitel als het geen lange bio is
+      if (txt && txt.length <= 120) {
+        role_title = txt;
+      }
+    }
+
+    // links + media binnen dezelfde context
+    const links = $ctx.find('a[href]').map((__, a) => $(a).attr('href')).get();
+    const email = links.find(href => /^mailto:/i.test(href))?.replace(/^mailto:/i, '').trim() || null;
+    const phone = links.find(href => /^tel:/i.test(href))?.replace(/^tel:/i, '').replace(/\s+/g, '').trim() || null;
+    const linkedin = links.find(href => /linkedin\.com/i.test(href)) || null;
+
+    const imgSrc = $ctx.find('img').first().attr('src') || null;
+    const photo_url = imgSrc ? toAbs(baseUrl, imgSrc) : null;
+
+    // voeg toe; dedupe gebeurt later
+    people.push({
+      full_name,
+      role_title: role_title || null,   // exact zoals gevonden
+      email: email || null,
+      phone: phone || null,
+      linkedin_url: linkedin || null,
+      photo_url,
+      _evidence: ['heading-block'],
+    });
+  });
+
 
   // 3) Fallback: lijsten met anchors
   $('a[href*="linkedin.com"]').each((_,a) => {
@@ -139,10 +186,19 @@ function extractPeople($, baseUrl) {
 // Kwaliteitscore en redenen
 function scoreAndReason(people, pageContext) {
   // people_valid: naam + (rol of één van email/tel/linkedin/foto)
-  const valid = people.filter(p =>
-    p.full_name &&
-    (p.role_title || p.email || p.phone || p.linkedin_url || p.photo_url)
-  );
+    const valid = people.filter(p => {
+    if (!p.full_name) return false;
+    // rol mag geen lange bio zijn
+    const shortRole = p.role_title && p.role_title.trim().split(/\s+/).length <= 30;
+    return (
+      shortRole ||
+      p.email ||
+      p.phone ||
+      p.linkedin_url ||
+      p.photo_url
+    );
+  });
+
 
   let detection_reason = '';
   let source_quality = 0;
