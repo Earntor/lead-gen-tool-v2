@@ -49,6 +49,8 @@ import {
 import { ArrowLeft, Menu, User, ExternalLink } from "lucide-react";
 import SocialIcons from "../components/SocialIcons";
 import dynamic from 'next/dynamic';
+import * as React from "react";
+
 const OnboardingWizard = dynamic(() => import('../components/OnboardingWizard'), { ssr: false });
 
 
