@@ -339,16 +339,44 @@ function PeopleBlock({ companyDomain }) {
       </Table>
 
       {/* Paginatie-knop (2 → +20 → +20) */}
-      {total > rows.length && (
-        <div className="mt-3 flex justify-center">
-          <button
-            className="px-3 py-2 text-sm rounded-md hover:bg-muted border"
-            onClick={() => setPage(prev => (prev === 0 ? 1 : prev + 1))}
-          >
-            Volgende ({page === 0 ? 20 : 20})
-          </button>
-        </div>
-      )}
+      {/* Paginatie: Vorige / Volgende */}
+{(page > 0 || total > rows.length) && (
+  <Pagination className="mt-3">
+    <PaginationContent>
+      <PaginationItem>
+        <PaginationPrevious
+          href="#"
+          onClick={(e) => {
+            e.preventDefault();
+            setPage((prev) => Math.max(0, prev - 1)); // 1→0 (20→2), 2→1 (40→20)
+          }}
+          className={page === 0 ? "pointer-events-none opacity-50" : ""}
+          aria-disabled={page === 0}
+        />
+      </PaginationItem>
+
+      {/* Optioneel: huidige stap tonen (2 / 20 / 40 ...) */}
+      <PaginationItem>
+        <span className="px-3 py-2 text-sm text-gray-600">
+          {page === 0 ? 2 : 20 * page} / {total}
+        </span>
+      </PaginationItem>
+
+      <PaginationItem>
+        <PaginationNext
+          href="#"
+          onClick={(e) => {
+            e.preventDefault();
+            setPage((prev) => (prev === 0 ? 1 : prev + 1)); // 0→1 (2→20), daarna +20
+          }}
+          className={total <= rows.length ? "pointer-events-none opacity-50" : ""}
+          aria-disabled={total <= rows.length}
+        />
+      </PaginationItem>
+    </PaginationContent>
+  </Pagination>
+)}
+
     </div>
   );
 }
