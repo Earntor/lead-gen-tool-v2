@@ -22,7 +22,7 @@ async function fetchHtml(url) {
 // Kandidate paden (NL + EN)
 const CANDIDATE_PATHS = [
   '/team','/over-ons','/ons-team','/about','/about-us','/who-we-are',
-  '/organisatie','/management','/bestuur','/wie-zijn-wij',
+  '/organisatie','/management','/bestuur','/wie-zijn-wij', '/het-team', '/mensen', '/directie'
 ];
 
 // Utility: absolute URL maken vanaf root
