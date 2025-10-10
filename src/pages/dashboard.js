@@ -263,7 +263,6 @@ function PeopleBlock({ companyDomain }) {
   const pageSize = page === 0 ? initial : 20 * page; // 2, 20, 40, ...
   const rows = (data.people || []).slice(0, pageSize);
 
-  const allowRefresh = !data.next_allowed_crawl_at || new Date(data.next_allowed_crawl_at) <= new Date();
 
   function StatusBadge({ status, lastVerified }) {
     const base = "inline-flex items-center rounded-full px-2 py-0.5 text-xs";
@@ -277,23 +276,16 @@ function PeopleBlock({ companyDomain }) {
 
   return (
     <div className="mt-6">
-      {/* Kop + acties */}
-      <div className="mb-2 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h3 className="text-base font-semibold">
-            Personen · <span className="font-normal">Totaal {total}</span>
-          </h3>
-          <StatusBadge status={data.status} lastVerified={data.last_verified} />
-        </div>
-        <button
-          className={`text-sm underline ${allowRefresh ? 'opacity-100' : 'opacity-40 cursor-not-allowed'}`}
-          disabled={!allowRefresh}
-          onClick={() => load(true)}
-          title={allowRefresh ? 'Nu verversen' : (data.next_allowed_crawl_at ? `Beschikbaar na ${formatDutchDateTime(data.next_allowed_crawl_at)}` : '')}
-        >
-          Vernieuw nu
-        </button>
-      </div>
+      {/* Kop */}
+<div className="mb-2 flex items-center justify-between">
+  <div className="flex items-center gap-3">
+    <h3 className="text-base font-semibold">Personen</h3>
+    <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs bg-gray-100 text-gray-800">
+      {total}
+    </span>
+  </div>
+</div>
+
 
       {/* Tabel */}
       <Table>
