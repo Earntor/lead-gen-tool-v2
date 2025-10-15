@@ -8,9 +8,12 @@ import crypto from 'node:crypto';
 async function fetchHtml(url) {
   const res = await fetch(url, {
     headers: {
-      'User-Agent': 'Mozilla/5.0 (LeadGenBot People/1.1; +https://example.com/contact)',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    },
+  // ✅ Volle desktop Chrome UA, geen “bot” hints
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'nl-NL,nl;q=0.9,en;q=0.8'
+},
+
     redirect: 'follow',
   });
 
@@ -18,7 +21,7 @@ async function fetchHtml(url) {
   if (!ct.includes('text/html')) throw new Error(`Unsupported content-type: ${ct}`);
   const buf = await res.arrayBuffer();
   const sizeKb = Math.round(buf.byteLength / 1024);
-  if (sizeKb < 20 || sizeKb > 4096) throw new Error(`HTML size out of range: ${sizeKb}KB`);
+if (sizeKb < 5 || sizeKb > 4096) throw new Error(`HTML size out of range: ${sizeKb}KB`);
 
   return { html: Buffer.from(buf).toString('utf8'), res };
 }
@@ -27,10 +30,23 @@ async function fetchHtml(url) {
    1) Kandidaten & handige util-functies
    ====================================== */
 const CANDIDATE_PATHS = [
-  '/team','/over-ons','/ons-team','/about','/about-us','/who-we-are',
-  '/organisatie','/management','/bestuur','/wie-zijn-wij','/het-team',
-  '/mensen','/directie','/board','/leadership'
+  '/team','/team/',
+  '/over-ons','/over-ons/',
+  '/ons-team','/ons-team/',
+  '/about','/about/',
+  '/about-us','/about-us/',
+  '/who-we-are','/who-we-are/',
+  '/organisatie','/organisatie/',
+  '/management','/management/',
+  '/bestuur','/bestuur/',
+  '/wie-zijn-wij','/wie-zijn-wij/',
+  '/het-team','/het-team/',
+  '/mensen','/mensen/',
+  '/directie','/directie/',
+  '/board','/board/',
+  '/leadership','/leadership/'
 ];
+
 
 function toAbs(root, path) {
   try {
@@ -339,15 +355,15 @@ if (blockedStatuses.has(res.status)) {
       if (pageLooksLike404OrNoise(title, h1, res.status)) {
   const team_page_hash = crypto.createHash('sha256').update(html).digest('hex');
   best = best ?? {
-    accept: false,
-    url,
-    reason: 'page-404-or-noise',
-    source_quality: 0,
-    team_page_hash,
-    etag: res.headers.get('etag'),
-    last_modified: res.headers.get('last-modified'),
-    evidence_urls: [url] // ✅ bewijs toevoegen
-  };
+  accept: false,
+  url,
+  reason: 'page-404-or-noise',
+  source_quality: 0,
+  team_page_hash: crypto.createHash('sha256').update(html).digest('hex'),
+  etag: res.headers.get('etag'),
+  last_modified: res.headers.get('last-modified'),
+  evidence_urls: [url]
+};
   continue;
 }
 
@@ -375,16 +391,17 @@ if (blockedStatuses.has(res.status)) {
         (validPeople.length === 1 && /1 persoon/.test(detection_reason));
 
       if (!accept) {
-  best = best ?? {
-    accept: false,
-    url,
-    reason: detection_reason,
-    source_quality,
-    team_page_hash: crypto.createHash('sha256').update(html).digest('hex'),
-    etag: res.headers.get('etag'),
-    last_modified: res.headers.get('last-modified'),
-    evidence_urls: [url] // ✅ bewijs toevoegen
-  };
+ best = best ?? {
+  accept: false,
+  url,
+  reason: detection_reason,
+  source_quality,
+  team_page_hash: crypto.createHash('sha256').update(html).digest('hex'),
+  etag: res.headers.get('etag'),
+  last_modified: res.headers.get('last-modified'),
+  evidence_urls: [url]
+};
+
   continue;
 }
 
