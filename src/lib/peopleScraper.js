@@ -172,30 +172,6 @@ function pickImageUrl($scope, baseUrl) {
   return abs && !isLogoUrl(abs) ? abs : null;
 }
 
-
-function pickImageUrl($scope, baseUrl) {
-  const img = $scope.find('img').first();
-  if (!img.length) return null;
-
-  let src =
-    img.attr('src') ||
-    img.attr('data-src') ||
-    img.attr('data-lazy-src') ||
-    null;
-
-  if (!src) {
-    const srcset = img.attr('srcset');
-    if (srcset) {
-      // pak eerste URL uit srcset
-      src = srcset.split(',')[0].trim().split(' ')[0];
-    }
-  }
-
-  const abs = src ? toAbs(baseUrl, src) : null;
-  return abs && !isLogoUrl(abs) ? abs : null;
-}
-
-
 function pageLooksLike404OrNoise(title, h1Text, status) {
   const t = (title || '').toLowerCase();
   const h = (h1Text || '').toLowerCase();
