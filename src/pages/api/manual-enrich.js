@@ -343,23 +343,48 @@ if (updErr) {
 }
 
 // -- flags bepalen op basis van DB (de "waarheid")
+// -- flags bepalen op basis van DB (de "waarheid")
 upsertedPeople = !!improved;
 
 // Waarden vóór update (voor delta-check)
 const prevCount = typeof existing?.people_count === 'number' ? existing.people_count : 0;
 
 // DB-waarden na update (of veilige fallback)
-const finalStatus = updatedRow?.status ?? peopleOutcome?.status ?? existing?.status ?? 'unknown';
-const finalCount  = (typeof updatedRow?.people_count === 'number')
+let finalStatus = updatedRow?.status ?? peopleOutcome?.status ?? existing?.status ?? 'unknown';
+let finalCount  = (typeof updatedRow?.people_count === 'number')
   ? updatedRow.people_count
   : (typeof peopleOutcome?.people_count === 'number'
       ? peopleOutcome.people_count
       : (existing?.people_count || 0));
 
+let finalLastScrapedAt = updatedRow?.last_scraped_at ?? null;
+
+// 🔧 HARD CONSISTENCY FIX:
+// Als we mensen hebben (count > 0) maar status is NIET 'fresh',
+// forceer 'fresh' + zet last_scraped_at als die ontbreekt.
+if (domain && finalCount > 0 && finalStatus !== 'fresh') {
+  const forcedTs = finalLastScrapedAt || new Date().toISOString();
+  const { error: forceErr } = await supabaseAdmin
+    .from('people_cache')
+    .update({
+      status: 'fresh',
+      last_scraped_at: forcedTs
+    })
+    .eq('company_domain', domain);
+
+  if (!forceErr) {
+    finalStatus = 'fresh';
+    finalLastScrapedAt = forcedTs;
+  } else {
+    // desnoods loggen om later te zien wat er misging
+    console.warn('⚠️ force-fresh update mislukte:', forceErr?.message);
+  }
+}
+
 // 1) “Net nu” gescraped? (DB-timestamp binnen 5 minuten)
 const justScrapedNow =
-  !!updatedRow?.last_scraped_at &&
-  Math.abs(Date.now() - new Date(updatedRow.last_scraped_at).getTime()) < (5 * 60 * 1000);
+  !!finalLastScrapedAt &&
+  Math.abs(Date.now() - new Date(finalLastScrapedAt).getTime()) < (5 * 60 * 1000);
 
 // 2) DB oogt vers én we hebben echt verbeterd
 const dbLooksFreshAndImproved = (finalStatus === 'fresh' && finalCount > 0 && improved);
@@ -375,6 +400,10 @@ scrapedPeopleNow = !!(justScrapedNow || dbLooksFreshAndImproved || localScrapeFr
 
 // voor je response
 peopleCount = finalCount;
+
+// (OPTIONEEL: tijdelijk debuggen, verwijder later)
+console.log('people_scraped debug', { finalStatus, finalCount, finalLastScrapedAt, prevCount, justScrapedNow, dbLooksFreshAndImproved, localScrapeFresh, increasedCount, improved });
+
 
 
 
