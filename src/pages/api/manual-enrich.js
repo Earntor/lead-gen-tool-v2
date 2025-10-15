@@ -258,31 +258,42 @@ export default async function manualEnrich(req, res) {
 
           // Upsert alleen als beter (of als er nog niets is)
           const improved = isImproved(existing, peopleOutcome);
-          const patch = {
-            ...(improved ? {
-              status: peopleOutcome.status,
-              people: peopleOutcome.people,
-              people_count: peopleOutcome.people_count,
-              team_page_url: peopleOutcome.team_page_url,
-              team_page_hash: peopleOutcome.team_page_hash,
-              team_page_etag: peopleOutcome.team_page_etag,
-              team_page_last_modified: peopleOutcome.team_page_last_modified,
-              evidence_urls: peopleOutcome.evidence_urls,
-              detection_reason: peopleOutcome.detection_reason,
-              source_quality: peopleOutcome.source_quality,
-              last_verified: peopleOutcome.last_verified,
-            } : {
-              detection_reason: peopleOutcome.detection_reason,
-              source_quality: Math.max(existing?.source_quality || 0, peopleOutcome.source_quality || 0),
-              last_verified: peopleOutcome.last_verified || existing?.last_verified,
-            }),
-            retry_count: peopleOutcome.retry_count,
-            next_allowed_crawl_at: peopleOutcome.next_allowed_crawl_at,
-            last_error_code: peopleOutcome.last_error_code,
-            last_error_at: peopleOutcome.last_error_at,
-            render_state: peopleOutcome.render_state || existing?.render_state || 'unknown',
-            processing: false,
-          };
+
+// ✅ Altijd URL/evidence samenvoegen
+const mergedEvidence = Array.from(new Set([
+  ...(existing?.evidence_urls || []),
+  ...((peopleOutcome?.evidence_urls || [])),
+  ...(peopleOutcome?.team_page_url ? [peopleOutcome.team_page_url] : [])
+]));
+
+// Basisonderdelen die we ALTIJD bijwerken
+const baseAlways = {
+  team_page_url: peopleOutcome?.team_page_url || existing?.team_page_url || null,
+  team_page_hash: peopleOutcome?.team_page_hash || existing?.team_page_hash || null,
+  team_page_etag: peopleOutcome?.team_page_etag || existing?.team_page_etag || null,
+  team_page_last_modified: peopleOutcome?.team_page_last_modified || existing?.team_page_last_modified || null,
+  evidence_urls: mergedEvidence,
+  detection_reason: peopleOutcome?.detection_reason || existing?.detection_reason || null,
+  source_quality: Math.max(existing?.source_quality || 0, peopleOutcome?.source_quality || 0),
+  last_verified: peopleOutcome?.last_verified || new Date().toISOString(),
+};
+
+const patch = {
+  ...(improved ? {
+    status: peopleOutcome.status,
+    people: peopleOutcome.people,
+    people_count: peopleOutcome.people_count,
+  } : {
+    // status/people ongemoeid laten wanneer het niet beter is
+  }),
+  ...baseAlways,
+  retry_count: peopleOutcome.retry_count,
+  next_allowed_crawl_at: peopleOutcome.next_allowed_crawl_at,
+  last_error_code: peopleOutcome.last_error_code,
+  last_error_at: peopleOutcome.last_error_at,
+  render_state: peopleOutcome.render_state || existing?.render_state || 'unknown',
+  processing: false,
+};
 
           await supabaseAdmin
             .from('people_cache')

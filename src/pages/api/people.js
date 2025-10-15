@@ -194,34 +194,44 @@ export default async function handler(req, res) {
     }
 
     // 6) Upsert-beslissing
-    const improved = isImproved(locked, outcome);
+    // 6) Upsert-beslissing
+const improved = isImproved(locked, outcome);
 
-    const patch = {
-      ...(improved ? {
-        status: outcome.status,
-        people: outcome.people,
-        people_count: outcome.people_count,
-        team_page_url: outcome.team_page_url,
-        team_page_hash: outcome.team_page_hash,
-        team_page_etag: outcome.team_page_etag,
-        team_page_last_modified: outcome.team_page_last_modified,
-        evidence_urls: outcome.evidence_urls,
-        detection_reason: outcome.detection_reason,
-        source_quality: outcome.source_quality,
-        last_verified: outcome.last_verified,
-      } : {
-        // alleen housekeeping
-        detection_reason: outcome.detection_reason,
-        source_quality: Math.max(locked.source_quality || 0, outcome.source_quality || 0),
-        last_verified: outcome.last_verified || locked.last_verified,
-      }),
-      retry_count: outcome.retry_count,
-      next_allowed_crawl_at: outcome.next_allowed_crawl_at,
-      last_error_code: outcome.last_error_code,
-      last_error_at: outcome.last_error_at,
-      render_state: outcome.render_state || locked.render_state,
-      processing: false,
-    };
+// ✅ Altijd URL/evidence samenvoegen (ook als niet improved)
+const mergedEvidence = Array.from(new Set([
+  ...(locked?.evidence_urls || []),
+  ...((outcome?.evidence_urls || [])),
+  ...(outcome?.team_page_url ? [outcome.team_page_url] : [])
+]));
+
+// Basisonderdelen die we ALTIJD bijwerken
+const baseAlways = {
+  team_page_url: outcome?.team_page_url || locked?.team_page_url || null,
+  team_page_hash: outcome?.team_page_hash || locked?.team_page_hash || null,
+  team_page_etag: outcome?.team_page_etag || locked?.team_page_etag || null,
+  team_page_last_modified: outcome?.team_page_last_modified || locked?.team_page_last_modified || null,
+  evidence_urls: mergedEvidence,
+  detection_reason: outcome?.detection_reason || locked?.detection_reason || null,
+  source_quality: Math.max(locked?.source_quality || 0, outcome?.source_quality || 0),
+  last_verified: outcome?.last_verified || new Date().toISOString(),
+};
+
+const patch = {
+  ...(improved ? {
+    status: outcome.status,
+    people: outcome.people,
+    people_count: outcome.people_count,
+  } : {
+    // status/people ongemoeid laten wanneer het niet beter is
+  }),
+  ...baseAlways,
+  retry_count: outcome.retry_count,
+  next_allowed_crawl_at: outcome.next_allowed_crawl_at,
+  last_error_code: outcome.last_error_code,
+  last_error_at: outcome.last_error_at,
+  render_state: outcome.render_state || locked.render_state || 'unknown',
+  processing: false,
+};
 
     await supabaseAdmin
       .from('people_cache')

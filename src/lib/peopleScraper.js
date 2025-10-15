@@ -115,6 +115,29 @@ function isLogoUrl(u) {
   return /logo|icon|favicon|sprite/.test(s);
 }
 
+function pickImageUrl($scope, baseUrl) {
+  const img = $scope.find('img').first();
+  if (!img.length) return null;
+
+  let src =
+    img.attr('src') ||
+    img.attr('data-src') ||
+    img.attr('data-lazy-src') ||
+    null;
+
+  if (!src) {
+    const srcset = img.attr('srcset');
+    if (srcset) {
+      // pak eerste URL uit srcset
+      src = srcset.split(',')[0].trim().split(' ')[0];
+    }
+  }
+
+  const abs = src ? toAbs(baseUrl, src) : null;
+  return abs && !isLogoUrl(abs) ? abs : null;
+}
+
+
 function pageLooksLike404OrNoise(title, h1Text, status) {
   const t = (title || '').toLowerCase();
   const h = (h1Text || '').toLowerCase();
@@ -187,12 +210,10 @@ function extractPeople($, baseUrl) {
     const phone = links.find(h => /^tel:/i.test(h))?.replace(/^tel:/i,'').replace(/\s+/g,'').trim() || null;
     const linkedin = links.find(h => /linkedin\.com/i.test(h)) || null;
 
-    // foto
-    const imgSrc = $el.find('img').first().attr('src') || null;
-    const photo_url = imgSrc ? toAbs(baseUrl, imgSrc) : null;
-    if (photo_url && isLogoUrl(photo_url)) {
-      // logo is geen persoonsfoto → negeren
-    }
+    // foto (ook lazy-src/srcset)
+const photo_url = pickImageUrl($el, baseUrl);
+
+
 
     people.push({
       full_name: rawName,
@@ -225,8 +246,8 @@ function extractPeople($, baseUrl) {
     const phone = links.find(href => /^tel:/i.test(href))?.replace(/^tel:/i, '').replace(/\s+/g, '').trim() || null;
     const linkedin = links.find(href => /linkedin\.com/i.test(href)) || null;
 
-    const imgSrc = $ctx.find('img').first().attr('src') || null;
-    const photo_url = imgSrc ? toAbs(baseUrl, imgSrc) : null;
+const photo_url = pickImageUrl($ctx, baseUrl);
+
 
     people.push({
       full_name,
@@ -262,11 +283,16 @@ function extractPeople($, baseUrl) {
    3) Scoring + acceptance-beslisregel
    ====================================== */
 function scoreAndReason(people, pageContext) {
-  const valid = people.filter(p => {
+  const ctxLooksLikeTeam = /team|over\s?ons|about|wie\s?zijn\s?wij|organisatie|management|bestuur/i.test(pageContext || '');
+
+  const isValid = (p) => {
     if (!isLikelyPersonName(p.full_name)) return false;
     const shortRole = isLikelyShortRole(p.role_title || '');
     return shortRole || p.email || p.phone || p.linkedin_url || p.photo_url;
-  });
+  };
+
+  const valid = people.filter(isValid);
+  const namesOnly = people.filter(p => isLikelyPersonName(p.full_name));
 
   let detection_reason = '';
   let source_quality = 0;
@@ -274,37 +300,41 @@ function scoreAndReason(people, pageContext) {
   const hasJsonLd = people.some(p => p._evidence?.includes('jsonld'));
   if (hasJsonLd) source_quality = Math.max(source_quality, 2);
 
+  // A) Sterk bewijs: >=2 personen met naam + (rol/contact/foto)
   if (valid.length >= 2) {
     detection_reason = '>=2 personen met naam + (rol of contact/link)';
     source_quality = Math.max(source_quality, 2 + (hasJsonLd ? 1 : 0)); // 2..3
-  } else if (valid.length === 1) {
-    const p = valid[0];
-    const signals = [
-      !!p.role_title,
-      !!p.linkedin_url,
-      !!p.photo_url,
-      !!p.email,
-      !!p.phone
-    ].filter(Boolean).length;
+    return { source_quality, detection_reason, validPeople: valid };
+  }
 
+  // B) 1-persoon-bedrijf met >=2 signalen
+  if (valid.length === 1) {
+    const p = valid[0];
+    const signals = [!!p.role_title, !!p.linkedin_url, !!p.photo_url, !!p.email, !!p.phone].filter(Boolean).length;
     if (signals >= 2) {
       detection_reason = '1 persoon met ≥2 sterke signalen (rol/email/phone/linkedin/foto)';
       source_quality = Math.max(source_quality, 2 + (hasJsonLd ? 1 : 0)); // 2..3
-    } else {
-      detection_reason = 'Onvoldoende bewijs voor 1-persoon-bedrijf';
-      source_quality = Math.max(source_quality, hasJsonLd ? 2 : 1);
+      return { source_quality, detection_reason, validPeople: [p] };
     }
-  } else {
-    detection_reason = 'Geen valide personen gevonden';
-    source_quality = Math.max(source_quality, hasJsonLd ? 1 : 0);
+    // val door naar alternatieve regel
   }
 
-  if (/team|over\s?ons|about|wie\s?zijn\s?wij|organisatie|management|bestuur/i.test(pageContext || '')) {
-    source_quality = Math.min(3, source_quality + 1);
+  // C) Context-regel: team/about + >=2 geldige namen (ook zonder extra signalen)
+  if (ctxLooksLikeTeam && namesOnly.length >= 2) {
+    detection_reason = '>=2 namen op team/about pagina (zonder extra signalen)';
+    source_quality = Math.max(source_quality, 1); // lager, maar voldoende om te accepteren
+    return { source_quality, detection_reason, validPeople: namesOnly };
   }
 
-  return { source_quality, detection_reason, validPeople: valid };
+  // Geen accept
+  detection_reason = valid.length === 1
+    ? 'Onvoldoende bewijs voor 1-persoon-bedrijf'
+    : 'Geen valide personen gevonden';
+
+  if (ctxLooksLikeTeam) source_quality = Math.min(3, source_quality + 1);
+  return { source_quality, detection_reason, validPeople: [] };
 }
+
 
 /* ======================================
    4) Publieke API: scrapePeopleForDomain
