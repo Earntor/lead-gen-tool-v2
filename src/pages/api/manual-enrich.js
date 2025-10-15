@@ -162,10 +162,12 @@ export default async function manualEnrich(req, res) {
         .eq('ip_address', ip);
 
       // 6) ✅ TEAMS SCRAPEN & UPDATEN VAN people_cache
-      let peopleResult = null;
-      let peopleOutcome = null;
-      let upsertedPeople = false;
-      let peopleCount = 0;
+let peopleResult = null;
+let peopleOutcome = null;
+let upsertedPeople = false;
+let peopleCount = 0;
+let scrapedPeopleNow = false; // <-- moet buiten de if (domain) leven
+
 
       if (domain) {
         try {
@@ -320,16 +322,22 @@ const patch = {
   processing: false,
 };
 
-// ✅ Bepaal flags vanuit de lokale outcome (geen DB-lag)
+// -- write the patch to DB
+await supabaseAdmin
+  .from('people_cache')
+  .update(patch)
+  .eq('company_domain', domain);
+
+// -- set flags from local outcome (not from DB readback)
 upsertedPeople = !!improved;
 
-const scrapedPeopleNow = !!(
+scrapedPeopleNow = !!(
   peopleOutcome &&
   peopleOutcome.status === 'fresh' &&
   (peopleOutcome.people_count || 0) > 0
 );
 
-// Kies juiste people_count voor response
+// choose peopleCount for response
 peopleCount = improved
   ? (peopleOutcome?.people_count || 0)
   : (existing?.people_count || 0);
