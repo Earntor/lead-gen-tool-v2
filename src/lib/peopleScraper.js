@@ -2,30 +2,36 @@
 import * as cheerio from 'cheerio';
 import crypto from 'node:crypto';
 
-// Kleine fetch helper met nette UA en guards
+/* =========================
+   0) Fetch helper (veilig)
+   ========================= */
 async function fetchHtml(url) {
   const res = await fetch(url, {
     headers: {
-      'User-Agent': 'Mozilla/5.0 (LeadGenBot People/1.0; +https://example.com/contact)',
+      'User-Agent': 'Mozilla/5.0 (LeadGenBot People/1.1; +https://example.com/contact)',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     },
     redirect: 'follow',
   });
+
   const ct = res.headers.get('content-type') || '';
   if (!ct.includes('text/html')) throw new Error(`Unsupported content-type: ${ct}`);
   const buf = await res.arrayBuffer();
   const sizeKb = Math.round(buf.byteLength / 1024);
-  if (sizeKb < 30 || sizeKb > 2048) throw new Error(`HTML size out of range: ${sizeKb}KB`);
+  if (sizeKb < 20 || sizeKb > 4096) throw new Error(`HTML size out of range: ${sizeKb}KB`);
+
   return { html: Buffer.from(buf).toString('utf8'), res };
 }
 
-// Kandidate paden (NL + EN)
+/* ======================================
+   1) Kandidaten & handige util-functies
+   ====================================== */
 const CANDIDATE_PATHS = [
   '/team','/over-ons','/ons-team','/about','/about-us','/who-we-are',
-  '/organisatie','/management','/bestuur','/wie-zijn-wij', '/het-team', '/mensen', '/directie'
+  '/organisatie','/management','/bestuur','/wie-zijn-wij','/het-team',
+  '/mensen','/directie','/board','/leadership'
 ];
 
-// Utility: absolute URL maken vanaf root
 function toAbs(root, path) {
   try {
     return new URL(path, root).toString();
@@ -34,114 +40,170 @@ function toAbs(root, path) {
   }
 }
 
-// Naam schoonmaken voor hashing (NIET opslaan)
 function normName(name) {
   return (name || '').toLowerCase()
     .normalize('NFD').replace(/\p{Diacritic}/gu,'')
     .replace(/\s+/g,' ').trim();
 }
 
-// Basic e-mail domein check
-function sameDomain(email, companyDomain) {
-  if (!email || !companyDomain) return false;
-  const at = email.split('@')[1]?.toLowerCase();
-  return !!at && at.endsWith(companyDomain.toLowerCase());
+const NAME_STOPWORDS = [
+  // Veelvoorkomende ruis op NL/EN sites
+  'style guide','fout 404','404','not found','we konden de pagina',
+  'overige ruimtes','ontvang onze e-mail nieuwsbrief','nieuwsbrief',
+  'we maken het graag persoonlijk','privacy','cookies','algemene voorwaarden',
+  'contact','services','oplossingen','producten','vacatures','werken bij',
+  'aanmelden','inschrijven','projecten','cases','referenties',
+  // Van Werven / Homemadeby-achtige koppen
+  'capaciteit','integrale oplossingen','bouwstoffen',
+  'kennis van regelgeving','van afval naar grondstof'
+];
+
+function isLikelyPersonName(name) {
+  if (!name) return false;
+  const n = name.replace(/\s+/g, ' ').trim();
+  if (n.length < 4 || n.length > 80) return false;
+  if (/\d/.test(n)) return false;                       // geen cijfers
+  if ((n.match(/[^A-Za-zÀ-ÖØ-öø-ÿ'’\-\s]/g) || []).length > 2) return false;
+
+  const lower = n.toLowerCase();
+  if (NAME_STOPWORDS.some(s => lower.includes(s))) return false;
+  if (/[!:]$/.test(n)) return false;                    // "zinachtige" koppen
+
+  const parts = n.split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return false;                   // minimaal voornaam + achternaam
+
+  const tussen = new Set(['de','den','der','van','von','vom','la','le','di','da','du','del','della']);
+  const isWordOk = (w) => {
+    const lw = w.toLowerCase();
+    if (tussen.has(lw)) return true;                    // tussenvoegsels ok
+    return /^[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]*$/.test(w);
+  };
+
+  const okCount = parts.filter(isWordOk).length;
+  return okCount >= 2;
 }
 
-// Extract persoons-cards uit een $document
+function isLikelyShortRole(text) {
+  if (!text) return false;
+  const t = text.trim();
+  if (t.length === 0) return false;
+  if (t.length > 120) return false; // lange bio = geen rol
+  // sluit duidelijk niet-rollen uit
+  const bad = /(cookie|privacy|error|404|nieuwsbrief|inschrijven|afmelden|algemene voorwaarden)/i;
+  return !bad.test(t);
+}
+
+function isLogoUrl(u) {
+  if (!u) return false;
+  const s = u.toLowerCase();
+  return /logo|icon|favicon|sprite/.test(s);
+}
+
+function pageLooksLike404OrNoise(title, h1Text, status) {
+  const t = (title || '').toLowerCase();
+  const h = (h1Text || '').toLowerCase();
+  if (status === 404 || status === 410) return true;
+  const bad = /(404|page not found|niet gevonden|oops|sorry|error)/i;
+  return bad.test(t) || bad.test(h);
+}
+
+/* ======================================
+   2) Extractie uit een HTML-document
+   ====================================== */
 function extractPeople($, baseUrl) {
   const people = [];
 
-  // 1) JSON-LD Person
-  $('script[type="application/ld+json"]').each((_,el) => {
+  // -- JSON-LD Person -------------------
+  $('script[type="application/ld+json"]').each((_, el) => {
     try {
-      const data = JSON.parse($(el).contents().text().trim());
+      const raw = $(el).contents().text().trim();
+      if (!raw) return;
+      const data = JSON.parse(raw);
       const arr = Array.isArray(data) ? data : [data];
       arr.forEach(obj => {
-        if (obj['@type'] === 'Person' || (Array.isArray(obj['@type']) && obj['@type'].includes('Person'))) {
-          const full_name = obj.name?.toString().trim();
-          if (!full_name) return;
-          people.push({
-            full_name,
-            role_title: obj.jobTitle?.toString().trim() || null,
-            email: obj.email?.toString().replace(/^mailto:/,'').trim() || null,
-            phone: obj.telephone?.toString().trim() || null,
-            linkedin_url: null,
-            photo_url: obj.image?.toString().trim() || null,
-            _evidence: ['jsonld'],
-          });
+        const types = Array.isArray(obj['@type']) ? obj['@type'] : [obj['@type']];
+        if (types.includes('Person')) {
+          const full_name = (obj.name || '').toString().trim();
+          if (isLikelyPersonName(full_name)) {
+            people.push({
+              full_name,
+              role_title: obj.jobTitle?.toString().trim() || null,
+              email: obj.email?.toString().replace(/^mailto:/,'').trim() || null,
+              phone: obj.telephone?.toString().trim() || null,
+              linkedin_url: null,
+              photo_url: obj.image?.toString().trim() || null,
+              _evidence: ['jsonld'],
+            });
+          }
         }
       });
-    } catch {}
+    } catch { /* negeer kapotte JSON-LD */ }
   });
 
-  // 2) Heuristiek voor cards/lijsten
+  // -- Cards / tile-achtige blokken -----
   const CARD_SELECTORS = [
     '.team-member','.team__member','.member','.person','.profile-card',
-    '.staff','.employee','.card:has(.name), .card:has(h3), .card:has(h4)',
-    'li:has(.name), li:has(h3), li:has(h4)'
+    '.staff','.employee','.card:has(.name),.card:has(h3),.card:has(h4)',
+    'li:has(.name),li:has(h3),li:has(h4)'
   ];
 
   $(CARD_SELECTORS.join(',')).each((_, el) => {
     const $el = $(el);
-    const full_name = ($el.find('.name').first().text()
-      || $el.find('h3, h4').first().text()
-      || $el.text()).replace(/\s+/g,' ').trim();
 
-    if (!full_name || full_name.split(' ').length < 2) return; // geen voor+achternaam → skip ruis
+    // ruwe titel
+    const rawName = (
+      $el.find('.name').first().text() ||
+      $el.find('h3, h4').first().text() ||
+      $el.text()
+    ).replace(/\s+/g, ' ').trim();
 
-    const role_title = ($el.find('.role,.title,.function').first().text()
-      || '').replace(/\s+/g,' ').trim() || null;
+    if (!isLikelyPersonName(rawName)) return;
 
-    // contact links
-const links = $el.find('a[href]').map((_,a)=>$el.find(a).attr('href')).get();
-    const email = links.find(h=>/^mailto:/i.test(h))?.replace(/^mailto:/i,'').trim() || null;
-    const phone = links.find(h=>/^tel:/i.test(h))?.replace(/^tel:/i,'').replace(/\s+/g,'').trim() || null;
-    const linkedin = links.find(h=>/linkedin\.com/i.test(h)) || null;
+    // rol (kort)
+    const role_title = (
+      $el.find('.role,.title,.function').first().text() || ''
+    ).replace(/\s+/g, ' ').trim();
+    const role = isLikelyShortRole(role_title) ? role_title : null;
+
+    // contact links  (**BUGFIX**: gebruik $(a), niet $el.find(a) binnen map)
+    const links = $el.find('a[href]').map((__, a) => $(a).attr('href')).get();
+    const email = links.find(h => /^mailto:/i.test(h))?.replace(/^mailto:/i,'').trim() || null;
+    const phone = links.find(h => /^tel:/i.test(h))?.replace(/^tel:/i,'').replace(/\s+/g,'').trim() || null;
+    const linkedin = links.find(h => /linkedin\.com/i.test(h)) || null;
 
     // foto
-    const photo_url =
-      $el.find('img').first().attr('src')
-        ? toAbs(baseUrl, $el.find('img').first().attr('src'))
-        : null;
+    const imgSrc = $el.find('img').first().attr('src') || null;
+    const photo_url = imgSrc ? toAbs(baseUrl, imgSrc) : null;
+    if (photo_url && isLogoUrl(photo_url)) {
+      // logo is geen persoonsfoto → negeren
+    }
 
     people.push({
-      full_name,
-      role_title: role_title || null, // exact zoals gevonden
-      email: email || null,
-      phone: phone || null,
-      linkedin_url: linkedin || null,
-      photo_url,
+      full_name: rawName,
+      role_title: role,
+      email,
+      phone,
+      linkedin_url: linkedin,
+      photo_url: photo_url && !isLogoUrl(photo_url) ? photo_url : null,
       _evidence: ['card'],
     });
   });
 
-  // 2b) Fallback: heading-gedreven blokken (h1/h2/h3 met context)
+  // -- Heading-gedreven blokken ----------
   $('h1, h2, h3').each((_, h) => {
     const $h = $(h);
     const full_name = $h.text().replace(/\s+/g, ' ').trim();
+    if (!isLikelyPersonName(full_name)) return;
 
-    // minimaal voor+achternaam (2 woorden)
-    if (!full_name || full_name.split(' ').length < 2) return;
-
-    // context: dichtstbijzijnde section/article/div
     const $ctx = $h.closest('section, article, div').length ? $h.closest('section, article, div') : $h.parent();
 
-    // eerste paragraaf onder de heading (vaak rol of korte intro)
     let role_title = null;
-    const $p = $ctx.find('p').filter(function () {
-      return $(this).text().trim().length > 0;
-    }).first();
-
+    const $p = $ctx.find('p').filter(function () { return $(this).text().trim().length > 0; }).first();
     if ($p.length) {
       const txt = $p.text().replace(/\s+/g, ' ').trim();
-      // beschouw dit als rol/ondertitel als het geen lange bio is
-      if (txt && txt.length <= 120) {
-        role_title = txt;
-      }
+      if (isLikelyShortRole(txt)) role_title = txt;
     }
 
-    // links + media binnen dezelfde context
     const links = $ctx.find('a[href]').map((__, a) => $(a).attr('href')).get();
     const email = links.find(href => /^mailto:/i.test(href))?.replace(/^mailto:/i, '').trim() || null;
     const phone = links.find(href => /^tel:/i.test(href))?.replace(/^tel:/i, '').replace(/\s+/g, '').trim() || null;
@@ -150,67 +212,56 @@ const links = $el.find('a[href]').map((_,a)=>$el.find(a).attr('href')).get();
     const imgSrc = $ctx.find('img').first().attr('src') || null;
     const photo_url = imgSrc ? toAbs(baseUrl, imgSrc) : null;
 
-    // voeg toe; dedupe gebeurt later
     people.push({
       full_name,
-      role_title: role_title || null,   // exact zoals gevonden
-      email: email || null,
-      phone: phone || null,
-      linkedin_url: linkedin || null,
-      photo_url,
+      role_title,
+      email,
+      phone,
+      linkedin_url: linkedin,
+      photo_url: photo_url && !isLogoUrl(photo_url) ? photo_url : null,
       _evidence: ['heading-block'],
     });
   });
 
-
-  // 3) Fallback: lijsten met anchors
-  $('a[href*="linkedin.com"]').each((_,a) => {
+  // -- Fallback: losse LinkedIn-anchors ---
+  $('a[href*="linkedin.com"]').each((_, a) => {
     const $a = $(a);
     const name = $a.text().replace(/\s+/g,' ').trim();
-    if (name && name.split(' ').length >= 2) {
-      people.push({
-        full_name: name,
-        role_title: null,
-        email: null,
-        phone: null,
-        linkedin_url: $a.attr('href'),
-        photo_url: null,
-        _evidence: ['anchor-linkedin'],
-      });
-    }
+    if (!isLikelyPersonName(name)) return;
+    people.push({
+      full_name: name,
+      role_title: null,
+      email: null,
+      phone: null,
+      linkedin_url: $a.attr('href'),
+      photo_url: null,
+      _evidence: ['anchor-linkedin'],
+    });
   });
 
   return people;
 }
 
-// Kwaliteitscore en redenen
+/* ======================================
+   3) Scoring + acceptance-beslisregel
+   ====================================== */
 function scoreAndReason(people, pageContext) {
-  // people_valid: naam + (rol of één van email/tel/linkedin/foto)
-    const valid = people.filter(p => {
-    if (!p.full_name) return false;
-    // rol mag geen lange bio zijn
-    const shortRole = p.role_title && p.role_title.trim().split(/\s+/).length <= 30;
-    return (
-      shortRole ||
-      p.email ||
-      p.phone ||
-      p.linkedin_url ||
-      p.photo_url
-    );
+  const valid = people.filter(p => {
+    if (!isLikelyPersonName(p.full_name)) return false;
+    const shortRole = isLikelyShortRole(p.role_title || '');
+    return shortRole || p.email || p.phone || p.linkedin_url || p.photo_url;
   });
-
 
   let detection_reason = '';
   let source_quality = 0;
 
   const hasJsonLd = people.some(p => p._evidence?.includes('jsonld'));
-  if (hasJsonLd) source_quality = Math.max(source_quality, 3);
+  if (hasJsonLd) source_quality = Math.max(source_quality, 2);
 
   if (valid.length >= 2) {
     detection_reason = '>=2 personen met naam + (rol of contact/link)';
     source_quality = Math.max(source_quality, 2 + (hasJsonLd ? 1 : 0)); // 2..3
   } else if (valid.length === 1) {
-    // 1-persoon-bedrijf: naam + minstens 2 signalen
     const p = valid[0];
     const signals = [
       !!p.role_title,
@@ -232,7 +283,6 @@ function scoreAndReason(people, pageContext) {
     source_quality = Math.max(source_quality, hasJsonLd ? 1 : 0);
   }
 
-  // context bump bij page titles/headings met “team/about/over ons”
   if (/team|over\s?ons|about|wie\s?zijn\s?wij|organisatie|management|bestuur/i.test(pageContext || '')) {
     source_quality = Math.min(3, source_quality + 1);
   }
@@ -240,36 +290,52 @@ function scoreAndReason(people, pageContext) {
   return { source_quality, detection_reason, validPeople: valid };
 }
 
-// Public API: scrape people voor een domain root + teampagina discovery
+/* ======================================
+   4) Publieke API: scrapePeopleForDomain
+   ====================================== */
 export async function scrapePeopleForDomain(companyDomain) {
   const root = `https://${companyDomain.replace(/\/+$/,'')}`;
   const candidates = [...CANDIDATE_PATHS.map(p => toAbs(root, p))].filter(Boolean);
 
-  // homepage heuristics voor extra kandidaten
+  // homepage → extra kandidaten opsnorren
   try {
     const { html } = await fetchHtml(root);
     const $ = cheerio.load(html);
     const anchors = $('a[href]').map((_,a)=>$(a).attr('href')).get()
       .map(h => toAbs(root, h))
       .filter(Boolean);
-    const extra = anchors.filter(u => /team|over-?ons|about|who-we-are|organisatie|management|bestuur/i.test(u || ''));
-    // maximaal 3 extra
-    for (const u of extra.slice(0,3)) if (!candidates.includes(u)) candidates.push(u);
-  } catch {/* homepage kan falen; geen ramp */}
+    const extra = anchors.filter(u => /team|over-?ons|about|who-we-are|organisatie|management|bestuur|leadership|board/i.test(u || ''));
+    for (const u of extra.slice(0,5)) if (!candidates.includes(u)) candidates.push(u);
+  } catch { /* homepage mag falen */ }
 
   let best = null;
 
-  for (const url of candidates.slice(0,12)) {
+  for (const url of candidates.slice(0, 12)) {
     try {
       const { html, res } = await fetchHtml(url);
       const $ = cheerio.load(html);
 
-      // simpele page context (title + h1)
-      const pageCtx = `${$('title').text()} | ${$('h1').first().text()}`.trim();
+      const title = $('title').text();
+      const h1 = $('h1').first().text();
+      const pageCtx = `${title} | ${h1}`.trim();
+
+      if (pageLooksLike404OrNoise(title, h1, res.status)) {
+        const team_page_hash = crypto.createHash('sha256').update(html).digest('hex');
+        best = best ?? {
+          accept: false,
+          url,
+          reason: 'page-404-or-noise',
+          source_quality: 0,
+          team_page_hash,
+          etag: res.headers.get('etag'),
+          last_modified: res.headers.get('last-modified')
+        };
+        continue;
+      }
 
       const rawPeople = extractPeople($, url);
 
-      // dedupe
+      // Dedup: full_name + (linkedin/email/phone/foto)
       const uniq = [];
       const seen = new Set();
       for (const p of rawPeople) {
@@ -277,7 +343,7 @@ export async function scrapePeopleForDomain(companyDomain) {
           normName(p.full_name),
           p.linkedin_url || p.email || p.phone || p.photo_url || ''
         ].join('|');
-        if (normName(p.full_name).length === 0) continue;
+        if (!normName(p.full_name)) continue;
         if (seen.has(key)) continue;
         seen.add(key);
         uniq.push(p);
@@ -285,13 +351,11 @@ export async function scrapePeopleForDomain(companyDomain) {
 
       const { source_quality, detection_reason, validPeople } = scoreAndReason(uniq, pageCtx);
 
-      // accepteren als team (>=2) of 1-persoon sterk bewijs
       const accept =
         validPeople.length >= 2 ||
         (validPeople.length === 1 && /1 persoon/.test(detection_reason));
 
       if (!accept) {
-        // mogelijk render nodig
         best = best ?? {
           accept: false,
           url,
@@ -306,49 +370,37 @@ export async function scrapePeopleForDomain(companyDomain) {
 
       const people = validPeople.map(p => ({
         full_name: p.full_name,
-        role_title: p.role_title || null,       // exact overnemen
+        role_title: p.role_title || null,
         email: p.email || null,
         phone: p.phone || null,
         linkedin_url: p.linkedin_url || null,
         photo_url: p.photo_url || null,
       }));
 
-      const evidence_urls = [url];
-      const team_page_hash = crypto.createHash('sha256').update(html).digest('hex');
-      const etag = res.headers.get('etag');
-      const last_modified = res.headers.get('last-modified');
-
       const result = {
         accept: true,
         people,
         people_count: people.length,
         team_page_url: url,
-        evidence_urls,
+        evidence_urls: [url],
         detection_reason,
         source_quality,
-        team_page_hash,
-        etag,
-        last_modified
+        team_page_hash: crypto.createHash('sha256').update(html).digest('hex'),
+        etag: res.headers.get('etag'),
+        last_modified: res.headers.get('last-modified')
       };
 
-      // Kies beste (hoogste quality) als er meerdere zijn
+      // kies beste
       if (!best || (best.source_quality ?? 0) < source_quality) best = result;
-
-      // early exit bij hoge kwaliteit
-      if (result.source_quality === 3) break;
+      if (result.source_quality === 3) break; // early exit bij hoge kwaliteit
 
     } catch (e) {
-      // stil falen per kandidaat
       best = best ?? { accept: false, url, reason: `error:${e.message}` };
     }
   }
 
   if (!best) {
-    return {
-      accept: false,
-      reason: 'no-candidates',
-    };
+    return { accept: false, reason: 'no-candidates' };
   }
-
   return best;
 }
