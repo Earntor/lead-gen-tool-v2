@@ -345,11 +345,12 @@ if (updErr) {
 // -- flags bepalen op basis van DB (de "waarheid")
 upsertedPeople = !!improved;
 
-// Zorg dat we last_scraped_at óók selecteren (regel hierboven):
-// .select('status, people_count, last_scraped_at')
+// Waarden vóór update (voor delta-check)
+const prevCount = typeof existing?.people_count === 'number' ? existing.people_count : 0;
 
+// DB-waarden na update (of veilige fallback)
 const finalStatus = updatedRow?.status ?? peopleOutcome?.status ?? existing?.status ?? 'unknown';
-const finalCount  = typeof updatedRow?.people_count === 'number'
+const finalCount  = (typeof updatedRow?.people_count === 'number')
   ? updatedRow.people_count
   : (typeof peopleOutcome?.people_count === 'number'
       ? peopleOutcome.people_count
@@ -364,13 +365,17 @@ const justScrapedNow =
 const dbLooksFreshAndImproved = (finalStatus === 'fresh' && finalCount > 0 && improved);
 
 // 3) Lokale scrape signaleert fresh met >0 personen
-const localScrapeFresh = !!(peopleResult?.accept && (peopleOutcome?.people_count || 0) > 0);
+const localScrapeFresh = !!(peopleResult?.accept && ((peopleOutcome?.people_count || 0) > 0));
 
-// EINDVlag: als één van de drie waar is → true
-scrapedPeopleNow = !!(justScrapedNow || dbLooksFreshAndImproved || localScrapeFresh);
+// 4) Delta-check: aantal personen is toegenomen t.o.v. vóór de update
+const increasedCount = (finalCount > prevCount);
+
+// EINDVlag: als één van de vier waar is → true
+scrapedPeopleNow = !!(justScrapedNow || dbLooksFreshAndImproved || localScrapeFresh || increasedCount);
 
 // voor je response
 peopleCount = finalCount;
+
 
 
 
