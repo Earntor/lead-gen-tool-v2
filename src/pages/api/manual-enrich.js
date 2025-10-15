@@ -386,8 +386,43 @@ peopleCount = finalCount;
         }
       }
 
-      // ✅ Bepaal "scraped people now" op basis van wat we echt hebben weggeschreven
-// ✅ Bepaal "scraped people now" vanuit de DB (waarheid)
+// ✅ Definitieve check uit DB (bron van waarheid) vóór we resultaat teruggeven
+let peopleScrapedFinal = false;
+let finalCountForResponse = peopleCount;
+
+try {
+  if (domain) {
+    const { data: finalDB, error: finalErr } = await supabaseAdmin
+      .from('people_cache')
+      .select('status, people_count, last_scraped_at')
+      .eq('company_domain', domain)
+      .single();
+
+    if (!finalErr && finalDB) {
+      const recent =
+        !!finalDB.last_scraped_at &&
+        Math.abs(Date.now() - new Date(finalDB.last_scraped_at).getTime()) < (5 * 60 * 1000);
+
+      // Hard rule: als DB 'fresh' + count>0 of timestamp net gezet → true
+      peopleScrapedFinal = recent || (finalDB.status === 'fresh' && (finalDB.people_count || 0) > 0);
+
+      // Neem het daadwerkelijke DB-aantal mee in response
+      if (typeof finalDB.people_count === 'number') {
+        finalCountForResponse = finalDB.people_count;
+      }
+    } else {
+      // Fallback op lokale berekening als select mislukt
+      peopleScrapedFinal = scrapedPeopleNow;
+    }
+  } else {
+    peopleScrapedFinal = false;
+  }
+} catch {
+  // Fallback bij onverwachte fout
+  peopleScrapedFinal = scrapedPeopleNow;
+}
+
+// 🔚 Push het definitieve resultaat
 results.push({
   ip_address: ip,
   ok: true,
@@ -395,10 +430,11 @@ results.push({
   used_domain: domain || null,
   maps_found: !!maps,
   scraped: !!scraped,
-  people_scraped: scrapedPeopleNow,   // ⬅️ uit lokale outcome
-  people_upserted: upsertedPeople,    // ⬅️ true alleen bij echte improvement
-  people_count: peopleCount
+  people_scraped: peopleScrapedFinal,  // <-- nu op basis van DB
+  people_upserted: upsertedPeople,
+  people_count: finalCountForResponse
 });
+
 
 
 
