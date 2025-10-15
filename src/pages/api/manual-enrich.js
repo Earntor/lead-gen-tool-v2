@@ -166,6 +166,7 @@ export default async function manualEnrich(req, res) {
       let peopleOutcome = null;
       let upsertedPeople = false;
       let peopleCount = 0;
+      let afterRow = null;
 
       if (domain) {
         try {
@@ -326,11 +327,13 @@ const patch = {
   .eq('company_domain', domain);
 
 // ⬇️ Lees het actuele record terug uit de DB om waarheid te rapporteren
-const { data: afterRow } = await supabaseAdmin
+const { data } = await supabaseAdmin
   .from('people_cache')
   .select('status, people_count, team_page_url, detection_reason, source_quality, evidence_urls')
   .eq('company_domain', domain)
   .single();
+ afterRow = data || null; // ⬅️ schrijf naar de outer variabele
+
 
 upsertedPeople = improved || !!existing;
 
@@ -348,11 +351,8 @@ if (afterRow) {
 
       // ✅ Bepaal "scraped people now" op basis van wat we echt hebben weggeschreven
 // ✅ Bepaal "scraped people now" vanuit de DB (waarheid)
-const scrapedPeopleNowFromDB = !!(
-  afterRow &&
-  afterRow.status === 'fresh' &&
-  (afterRow.people_count || 0) > 0
-);
+const scrapedPeopleNowFromDB = !!(afterRow && afterRow.status === 'fresh' && (afterRow.people_count || 0) > 0);
+
 
 // (optioneel) logging met DB-waarden
 console.log('👥 people_cache after update', {
