@@ -222,28 +222,39 @@ export default async function manualEnrich(req, res) {
               render_state: 'not_needed',
             };
           } else {
-            // Niet geaccepteerd → geen team / mogelijk render nodig
-            peopleOutcome = {
-              status: 'no_team',
-              people: existing?.people || [],
-              people_count: existing?.people_count || 0,
-              team_page_url: existing?.team_page_url || null,
-              team_page_hash: peopleResult?.team_page_hash || existing?.team_page_hash || null,
-              team_page_etag: peopleResult?.etag || existing?.team_page_etag || null,
-              team_page_last_modified: peopleResult?.last_modified
-                ? new Date(peopleResult.last_modified).toISOString()
-                : existing?.team_page_last_modified || null,
-              evidence_urls: existing?.evidence_urls || [],
-              detection_reason: peopleResult?.reason || 'no-accept',
-              source_quality: Math.max(existing?.source_quality || 0, peopleResult?.source_quality || 0),
-              last_verified: new Date().toISOString(),
-              retry_count: (existing?.retry_count || 0) + 1,
-              next_allowed_crawl_at: nextAllowedOnSuccess(existing?.ttl_days || 14), // milde cooldown na manual
-              last_error_code: null,
-              last_error_at: null,
-              render_state: 'needed',
-            };
-          }
+  // Niet geaccepteerd → onderscheid 'blocked' vs 'no_team' en bewaar ALTIJD URL + evidence
+  const isBlocked = (peopleResult?.reason === 'blocked');
+
+  // Cooldown: korter bij blokkade (6 uur), anders normale TTL
+  const nextAt = isBlocked
+    ? (() => { const d = new Date(); d.setHours(d.getHours() + 6); return d.toISOString(); })()
+    : nextAllowedOnSuccess(existing?.ttl_days || 14);
+
+  peopleOutcome = {
+    status: isBlocked ? 'blocked' : 'no_team',
+    people: existing?.people || [],
+    people_count: existing?.people_count || 0,
+    team_page_url: peopleResult?.url || existing?.team_page_url || null, // ✅ URL invullen
+    team_page_hash: peopleResult?.team_page_hash || existing?.team_page_hash || null,
+    team_page_etag: peopleResult?.etag || existing?.team_page_etag || null,
+    team_page_last_modified: peopleResult?.last_modified
+      ? new Date(peopleResult.last_modified).toISOString()
+      : existing?.team_page_last_modified || null,
+    evidence_urls: Array.from(new Set([                    // ✅ evidence samenvoegen
+      ...(existing?.evidence_urls || []),
+      ...((peopleResult?.evidence_urls || []))
+    ])),
+    detection_reason: peopleResult?.reason || 'no-accept',
+    source_quality: Math.max(existing?.source_quality || 0, peopleResult?.source_quality || 0),
+    last_verified: new Date().toISOString(),
+    retry_count: (existing?.retry_count || 0) + 1,
+    next_allowed_crawl_at: nextAt,
+    last_error_code: isBlocked ? 'blocked' : null,
+    last_error_at: isBlocked ? new Date().toISOString() : null,
+    render_state: isBlocked ? 'unknown' : 'needed',
+  };
+}
+
 
           // Upsert alleen als beter (of als er nog niets is)
           const improved = isImproved(existing, peopleOutcome);

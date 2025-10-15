@@ -318,20 +318,39 @@ export async function scrapePeopleForDomain(companyDomain) {
       const title = $('title').text();
       const h1 = $('h1').first().text();
       const pageCtx = `${title} | ${h1}`.trim();
+      // ✅ Blocked/WAF/ratelimit?
+const blockedStatuses = new Set([401, 403, 429, 503]);
+if (blockedStatuses.has(res.status)) {
+  const team_page_hash = crypto.createHash('sha256').update(html).digest('hex');
+  best = best ?? {
+    accept: false,
+    url,
+    reason: 'blocked',
+    source_quality: 0,
+    team_page_hash,
+    etag: res.headers.get('etag'),
+    last_modified: res.headers.get('last-modified'),
+    evidence_urls: [url] // altijd bewijs bewaren
+  };
+  continue;
+}
+
 
       if (pageLooksLike404OrNoise(title, h1, res.status)) {
-        const team_page_hash = crypto.createHash('sha256').update(html).digest('hex');
-        best = best ?? {
-          accept: false,
-          url,
-          reason: 'page-404-or-noise',
-          source_quality: 0,
-          team_page_hash,
-          etag: res.headers.get('etag'),
-          last_modified: res.headers.get('last-modified')
-        };
-        continue;
-      }
+  const team_page_hash = crypto.createHash('sha256').update(html).digest('hex');
+  best = best ?? {
+    accept: false,
+    url,
+    reason: 'page-404-or-noise',
+    source_quality: 0,
+    team_page_hash,
+    etag: res.headers.get('etag'),
+    last_modified: res.headers.get('last-modified'),
+    evidence_urls: [url] // ✅ bewijs toevoegen
+  };
+  continue;
+}
+
 
       const rawPeople = extractPeople($, url);
 
@@ -356,17 +375,19 @@ export async function scrapePeopleForDomain(companyDomain) {
         (validPeople.length === 1 && /1 persoon/.test(detection_reason));
 
       if (!accept) {
-        best = best ?? {
-          accept: false,
-          url,
-          reason: detection_reason,
-          source_quality,
-          team_page_hash: crypto.createHash('sha256').update(html).digest('hex'),
-          etag: res.headers.get('etag'),
-          last_modified: res.headers.get('last-modified')
-        };
-        continue;
-      }
+  best = best ?? {
+    accept: false,
+    url,
+    reason: detection_reason,
+    source_quality,
+    team_page_hash: crypto.createHash('sha256').update(html).digest('hex'),
+    etag: res.headers.get('etag'),
+    last_modified: res.headers.get('last-modified'),
+    evidence_urls: [url] // ✅ bewijs toevoegen
+  };
+  continue;
+}
+
 
       const people = validPeople.map(p => ({
         full_name: p.full_name,
@@ -395,8 +416,14 @@ export async function scrapePeopleForDomain(companyDomain) {
       if (result.source_quality === 3) break; // early exit bij hoge kwaliteit
 
     } catch (e) {
-      best = best ?? { accept: false, url, reason: `error:${e.message}` };
-    }
+  best = best ?? {
+    accept: false,
+    url,
+    reason: `error:${e.message}`,
+    evidence_urls: [url] // ✅ bewijs ook bij errors
+  };
+}
+
   }
 
   if (!best) {
