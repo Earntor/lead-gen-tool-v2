@@ -321,28 +321,47 @@ const patch = {
 };
 
           await supabaseAdmin
-            .from('people_cache')
-            .update(patch)
-            .eq('company_domain', domain);
+  .from('people_cache')
+  .update(patch)
+  .eq('company_domain', domain);
 
-          upsertedPeople = improved || !!existing;
-          peopleCount = peopleOutcome.people_count || 0;
+// ⬇️ Lees het actuele record terug uit de DB om waarheid te rapporteren
+const { data: afterRow } = await supabaseAdmin
+  .from('people_cache')
+  .select('status, people_count, team_page_url, detection_reason, source_quality, evidence_urls')
+  .eq('company_domain', domain)
+  .single();
+
+upsertedPeople = improved || !!existing;
+
+// Als de readback lukt, gebruik de waarden uit de DB voor je response
+if (afterRow) {
+  peopleCount = afterRow.people_count || 0;
+} else {
+  peopleCount = peopleOutcome?.people_count || 0; // fallback
+}
+
         } catch (pe) {
           console.error(`❌ People scrape/update error for ${domain}:`, pe);
         }
       }
 
       // ✅ Bepaal "scraped people now" op basis van wat we echt hebben weggeschreven
-const scrapedPeopleNow =
-  !!(peopleOutcome && peopleOutcome.status === 'fresh' && (peopleOutcome.people_count || 0) > 0);
+// ✅ Bepaal "scraped people now" vanuit de DB (waarheid)
+const scrapedPeopleNowFromDB = !!(
+  afterRow &&
+  afterRow.status === 'fresh' &&
+  (afterRow.people_count || 0) > 0
+);
 
-console.log('👥 peopleOutcome summary', {
-  status: peopleOutcome?.status,
-  count: peopleOutcome?.people_count,
-  url: peopleOutcome?.team_page_url,
-  reason: peopleOutcome?.detection_reason
+// (optioneel) logging met DB-waarden
+console.log('👥 people_cache after update', {
+  status: afterRow?.status,
+  count: afterRow?.people_count,
+  url: afterRow?.team_page_url,
+  reason: afterRow?.detection_reason,
+  quality: afterRow?.source_quality
 });
-
 
 results.push({
   ip_address: ip,
@@ -351,10 +370,11 @@ results.push({
   used_domain: domain || null,
   maps_found: !!maps,
   scraped: !!scraped,
-  people_scraped: scrapedPeopleNow, // ⬅️ outcome i.p.v. raw result
+  people_scraped: scrapedPeopleNowFromDB, // ⬅️ nu uit DB
   people_upserted: !!upsertedPeople,
   people_count: peopleCount
 });
+
 
     } catch (e) {
       console.error(`❌ Manual enrich fout voor ${ip}:`, e);
