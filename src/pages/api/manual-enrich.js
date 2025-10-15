@@ -166,7 +166,6 @@ export default async function manualEnrich(req, res) {
       let peopleOutcome = null;
       let upsertedPeople = false;
       let peopleCount = 0;
-      let afterRow = null;
 
       if (domain) {
         try {
@@ -321,28 +320,20 @@ const patch = {
   processing: false,
 };
 
-          await supabaseAdmin
-  .from('people_cache')
-  .update(patch)
-  .eq('company_domain', domain);
+// ✅ Bepaal flags vanuit de lokale outcome (geen DB-lag)
+upsertedPeople = !!improved;
 
-// ⬇️ Lees het actuele record terug uit de DB om waarheid te rapporteren
-const { data } = await supabaseAdmin
-  .from('people_cache')
-  .select('status, people_count, team_page_url, detection_reason, source_quality, evidence_urls')
-  .eq('company_domain', domain)
-  .single();
- afterRow = data || null; // ⬅️ schrijf naar de outer variabele
+const scrapedPeopleNow = !!(
+  peopleOutcome &&
+  peopleOutcome.status === 'fresh' &&
+  (peopleOutcome.people_count || 0) > 0
+);
 
+// Kies juiste people_count voor response
+peopleCount = improved
+  ? (peopleOutcome?.people_count || 0)
+  : (existing?.people_count || 0);
 
-upsertedPeople = improved || !!existing;
-
-// Als de readback lukt, gebruik de waarden uit de DB voor je response
-if (afterRow) {
-  peopleCount = afterRow.people_count || 0;
-} else {
-  peopleCount = peopleOutcome?.people_count || 0; // fallback
-}
 
         } catch (pe) {
           console.error(`❌ People scrape/update error for ${domain}:`, pe);
@@ -351,18 +342,6 @@ if (afterRow) {
 
       // ✅ Bepaal "scraped people now" op basis van wat we echt hebben weggeschreven
 // ✅ Bepaal "scraped people now" vanuit de DB (waarheid)
-const scrapedPeopleNowFromDB = !!(afterRow && afterRow.status === 'fresh' && (afterRow.people_count || 0) > 0);
-
-
-// (optioneel) logging met DB-waarden
-console.log('👥 people_cache after update', {
-  status: afterRow?.status,
-  count: afterRow?.people_count,
-  url: afterRow?.team_page_url,
-  reason: afterRow?.detection_reason,
-  quality: afterRow?.source_quality
-});
-
 results.push({
   ip_address: ip,
   ok: true,
@@ -370,10 +349,11 @@ results.push({
   used_domain: domain || null,
   maps_found: !!maps,
   scraped: !!scraped,
-  people_scraped: scrapedPeopleNowFromDB, // ⬅️ nu uit DB
-  people_upserted: !!upsertedPeople,
+  people_scraped: scrapedPeopleNow,   // ⬅️ uit lokale outcome
+  people_upserted: upsertedPeople,    // ⬅️ true alleen bij echte improvement
   people_count: peopleCount
 });
+
 
 
     } catch (e) {
