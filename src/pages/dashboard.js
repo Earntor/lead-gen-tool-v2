@@ -228,7 +228,8 @@ function formatDuration(sec) {
 // --- Personenblok (cache-first, 2 → 20 paginatie, LinkedIn kolom) ---
 function PeopleBlock({ companyDomain }) {
   const [data, setData] = React.useState(null);
-  const [page, setPage] = React.useState(0); // 0 = 2 items, daarna stappen van 20
+const [page, setPage] = React.useState(1); // start op pagina 1
+const PAGE_SIZE = 10;
 
   async function load(refresh = false) {
     if (!companyDomain) return;
@@ -237,7 +238,7 @@ function PeopleBlock({ companyDomain }) {
       const res = await fetch(url, { cache: 'no-store' });
       const json = await res.json();
       setData(json);
-      setPage(0);
+      setPage(1);
     } catch (e) {
       setData({ people: [], people_count: 0, status: 'error', detection_reason: e?.message });
     }
@@ -258,10 +259,17 @@ function PeopleBlock({ companyDomain }) {
     );
   }
 
-  const total = data.people_count || 0;
-  const initial = 2;
-  const pageSize = page === 0 ? initial : 20 * page; // 2, 20, 40, ...
-  const rows = (data.people || []).slice(0, pageSize);
+const total = data.people_count || 0;
+const start = (page - 1) * PAGE_SIZE;
+const end = start + PAGE_SIZE;
+const paginatedRows = (data.people || []).slice(start, end);
+
+const isFirstPage = page === 1;
+const isLastPage = end >= total;
+
+const from = total === 0 ? 0 : start + 1;
+const to = Math.min(end, total);
+
 
 
   function StatusBadge({ status, lastVerified }) {
@@ -300,7 +308,7 @@ function PeopleBlock({ companyDomain }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.length > 0 ? rows.map((p, i) => (
+{paginatedRows.length > 0 ? paginatedRows.map((p, i) => (
             <TableRow key={`${p.full_name || 'n/a'}-${i}`}>
               <TableCell>
                 <div className="flex flex-col">
@@ -348,29 +356,29 @@ function PeopleBlock({ companyDomain }) {
           href="#"
           onClick={(e) => {
             e.preventDefault();
-            setPage((prev) => Math.max(0, prev - 1)); // 1→0 (20→2), 2→1 (40→20)
+            if (!isFirstPage) setPage((p) => p - 1);
           }}
-          className={page === 0 ? "pointer-events-none opacity-50" : ""}
-          aria-disabled={page === 0}
+          className={isFirstPage ? "pointer-events-none opacity-50" : ""}
+          aria-disabled={isFirstPage}
         />
       </PaginationItem>
 
       {/* Optioneel: huidige stap tonen (2 / 20 / 40 ...) */}
       <PaginationItem>
-        <span className="px-3 py-2 text-sm text-gray-600">
-          {page === 0 ? 2 : 20 * page} / {total}
+       <span className="px-3 py-2 text-sm text-gray-600">
+          {from}–{to} van {total}
         </span>
       </PaginationItem>
 
       <PaginationItem>
         <PaginationNext
-          href="#"
+            href="#"
           onClick={(e) => {
             e.preventDefault();
-            setPage((prev) => (prev === 0 ? 1 : prev + 1)); // 0→1 (2→20), daarna +20
+            if (!isLastPage) setPage((p) => p + 1);
           }}
-          className={total <= rows.length ? "pointer-events-none opacity-50" : ""}
-          aria-disabled={total <= rows.length}
+          className={isLastPage ? "pointer-events-none opacity-50" : ""}
+          aria-disabled={isLastPage}
         />
       </PaginationItem>
     </PaginationContent>

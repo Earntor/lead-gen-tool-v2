@@ -1,6 +1,7 @@
 // pages/api/people.js
 import { supabaseAdmin } from '../../lib/supabaseAdminClient';
 import { scrapePeopleForDomain } from '../../lib/peopleScraper';
+import { scrapeWebsiteData } from '../../lib/scrapeWebsite';
 
 // Helper: check lock verlopen
 function lockExpired(row) {
@@ -115,13 +116,43 @@ export default async function handler(req, res) {
     try {
       const result = await scrapePeopleForDomain(domain);
 
+// Probeer algemene contactgegevens van de site te halen (voor fallback)
+let siteContacts = null;
+try {
+  siteContacts = await scrapeWebsiteData(domain); // verwacht { email?, phone?, ... }
+} catch {}
+const companyEmail = siteContacts?.email || null;
+const companyPhone = siteContacts?.phone || null;
+;
+
+
       if (result.accept) {
         // Succes: fresh of stale
         const status = result.people_count >= 1 ? 'fresh' : 'no_team';
         outcome = {
           status,
-          people: result.people,
-          people_count: result.people_count,
+          // Personen verrijken met fallback waar nodig
+people: (result.people || []).map(p => {
+  const hasEmail = !!(p.email && String(p.email).trim());
+  const hasPhone = !!(p.phone && String(p.phone).trim());
+
+  // ⬇️ Gate: geen fallback voor generieke/team-rollen
+  const isGenericRole = (p.role_title || '').match(/vacature|recruit|recruitment|hr|human\s*resources|helpdesk|servicedesk|service\s*desk|support|supportdesk|klantenservice|customer\s*service/i);
+
+  const finalEmail = hasEmail ? p.email : (isGenericRole ? null : (companyEmail || null));
+  const finalPhone = hasPhone ? p.phone : (isGenericRole ? null : (companyPhone || null));
+
+  return {
+    ...p,
+    email: finalEmail,
+    phone: finalPhone,
+    contact_email_is_fallback: !hasEmail && !!finalEmail,
+    contact_phone_is_fallback: !hasPhone && !!finalPhone,
+  };
+}),
+
+people_count: (result.people || []).length,
+
           team_page_url: result.team_page_url,
           team_page_hash: result.team_page_hash,
           team_page_etag: result.etag || null,

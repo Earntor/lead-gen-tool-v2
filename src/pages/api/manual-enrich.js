@@ -201,26 +201,51 @@ export default async function manualEnrich(req, res) {
 
           if (peopleResult?.accept) {
             // Succes — fresh
-            peopleOutcome = {
-              status: 'fresh',
-              people: peopleResult.people,            // rol exact zoals gevonden
-              people_count: peopleResult.people_count,
-              team_page_url: peopleResult.team_page_url,
-              team_page_hash: peopleResult.team_page_hash,
-              team_page_etag: peopleResult.etag || null,
-              team_page_last_modified: peopleResult.last_modified
-                ? new Date(peopleResult.last_modified).toISOString()
-                : null,
-              evidence_urls: peopleResult.evidence_urls || [],
-              detection_reason: peopleResult.detection_reason,
-              source_quality: peopleResult.source_quality || 0,
-              last_verified: new Date().toISOString(),
-              retry_count: 0,
-              next_allowed_crawl_at: nextAllowedOnSuccess(existing?.ttl_days || 14),
-              last_error_code: null,
-              last_error_at: null,
-              render_state: 'not_needed',
-            };
+            // Algemene contactgegevens (company-level) alvast klaarzetten als fallback
+const companyEmail = scraped?.email || null;     // vaak via scrapeWebsiteData
+const companyPhone = phone || null;              // 'phone' heb je hierboven al genormaliseerd
+
+// Personen verrijken met fallback waar nodig
+const enrichedPeople = (peopleResult.people || []).map(p => {
+  const hasEmail = !!(p.email && String(p.email).trim());
+  const hasPhone = !!(p.phone && String(p.phone).trim());
+
+  // ⬇️ Gate: geen fallback voor generieke/team-rollen
+  const isGenericRole = (p.role_title || '').match(/vacature|recruit|recruitment|hr|human\s*resources|helpdesk|servicedesk|service\s*desk|support|supportdesk|klantenservice|customer\s*service/i);
+
+  const finalEmail = hasEmail ? p.email : (isGenericRole ? null : (companyEmail || null));
+  const finalPhone = hasPhone ? p.phone : (isGenericRole ? null : (companyPhone || null));
+
+  return {
+    ...p,
+    email: finalEmail,
+    phone: finalPhone,
+    contact_email_is_fallback: !hasEmail && !!finalEmail,
+    contact_phone_is_fallback: !hasPhone && !!finalPhone,
+  };
+});
+
+
+peopleOutcome = {
+  status: 'fresh',
+  people: enrichedPeople,
+  people_count: enrichedPeople.length,           // tel ná fallback
+  team_page_url: peopleResult.team_page_url,
+  team_page_hash: peopleResult.team_page_hash,
+  team_page_etag: peopleResult.etag || null,
+  team_page_last_modified: peopleResult.last_modified
+    ? new Date(peopleResult.last_modified).toISOString()
+    : null,
+  evidence_urls: peopleResult.evidence_urls || [],
+  detection_reason: peopleResult.detection_reason,
+  source_quality: peopleResult.source_quality || 0,
+  last_verified: new Date().toISOString(),
+  retry_count: 0,
+  next_allowed_crawl_at: nextAllowedOnSuccess(existing?.ttl_days || 14),
+  last_error_code: null,
+  last_error_at: null,
+  render_state: 'not_needed',
+};
           } else {
   // Niet geaccepteerd → onderscheid 'blocked' vs 'no_team' en bewaar ALTIJD URL + evidence
   const isBlocked = (peopleResult?.reason === 'blocked');

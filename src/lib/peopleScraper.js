@@ -115,6 +115,64 @@ function isLogoUrl(u) {
   return /logo|icon|favicon|sprite/.test(s);
 }
 
+function isInUnwantedContext($el) {
+  // alles wat op blog/nieuws/case/vacature lijkt
+  const BAD_SEL = [
+    'article', '[class*="blog"]', '[class*="post"]', '[class*="news"]',
+    '[class*="vacature"]', '[class*="career"]', '[class*="case"]',
+    '[id*="blog"]', '[id*="post"]', '[id*="news"]', '[id*="vacature"]', '[id*="case"]'
+  ].join(',');
+
+  const $ctx = $el.closest(BAD_SEL);
+  return $ctx && $ctx.length > 0;
+}
+
+const SENTENCE_START_WORDS = [
+  'hoe','wat','waarom','wanneer','waar','wie','welke','dit','deze','die','ons','onze'
+];
+
+// striktere check: echte persoonsnaam met min. 2 hoofdletter-woorden (tussenvoegsels tellen niet)
+// en geen "zin" die begint met Hoe/Wat/...
+function isLikelyRealPersonName(name) {
+  if (!isLikelyPersonName(name)) return false;
+
+  const parts = name.trim().split(/\s+/);
+  const firstLower = (parts[0] || '').toLowerCase();
+  if (SENTENCE_START_WORDS.includes(firstLower)) return false;
+
+  const tussen = new Set(['de','den','der','van','von','vom','la','le','di','da','du','del','della','van de','van der','ter', 'van den']);
+  let capCount = 0;
+  for (const w of parts) {
+    const lw = w.toLowerCase();
+    if (tussen.has(lw)) continue;
+    if (/^[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]*$/.test(w)) capCount += 1;
+  }
+  return capCount >= 2;
+}
+
+// Afbeelding pakken (ondersteunt src, data-src, data-lazy-src, srcset)
+function pickImageUrl($scope, baseUrl) {
+  const img = $scope.find('img').first();
+  if (!img.length) return null;
+
+  let src =
+    img.attr('src') ||
+    img.attr('data-src') ||
+    img.attr('data-lazy-src') ||
+    null;
+
+  if (!src) {
+    const srcset = img.attr('srcset');
+    if (srcset) {
+      src = srcset.split(',')[0].trim().split(' ')[0];
+    }
+  }
+
+  const abs = src ? toAbs(baseUrl, src) : null;
+  return abs && !isLogoUrl(abs) ? abs : null;
+}
+
+
 function pickImageUrl($scope, baseUrl) {
   const img = $scope.find('img').first();
   if (!img.length) return null;
@@ -187,78 +245,90 @@ function extractPeople($, baseUrl) {
   ];
 
   $(CARD_SELECTORS.join(',')).each((_, el) => {
-    const $el = $(el);
+  const $el = $(el);
 
-    // ruwe titel
-    const rawName = (
-      $el.find('.name').first().text() ||
-      $el.find('h3, h4').first().text() ||
-      $el.text()
-    ).replace(/\s+/g, ' ').trim();
+  // 1) Skip blog/nieuws/case/vacature context
+  if (isInUnwantedContext($el)) return;
 
-    if (!isLikelyPersonName(rawName)) return;
+  // 2) Naam bepalen
+  const rawName = (
+    $el.find('.name').first().text() ||
+    $el.find('h3, h4').first().text() ||
+    $el.text()
+  ).replace(/\s+/g, ' ').trim();
 
-    // rol (kort)
-    const role_title = (
-      $el.find('.role,.title,.function').first().text() || ''
-    ).replace(/\s+/g, ' ').trim();
-    const role = isLikelyShortRole(role_title) ? role_title : null;
+  // 3) Striktere naam-check
+  if (!isLikelyRealPersonName(rawName)) return;
 
-    // contact links  (**BUGFIX**: gebruik $(a), niet $el.find(a) binnen map)
-    const links = $el.find('a[href]').map((__, a) => $(a).attr('href')).get();
-    const email = links.find(h => /^mailto:/i.test(h))?.replace(/^mailto:/i,'').trim() || null;
-    const phone = links.find(h => /^tel:/i.test(h))?.replace(/^tel:/i,'').replace(/\s+/g,'').trim() || null;
-    const linkedin = links.find(h => /linkedin\.com/i.test(h)) || null;
+  // 4) Rol (kort)
+  const role_title = (
+    $el.find('.role,.title,.function').first().text() || ''
+  ).replace(/\s+/g, ' ').trim();
+  const role = isLikelyShortRole(role_title) ? role_title : null;
 
-    // foto (ook lazy-src/srcset)
-const photo_url = pickImageUrl($el, baseUrl);
+  // 5) Contact-links
+  const links = $el.find('a[href]').map((__, a) => $(a).attr('href')).get();
+  const email = links.find(h => /^mailto:/i.test(h))?.replace(/^mailto:/i,'').trim() || null;
+  const phone = links.find(h => /^tel:/i.test(h))?.replace(/^tel:/i,'').replace(/\s+/g,'').trim() || null;
+  const linkedin = links.find(h => /linkedin\.com/i.test(h)) || null;
 
+  // 6) Foto (ondersteunt src, data-src, srcset)
+  const photo_url = pickImageUrl($el, baseUrl);
 
-
-    people.push({
-      full_name: rawName,
-      role_title: role,
-      email,
-      phone,
-      linkedin_url: linkedin,
-      photo_url: photo_url && !isLogoUrl(photo_url) ? photo_url : null,
-      _evidence: ['card'],
-    });
+  people.push({
+    full_name: rawName,
+    role_title: role,
+    email,
+    phone,
+    linkedin_url: linkedin,
+    photo_url: photo_url || null,
+    _evidence: ['card'],
   });
+});
+
 
   // -- Heading-gedreven blokken ----------
-  $('h1, h2, h3').each((_, h) => {
-    const $h = $(h);
-    const full_name = $h.text().replace(/\s+/g, ' ').trim();
-    if (!isLikelyPersonName(full_name)) return;
+$('h1, h2, h3').each((_, h) => {
+  const $h = $(h);
 
-    const $ctx = $h.closest('section, article, div').length ? $h.closest('section, article, div') : $h.parent();
+  // 1) Skip blog/nieuws/case/vacature context
+  if (isInUnwantedContext($h)) return;
 
-    let role_title = null;
-    const $p = $ctx.find('p').filter(function () { return $(this).text().trim().length > 0; }).first();
-    if ($p.length) {
-      const txt = $p.text().replace(/\s+/g, ' ').trim();
-      if (isLikelyShortRole(txt)) role_title = txt;
-    }
+  // 2) Naam bepalen
+  const full_name = $h.text().replace(/\s+/g, ' ').trim();
+  if (!isLikelyRealPersonName(full_name)) return;
 
-    const links = $ctx.find('a[href]').map((__, a) => $(a).attr('href')).get();
-    const email = links.find(href => /^mailto:/i.test(href))?.replace(/^mailto:/i, '').trim() || null;
-    const phone = links.find(href => /^tel:/i.test(href))?.replace(/^tel:/i, '').replace(/\s+/g, '').trim() || null;
-    const linkedin = links.find(href => /linkedin\.com/i.test(href)) || null;
+  // 3) Context vinden
+  const $ctx = $h.closest('section, article, div').length ? $h.closest('section, article, div') : $h.parent();
 
-const photo_url = pickImageUrl($ctx, baseUrl);
+  // 4) Korte rol (eerste paragraaf)
+  let role_title = null;
+  const $p = $ctx.find('p').filter(function () { return $(this).text().trim().length > 0; }).first();
+  if ($p.length) {
+    const txt = $p.text().replace(/\s+/g, ' ').trim();
+    if (isLikelyShortRole(txt)) role_title = txt;
+  }
 
+  // 5) Contact-links
+  const links = $ctx.find('a[href]').map((__, a) => $(a).attr('href')).get();
+  const email = links.find(href => /^mailto:/i.test(href))?.replace(/^mailto:/i, '').trim() || null;
+  const phone = links.find(href => /^tel:/i.test(href))?.replace(/^tel:/i, '').replace(/\s+/g, '').trim() || null;
+  const linkedin = links.find(href => /linkedin\.com/i.test(href)) || null;
 
-    people.push({
-      full_name,
-      role_title,
-      email,
-      phone,
-      linkedin_url: linkedin,
-      photo_url: photo_url && !isLogoUrl(photo_url) ? photo_url : null,
-      _evidence: ['heading-block'],
-    });
+  // 6) Foto (ondersteunt src, data-src, srcset)
+  const photo_url = pickImageUrl($ctx, baseUrl);
+
+  people.push({
+    full_name,
+    role_title,
+    email,
+    phone,
+    linkedin_url: linkedin,
+    photo_url: photo_url || null,
+    _evidence: ['heading-block'],
   });
+});
+
 
   // -- Fallback: losse LinkedIn-anchors ---
   $('a[href*="linkedin.com"]').each((_, a) => {
