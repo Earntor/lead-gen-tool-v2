@@ -319,28 +319,51 @@ const patch = {
   last_error_code: peopleOutcome.last_error_code,
   last_error_at: peopleOutcome.last_error_at,
   render_state: peopleOutcome.render_state || existing?.render_state || 'unknown',
+
+  // ⬇️ NIEUW: timestamp zetten als we nu écht verse mensen hebben
+  last_scraped_at: (peopleOutcome?.status === 'fresh' && (peopleOutcome?.people_count || 0) > 0)
+    ? new Date().toISOString()
+    : (existing?.last_scraped_at ?? null),
+
   processing: false,
 };
 
+
 // -- write the patch to DB
-await supabaseAdmin
+// -- write the patch to DB en direct teruglezen
+const { data: updatedRow, error: updErr } = await supabaseAdmin
   .from('people_cache')
   .update(patch)
-  .eq('company_domain', domain);
+  .eq('company_domain', domain)
+  .select('status, people_count, last_scraped_at')
+  .single();
 
-// -- set flags from local outcome (not from DB readback)
+if (updErr) {
+  console.error('people_cache update error:', updErr);
+}
+
+// -- flags bepalen op basis van DB (de "waarheid")
 upsertedPeople = !!improved;
 
-scrapedPeopleNow = !!(
-  peopleOutcome &&
-  peopleOutcome.status === 'fresh' &&
-  (peopleOutcome.people_count || 0) > 0
-);
+const finalStatus = updatedRow?.status ?? peopleOutcome?.status ?? existing?.status ?? 'unknown';
+const finalCount  = typeof updatedRow?.people_count === 'number'
+  ? updatedRow.people_count
+  : (typeof peopleOutcome?.people_count === 'number'
+      ? peopleOutcome.people_count
+      : (existing?.people_count || 0));
 
-// choose peopleCount for response
-peopleCount = improved
-  ? (peopleOutcome?.people_count || 0)
-  : (existing?.people_count || 0);
+// “net nu” gescraped? (last_scraped_at binnen 60s)
+const justScrapedNow =
+  !!updatedRow?.last_scraped_at &&
+  Math.abs(Date.now() - new Date(updatedRow.last_scraped_at).getTime()) < 60 * 1000;
+
+// Definitieve vlag: tijdstempel óf (status fresh + count > 0)
+scrapedPeopleNow = justScrapedNow || (finalStatus === 'fresh' && finalCount > 0);
+
+// voor je response
+peopleCount = finalCount;
+
+
 
 
         } catch (pe) {

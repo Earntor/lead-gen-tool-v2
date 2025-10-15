@@ -20,8 +20,10 @@ async function fetchHtml(url) {
   const ct = res.headers.get('content-type') || '';
   if (!ct.includes('text/html')) throw new Error(`Unsupported content-type: ${ct}`);
   const buf = await res.arrayBuffer();
-  const sizeKb = Math.round(buf.byteLength / 1024);
-if (sizeKb < 5 || sizeKb > 4096) throw new Error(`HTML size out of range: ${sizeKb}KB`);
+const sizeKb = Math.max(1, Math.round(buf.byteLength / 1024));
+// Sta kleine team-pagina's toe; alleen absurd klein (<=1KB) of absurd groot (>6MB) weggooien
+if (sizeKb <= 1 || sizeKb > 6144) throw new Error(`HTML size out of range: ${sizeKb}KB`);
+
 
   return { html: Buffer.from(buf).toString('utf8'), res };
 }
