@@ -339,11 +339,14 @@ const { data: updatedRow, error: updErr } = await supabaseAdmin
   .single();
 
 if (updErr) {
-  console.error('people_cache update error:', updErr);
+  console.error('people_cache update error:', updErr); 
 }
 
 // -- flags bepalen op basis van DB (de "waarheid")
 upsertedPeople = !!improved;
+
+// Zorg dat we last_scraped_at óók selecteren (regel hierboven):
+// .select('status, people_count, last_scraped_at')
 
 const finalStatus = updatedRow?.status ?? peopleOutcome?.status ?? existing?.status ?? 'unknown';
 const finalCount  = typeof updatedRow?.people_count === 'number'
@@ -352,16 +355,23 @@ const finalCount  = typeof updatedRow?.people_count === 'number'
       ? peopleOutcome.people_count
       : (existing?.people_count || 0));
 
-// “net nu” gescraped? (last_scraped_at binnen 60s)
+// 1) “Net nu” gescraped? (DB-timestamp binnen 5 minuten)
 const justScrapedNow =
   !!updatedRow?.last_scraped_at &&
-  Math.abs(Date.now() - new Date(updatedRow.last_scraped_at).getTime()) < 60 * 1000;
+  Math.abs(Date.now() - new Date(updatedRow.last_scraped_at).getTime()) < (5 * 60 * 1000);
 
-// Definitieve vlag: tijdstempel óf (status fresh + count > 0)
-scrapedPeopleNow = justScrapedNow || (finalStatus === 'fresh' && finalCount > 0);
+// 2) DB oogt vers én we hebben echt verbeterd
+const dbLooksFreshAndImproved = (finalStatus === 'fresh' && finalCount > 0 && improved);
+
+// 3) Lokale scrape signaleert fresh met >0 personen
+const localScrapeFresh = !!(peopleResult?.accept && (peopleOutcome?.people_count || 0) > 0);
+
+// EINDVlag: als één van de drie waar is → true
+scrapedPeopleNow = !!(justScrapedNow || dbLooksFreshAndImproved || localScrapeFresh);
 
 // voor je response
 peopleCount = finalCount;
+
 
 
 
