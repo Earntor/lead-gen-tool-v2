@@ -332,17 +332,30 @@ const patch = {
         }
       }
 
-      results.push({
-        ip_address: ip,
-        ok: true,
-        derived_domain_from_name: usedNameLookup,
-        used_domain: domain || null,
-        maps_found: !!maps,
-        scraped: !!scraped,
-        people_scraped: !!(peopleResult && (peopleResult.accept || peopleResult.source_quality >= 1)),
-        people_upserted: !!upsertedPeople,
-        people_count: peopleCount
-      });
+      // ✅ Bepaal "scraped people now" op basis van wat we echt hebben weggeschreven
+const scrapedPeopleNow =
+  !!(peopleOutcome && peopleOutcome.status === 'fresh' && (peopleOutcome.people_count || 0) > 0);
+
+console.log('👥 peopleOutcome summary', {
+  status: peopleOutcome?.status,
+  count: peopleOutcome?.people_count,
+  url: peopleOutcome?.team_page_url,
+  reason: peopleOutcome?.detection_reason
+});
+
+
+results.push({
+  ip_address: ip,
+  ok: true,
+  derived_domain_from_name: usedNameLookup,
+  used_domain: domain || null,
+  maps_found: !!maps,
+  scraped: !!scraped,
+  people_scraped: scrapedPeopleNow, // ⬅️ outcome i.p.v. raw result
+  people_upserted: !!upsertedPeople,
+  people_count: peopleCount
+});
+
     } catch (e) {
       console.error(`❌ Manual enrich fout voor ${ip}:`, e);
       results.push({ ip_address: ip, ok: false, error: e.message });
