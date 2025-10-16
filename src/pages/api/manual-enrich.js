@@ -27,6 +27,29 @@ function normalizePhone(raw) {
   return s.replace(/[^\d]+/g, '');
 }
 
+function pickEmail(raw) {
+  if (!raw) return null;
+  const s = decodeMaybe(String(raw)).trim();
+
+  // Alleen accepteren als het met mailto: begint
+  if (!/^mailto:/i.test(s)) return null;
+
+  // mailto: strippen
+  const addr = s.replace(/^mailto:/i, '').trim();
+
+  // Moet een @ bevatten
+  if (!addr.includes('@')) return null;
+
+  // Heel simpele sanity check op "iets@iets.tld"
+  // (bewust basic gehouden; strenger mag altijd later)
+  const parts = addr.split('@');
+  if (parts.length !== 2) return null;
+  if (!parts[0] || !parts[1] || !parts[1].includes('.')) return null;
+
+  return addr;
+}
+
+
 function pruneEmpty(obj) {
   const out = {};
   for (const [k, v] of Object.entries(obj || {})) {
@@ -38,14 +61,29 @@ function pruneEmpty(obj) {
 }
 
 // ==== Helpers voor people_cache upsert (zelfde logica als /api/people) ====
-
 function isImproved(oldRow, neu) {
   if (!oldRow) return true;
-  if ((neu.people_count || 0) > (oldRow.people_count || 0)) return true;
+
+  const oldCount = oldRow.people_count || 0;
+  const newCount = neu.people_count || 0;
+
+  // Aantal of kwaliteit beter
+  if (newCount > oldCount) return true;
   if ((neu.source_quality || 0) > (oldRow.source_quality || 0)) return true;
-  if (neu.team_page_hash && neu.team_page_hash !== oldRow.team_page_hash && (neu.people_count || 0) >= 1) return true;
+
+  // Nieuwe (andere) team-page én ≥1 persoon
+  if (neu.team_page_hash && neu.team_page_hash !== oldRow.team_page_hash && newCount >= 1) return true;
+
+  // 🔧 NIEUW: dezelfde team-page, maar lijst inhoudelijk veranderd → ook updaten
+  if (neu.team_page_hash && neu.team_page_hash === oldRow.team_page_hash && newCount >= 1 && oldCount >= 1) {
+    const changedList = JSON.stringify(neu.people ?? []) !== JSON.stringify(oldRow.people ?? []);
+    if (changedList) return true;
+  }
+
+  // Status verbeterd
   const order = { empty:0, error:1, blocked:2, no_team:3, stale:4, fresh:5 };
   if ((order[oldRow.status] ?? 0) < (order[neu.status] ?? 0)) return true;
+
   return false;
 }
 
@@ -128,6 +166,8 @@ export default async function manualEnrich(req, res) {
       const phoneRaw = scraped?.phone || maps?.phone || null;
       const phone = normalizePhone(phoneRaw);
 
+
+
       const payload = pruneEmpty({
         company_name: row.company_name || maps?.name || null,
         company_domain: domain || null,
@@ -141,7 +181,7 @@ export default async function manualEnrich(req, res) {
         category: maps?.category || null,
 
         phone,
-        email: scraped?.email || null,
+email: pickEmail(scraped?.email),
         linkedin_url: scraped?.linkedin_url || null,
         facebook_url: scraped?.facebook_url || null,
         instagram_url: scraped?.instagram_url || null,
@@ -204,18 +244,18 @@ let scrapedPeopleNow = false; // <-- moet buiten de if (domain) leven
           if (peopleResult?.accept) {
             // Succes — fresh
             // Algemene contactgegevens (company-level) alvast klaarzetten als fallback
-const companyEmail = scraped?.email || null;     // vaak via scrapeWebsiteData
+const companyEmail = pickEmail(scraped?.email);   // vaak via scrapeWebsiteData
 const companyPhone = phone || null;              // 'phone' heb je hierboven al genormaliseerd
 
 // Personen verrijken met fallback waar nodig
 const enrichedPeople = (peopleResult.people || []).map(p => {
-  const hasEmail = !!(p.email && String(p.email).trim());
+const normalizedPersonEmail = pickEmail(p.email);
   const hasPhone = !!(p.phone && String(p.phone).trim());
 
   // ⬇️ Gate: geen fallback voor generieke/team-rollen
   const isGenericRole = (p.role_title || '').match(/vacature|recruit|recruitment|hr|human\s*resources|helpdesk|servicedesk|service\s*desk|support|supportdesk|klantenservice|customer\s*service/i);
 
-  const finalEmail = hasEmail ? p.email : (isGenericRole ? null : (companyEmail || null));
+const finalEmail = hasEmail ? normalizedPersonEmail : (isGenericRole ? null : (companyEmail || null));
   const finalPhone = hasPhone ? p.phone : (isGenericRole ? null : (companyPhone || null));
 
   return {

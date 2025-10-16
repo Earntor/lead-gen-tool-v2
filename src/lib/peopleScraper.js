@@ -25,7 +25,7 @@ const sizeKb = Math.max(1, Math.round(buf.byteLength / 1024));
 if (sizeKb <= 1 || sizeKb > 6144) throw new Error(`HTML size out of range: ${sizeKb}KB`);
 
 
-  return { html: Buffer.from(buf).toString('utf8'), res };
+return { html: Buffer.from(buf).toString('utf8'), res, finalUrl: res.url };
 }
 
 /* ======================================
@@ -129,6 +129,26 @@ function isInUnwantedContext($el) {
   return $ctx && $ctx.length > 0;
 }
 
+function looksLikeArticleTitle(s) {
+  const t = (s || '').trim();
+  const tl = t.toLowerCase();
+
+  // begint als zin (vraag-/uitlegwoorden)
+  if (/^(hoe|wat|waarom|wanneer|waar|wie|welke)\b/.test(tl)) return true;
+
+  // typische blog/nieuws woorden
+  if (/\b(linkbuilding|linkbuiding|markt|onderzoek|handleiding|gids|case\s*study|blog|nieuws|update)\b/i.test(t)) return true;
+
+  // eindigt als zin
+  if (/[.!?]$/.test(t)) return true;
+
+  // veel te lang voor een naam
+  if (t.length > 80) return true;
+
+  return false;
+}
+
+
 const SENTENCE_START_WORDS = [
   'hoe','wat','waarom','wanneer','waar','wie','welke','dit','deze','die','ons','onze'
 ];
@@ -180,6 +200,14 @@ function pageLooksLike404OrNoise(title, h1Text, status) {
   if (status === 404 || status === 410) return true;
   const bad = /(404|page not found|niet gevonden|oops|sorry|error)/i;
   return bad.test(t) || bad.test(h);
+}
+
+function pickMailto(href) {
+  if (!href) return null;
+  if (!/^mailto:/i.test(href)) return null;
+  const addr = href.replace(/^mailto:/i, '').trim();
+  if (!addr.includes('@')) return null;
+  return addr;
 }
 
 /* ======================================
@@ -235,6 +263,9 @@ function extractPeople($, baseUrl) {
     $el.text()
   ).replace(/\s+/g, ' ').trim();
 
+    if (looksLikeArticleTitle(rawName)) return;
+
+
   // 3) Striktere naam-check
   if (!isLikelyRealPersonName(rawName)) return;
 
@@ -246,8 +277,16 @@ function extractPeople($, baseUrl) {
 
   // 5) Contact-links
   const links = $el.find('a[href]').map((__, a) => $(a).attr('href')).get();
-  const email = links.find(h => /^mailto:/i.test(h))?.replace(/^mailto:/i,'').trim() || null;
-  const phone = links.find(h => /^tel:/i.test(h))?.replace(/^tel:/i,'').replace(/\s+/g,'').trim() || null;
+const email = (() => {
+  const m = links.find(h => /^mailto:/i.test(h));
+  return pickMailto(m);
+})();
+
+const phone = (() => {
+  const t = links.find(h => /^tel:/i.test(h));
+  return t ? t.replace(/^tel:/i,'').replace(/\s+/g,'').trim() : null;
+})();
+
   const linkedin = links.find(h => /linkedin\.com/i.test(h)) || null;
 
   // 6) Foto (ondersteunt src, data-src, srcset)
@@ -266,7 +305,7 @@ function extractPeople($, baseUrl) {
 
 
   // -- Heading-gedreven blokken ----------
-$('h1, h2, h3').each((_, h) => {
+$('h1, h2, h3, h4, h5').each((_, h) => {
   const $h = $(h);
 
   // 1) Skip blog/nieuws/case/vacature context
@@ -274,6 +313,8 @@ $('h1, h2, h3').each((_, h) => {
 
   // 2) Naam bepalen
   const full_name = $h.text().replace(/\s+/g, ' ').trim();
+  if (looksLikeArticleTitle(full_name)) return;
+
   if (!isLikelyRealPersonName(full_name)) return;
 
   // 3) Context vinden
@@ -289,8 +330,16 @@ $('h1, h2, h3').each((_, h) => {
 
   // 5) Contact-links
   const links = $ctx.find('a[href]').map((__, a) => $(a).attr('href')).get();
-  const email = links.find(href => /^mailto:/i.test(href))?.replace(/^mailto:/i, '').trim() || null;
-  const phone = links.find(href => /^tel:/i.test(href))?.replace(/^tel:/i, '').replace(/\s+/g, '').trim() || null;
+const email = (() => {
+  const m = links.find(href => /^mailto:/i.test(href));
+  return pickMailto(m);
+})();
+
+const phone = (() => {
+  const t = links.find(href => /^tel:/i.test(href));
+  return t ? t.replace(/^tel:/i, '').replace(/\s+/g, '').trim() : null;
+})();
+
   const linkedin = links.find(href => /linkedin\.com/i.test(href)) || null;
 
   // 6) Foto (ondersteunt src, data-src, srcset)
@@ -307,22 +356,32 @@ $('h1, h2, h3').each((_, h) => {
   });
 });
 
+// Strenger: geen blog/nieuws context, geen “Hoe …”-titels, en echte persoonsnaam vereist
+$('a[href*="linkedin.com"]').each((_, a) => {
+  const $a = $(a);
 
-  // -- Fallback: losse LinkedIn-anchors ---
-  $('a[href*="linkedin.com"]').each((_, a) => {
-    const $a = $(a);
-    const name = $a.text().replace(/\s+/g,' ').trim();
-    if (!isLikelyPersonName(name)) return;
-    people.push({
-      full_name: name,
-      role_title: null,
-      email: null,
-      phone: null,
-      linkedin_url: $a.attr('href'),
-      photo_url: null,
-      _evidence: ['anchor-linkedin'],
-    });
+  // skip anchors die in blog/nieuws/vacature context staan
+  if (isInUnwantedContext($a)) return;
+
+  const name = ($a.text() || '').replace(/\s+/g,' ').trim();
+
+  // filter duidelijke niet-namen (titels/zinnen)
+  if (!name || looksLikeArticleTitle(name)) return;
+
+  // vereis echte persoonsnaam met hoofdletter-structuur
+  if (!isLikelyRealPersonName(name)) return;
+
+  people.push({
+    full_name: name,
+    role_title: null,
+    email: null,
+    phone: null,
+    linkedin_url: $a.attr('href'),
+    photo_url: null,
+    _evidence: ['anchor-linkedin'],
   });
+});
+
 
   return people;
 }
@@ -393,8 +452,8 @@ export async function scrapePeopleForDomain(companyDomain) {
 
   // homepage → extra kandidaten opsnorren
   try {
-    const { html } = await fetchHtml(root);
-    const $ = cheerio.load(html);
+const { html: homeHtml } = await fetchHtml(root);
+const $ = cheerio.load(homeHtml);
     const anchors = $('a[href]').map((_,a)=>$(a).attr('href')).get()
       .map(h => toAbs(root, h))
       .filter(Boolean);
@@ -405,12 +464,14 @@ export async function scrapePeopleForDomain(companyDomain) {
   let best = null;
 
   for (const url of candidates.slice(0, 12)) {
-    try {
-      const { html, res } = await fetchHtml(url);
-      const $ = cheerio.load(html);
+  try {
+    const { html, res, finalUrl } = await fetchHtml(url);
+    const pageUrl = finalUrl || url; // ⬅️ dit is de EIND-URL
+    const $ = cheerio.load(html);
 
-      const title = $('title').text();
-      const h1 = $('h1').first().text();
+    const title = $('title').text();
+    const h1 = $('h1').first().text();
+
       const pageCtx = `${title} | ${h1}`.trim();
       // ✅ Blocked/WAF/ratelimit?
 const blockedStatuses = new Set([401, 403, 429, 503]);
@@ -418,13 +479,13 @@ if (blockedStatuses.has(res.status)) {
   const team_page_hash = crypto.createHash('sha256').update(html).digest('hex');
   best = best ?? {
     accept: false,
-    url,
+  url: pageUrl,
     reason: 'blocked',
     source_quality: 0,
     team_page_hash,
     etag: res.headers.get('etag'),
     last_modified: res.headers.get('last-modified'),
-    evidence_urls: [url] // altijd bewijs bewaren
+  evidence_urls: [pageUrl]
   };
   continue;
 }
@@ -434,19 +495,19 @@ if (blockedStatuses.has(res.status)) {
   const team_page_hash = crypto.createHash('sha256').update(html).digest('hex');
   best = best ?? {
   accept: false,
-  url,
+  url: pageUrl,
   reason: 'page-404-or-noise',
   source_quality: 0,
   team_page_hash: crypto.createHash('sha256').update(html).digest('hex'),
   etag: res.headers.get('etag'),
   last_modified: res.headers.get('last-modified'),
-  evidence_urls: [url]
+  evidence_urls: [pageUrl]
 };
   continue;
 }
 
 
-      const rawPeople = extractPeople($, url);
+const rawPeople = extractPeople($, pageUrl);
 
       // Dedup: full_name + (linkedin/email/phone/foto)
       const uniq = [];
@@ -471,13 +532,13 @@ if (blockedStatuses.has(res.status)) {
       if (!accept) {
  best = best ?? {
   accept: false,
-  url,
+  url: pageUrl,
   reason: detection_reason,
   source_quality,
   team_page_hash: crypto.createHash('sha256').update(html).digest('hex'),
   etag: res.headers.get('etag'),
   last_modified: res.headers.get('last-modified'),
-  evidence_urls: [url]
+  evidence_urls: [pageUrl]
 };
 
   continue;
@@ -497,8 +558,8 @@ if (blockedStatuses.has(res.status)) {
         accept: true,
         people,
         people_count: people.length,
-        team_page_url: url,
-        evidence_urls: [url],
+          team_page_url: pageUrl,     // ⬅️ LOG DE EIND-URL
+  evidence_urls: [pageUrl],
         detection_reason,
         source_quality,
         team_page_hash: crypto.createHash('sha256').update(html).digest('hex'),
@@ -513,9 +574,9 @@ if (blockedStatuses.has(res.status)) {
     } catch (e) {
   best = best ?? {
     accept: false,
-    url,
+      url: pageUrl,
     reason: `error:${e.message}`,
-    evidence_urls: [url] // ✅ bewijs ook bij errors
+  evidence_urls: [pageUrl]
   };
 }
 
