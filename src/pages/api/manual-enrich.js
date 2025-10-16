@@ -250,6 +250,7 @@ const companyPhone = phone || null;              // 'phone' heb je hierboven al 
 // Personen verrijken met fallback waar nodig
 const enrichedPeople = (peopleResult.people || []).map(p => {
 const normalizedPersonEmail = pickEmail(p.email);
+  const hasEmail = !!normalizedPersonEmail;
   const hasPhone = !!(p.phone && String(p.phone).trim());
 
   // ⬇️ Gate: geen fallback voor generieke/team-rollen
@@ -323,8 +324,23 @@ peopleOutcome = {
 }
 
 
-          // Upsert alleen als beter (of als er nog niets is)
-          const improved = isImproved(existing, peopleOutcome);
+// --- QUALITY GUARDRAILS: beslis 'improved' óók op inhoud ---
+let improved = isImproved(existing, peopleOutcome);
+
+const oldUrl = existing?.team_page_url || '';
+const newUrl = peopleOutcome?.team_page_url || peopleResult?.team_page_url || '';
+
+const oldPeople = Array.isArray(existing?.people) ? existing.people : [];
+const newPeople = Array.isArray(peopleOutcome?.people) ? peopleOutcome.people : [];
+
+const hasBadEmailOld = oldPeople.some(p => p?.email && String(p.email).includes('__email__'));
+const hasBadEmailNew = newPeople.some(p => p?.email && String(p.email).includes('__email__'));
+const oldWasTeam = /\/team\/?$/.test(oldUrl);
+const newIsReal = !!newUrl && !/\/team\/?$/.test(newUrl);
+
+if (newIsReal && newUrl !== oldUrl) improved = true;
+if (hasBadEmailOld && !hasBadEmailNew) improved = true;
+if (oldWasTeam && newIsReal) improved = true;
 
 // ✅ Altijd URL/evidence samenvoegen
 const mergedEvidence = Array.from(new Set([

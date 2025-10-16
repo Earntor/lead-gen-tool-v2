@@ -463,10 +463,11 @@ const $ = cheerio.load(homeHtml);
 
   let best = null;
 
-  for (const url of candidates.slice(0, 12)) {
+for (const url of candidates.slice(0, 12)) {
+  let pageUrl = url; // ⬅️ buiten de try, zodat catch 'm altijd ziet
   try {
     const { html, res, finalUrl } = await fetchHtml(url);
-    const pageUrl = finalUrl || url; // ⬅️ dit is de EIND-URL
+    pageUrl = finalUrl || url; // ⬅️ na fetch invullen
     const $ = cheerio.load(html);
 
     const title = $('title').text();
