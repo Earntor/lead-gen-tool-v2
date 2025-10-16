@@ -343,11 +343,20 @@ if (hasBadEmailOld && !hasBadEmailNew) improved = true;
 if (oldWasTeam && newIsReal) improved = true;
 
 // ✅ Altijd URL/evidence samenvoegen
-const mergedEvidence = Array.from(new Set([
+let mergedEvidence = Array.from(new Set([
   ...(existing?.evidence_urls || []),
   ...((peopleOutcome?.evidence_urls || [])),
   ...(peopleOutcome?.team_page_url ? [peopleOutcome.team_page_url] : [])
 ]));
+
+// Prefer de eind-URL: filter /team eruit als de eind-URL aanwezig is
+if (peopleOutcome?.team_page_url) {
+  mergedEvidence = mergedEvidence.filter(u => {
+    const isTeam = /\/team\/?$/i.test(u);
+    return !isTeam || (u === peopleOutcome.team_page_url);
+  });
+}
+
 
 // Basisonderdelen die we ALTIJD bijwerken
 const baseAlways = {

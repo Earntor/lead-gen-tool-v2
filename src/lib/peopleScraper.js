@@ -320,13 +320,30 @@ $('h1, h2, h3, h4, h5').each((_, h) => {
   // 3) Context vinden
   const $ctx = $h.closest('section, article, div').length ? $h.closest('section, article, div') : $h.parent();
 
-  // 4) Korte rol (eerste paragraaf)
-  let role_title = null;
-  const $p = $ctx.find('p').filter(function () { return $(this).text().trim().length > 0; }).first();
+  // 4) Korte rol (eerste relevante tekstregel onder de heading)
+let role_title = null;
+
+// Neem eerstvolgende siblings mee (p, div, span) en sla lege/__email__ over
+let $n = $h.next();
+for (let i = 0; i < 5 && $n && $n.length; i++) {
+  const t = ($n.text() || '').replace(/\s+/g,' ').trim();
+  if (t && t !== '__email__' && isLikelyShortRole(t)) { role_title = t; break; }
+  $n = $n.next();
+}
+
+// fallback: eerste niet-lege <p> in de context
+if (!role_title) {
+  const $p = $ctx.find('p, .subtitle, .role, .function').filter(function () {
+    const txt = $(this).text().replace(/\s+/g,' ').trim();
+    return txt && txt !== '__email__';
+  }).first();
+
   if ($p.length) {
-    const txt = $p.text().replace(/\s+/g, ' ').trim();
+    const txt = $p.text().replace(/\s+/g,' ').trim();
     if (isLikelyShortRole(txt)) role_title = txt;
   }
+}
+
 
   // 5) Contact-links
   const links = $ctx.find('a[href]').map((__, a) => $(a).attr('href')).get();
