@@ -1209,6 +1209,15 @@ const isISP = KNOWN_ISPS.some(isp => asname.toLowerCase().includes(isp.toLowerCa
 let place_id = null;
 let place_types = null;
 
+// === PARALLEL STARTERS (nieuw) ==============================================
+// Start trage, onafhankelijke calls meteen, zodat ze klaar zijn zodra we ze nodig hebben.
+// Let op: we verwerken de resultaten later op de bestaande plekken.
+const pTlsCert   = getTlsCertificateFromIp(ip_address).catch(() => null);
+const pHttpFetch = getDomainFromHttpIp(ip_address).catch(() => ({ success: false, error_message: 'http fetch failed' }));
+const pAltHttp   = tryHttpOnAltPorts(ip_address).catch(() => null);
+// (Als je straks ook banners parallel wilt doen: const pBanners = probeServiceBanners(ip_address).catch(() => null);)
+// ============================================================================ 
+
 
       // 🔁 Stap 2 – Reverse DNS → SIGNAL
       try {
@@ -1424,7 +1433,7 @@ try {
 // 🔐 Stap 3 – TLS-certificaatinspectie → SIGNAL (audit-proof)
 // BEGIN PATCH: TLS-cert alleen loggen bij échte hit
 try {
-  const certInfo = await getTlsCertificateFromIp(ip_address);
+    const certInfo = await pTlsCert; // ← gebruik parallel resultaat
   if (!certInfo) {
     // ⛔ Geen bruikbare cert-info → NIET loggen (stil overslaan)
   } else {
@@ -1495,7 +1504,7 @@ try {
     // 🌐 Stap 6 – HTTP fetch naar IP → SIGNAL
 // ⬇️ VERVANG je hele try/catch-blok door dit:
 try {
-  const result = await getDomainFromHttpIp(ip_address);
+  const result = await pHttpFetch; // ← gebruik parallel resultaat
 
   const extractedDomain = cleanAndValidateDomain(
     result.extracted_domain,
@@ -1889,7 +1898,7 @@ try {
 
 // 🔁 ALT-HTTP POORTEN (NIEUW) — ná de gewone HTTP fetch
 try {
-  const alt = await tryHttpOnAltPorts(ip_address);
+  const alt = await pAltHttp; // ← gebruik parallel resultaat
   if (alt?.extracted_domain) {
     const cleaned = cleanAndValidateDomain(
       alt.extracted_domain,
