@@ -16,6 +16,21 @@ import psl from 'psl';                         // eTLD+1 normalisatie
 import tls from 'node:tls';                    // SNI probing
 import { createRequire } from 'node:module';   // CJS import voor imghash
 import net from 'node:net'; // service banner probes (SMTP/IMAP/POP3/FTP)
+
+// ---- Minimal logger (stuurt debug weg in productie) ----
+const DEBUG = process.env.ENRICH_DEBUG === '1';
+
+const log = {
+  dbg: (...args) => { if (DEBUG) console.debug(...args); },
+  info: (...args) => console.info(...args),
+  warn: (...args) => console.warn(...args),
+  error: (...args) => console.error(...args),
+};
+
+// Opt-in vlag voor oude on-throttled co-host insert (default uit)
+const DISABLE_UNTHROTTLED_COHOST_LOG = process.env.DISABLE_UNTHROTTLED_COHOST_LOG !== '0';
+
+
 const require = createRequire(import.meta.url);
 // END PATCH
 
@@ -564,7 +579,7 @@ const EXTRA_BLACKLIST_DOMAINS = [
   'kpn.net', 'ziggo.nl', 'ziggozakelijk.nl', 'glasoperator.nl', 't-mobilethuis.nl', 'chello.nl', '',
   'dynamic.upc.nl', 'vodafone.nl', 'versatel.nl', 'msn.com', 'akamaitechnologies.com',
   'telenet.be', 'proximus.be', 'myaisfibre.com', 'filterplatform.nl', 'xs4all.nl', 'home.nl', 'digimobil.es', 'solcon.nl', 'avatel.es',
-  'weserve.nl', '8.9p1', '9.6p1', 'crawl.cloudflare.com', 'hide.me',  'hosted-by-vdsina.com', 'ssh-2.0-openssh', 'poneytelecom.eu', 'nextgenerationnetworks.nl', 'kabelnoord.net', 'googlebot.com','client.t-mobilethuis.nl', 'routit.net', 'starlinkisp.net', 'baremetal.scw.cloud','fbsv.net','sprious.com', 'your-server.de', 'vodafone.pt', 'ip.telfort.nl', 'amazonaws.com', 'dataproviderbot.com', 'apple.com', 'belgacom.be' 
+  'weserve.nl', '8.9p1', '9.6p1', 'draytek.com', 'telenor.se','crawl.cloudflare.com', 'hide.me',  'hosted-by-vdsina.com', 'ssh-2.0-openssh', 'poneytelecom.eu', 'nextgenerationnetworks.nl', 'kabelnoord.net', 'googlebot.com','client.t-mobilethuis.nl', 'routit.net', 'starlinkisp.net', 'baremetal.scw.cloud','fbsv.net','sprious.com', 'your-server.de', 'vodafone.pt', 'ip.telfort.nl', 'amazonaws.com', 'dataproviderbot.com', 'apple.com', 'belgacom.be' 
 ];
 
 async function logBlockedSignal({
@@ -1044,8 +1059,13 @@ try {
 
 
   try {
-    console.log('--- API LEAD DEBUG ---');
-    console.log('Request body:', { ip_address, org_id, page_url });
+log.dbg('lead payload (trimmed)', {
+  ip: body?.ip_address,
+  page_url: body?.page_url,
+  asn: body?.asn || body?.asname,
+});
+
+log.dbg('request', { ip: ip_address, org_id, page_url });
 
     const { data: cached } = await supabaseAdmin
       .from('ipapi_cache')
@@ -1193,7 +1213,7 @@ let place_types = null;
       // 🔁 Stap 2 – Reverse DNS → SIGNAL
       try {
         const hostnames = await dns.reverse(ip_address);
-        console.log('🔍 Alle gevonden hostnames:', hostnames);
+log.dbg('PTR hostnames (count=' + (hostnames?.length || 0) + ')');
 
         let used = false;
 
@@ -1249,7 +1269,7 @@ if (extracted === 'moreketing.nl') {
 
         const threshold = 0.5;
         if (score < threshold) {
-          console.log(`⛔ Confidence te laag (${score}) — wordt genegeerd`);
+log.dbg(`confidence te laag (${score}) — genegeerd`);
           continue;
         }
 
@@ -2509,7 +2529,7 @@ try {
   // 6) Signalen licht bijsturen (dit liet je al doen)
   const { adjusted, applied, reason } = applyCohostingAdjustments(domainSignals, heur);
   domainSignals = adjusted;
-  if (applied !== 0) console.log(`ℹ️ co-hosting adjustment: ${applied} (${reason})`);
+  if (applied !== 0) log.dbg(`cohosting adjust: ${applied} (${reason})`);
 } catch (e) {
   console.warn('⚠️ ip_cohost_log logging faalde:', e.message);
 }
@@ -2520,7 +2540,7 @@ try {
   domainSignals = adjusted;
 
   if (applied !== 0) {
-    console.log(`ℹ️ co-hosting adjustment: ${applied} (${reason})`);
+log.dbg(`cohosting adjust: ${applied} (${reason})`);
   }
 } catch (e) {
   console.warn('⚠️ co-hosting heuristics faalde:', e.message);
@@ -2542,13 +2562,13 @@ if (domainSignals.length) {
 if (!company_domain && domainSignals.length > 0) {
   const likely = getLikelyDomainFromSignals(domainSignals);
   if (likely?.breakdown) {
-  console.log('🧮 voting breakdown', {
-    chosen: likely.domain,
-    hardCount: likely.breakdown.hardCount,
-    hardMax: likely.breakdown.hardMax,
-    diversityBonus: likely.breakdown.diversityBonus,
-    topContributors: likely.breakdown.topContributors
-  });
+  log.dbg('voting breakdown', {
+  chosen: likely.domain,
+  hardCount: likely.breakdown.hardCount,
+  hardMax: likely.breakdown.hardMax,
+  diversityBonus: likely.breakdown.diversityBonus
+});
+
 }
 
 
@@ -2557,7 +2577,7 @@ if (!company_domain && domainSignals.length > 0) {
     if (freqBoost && freqBoost.confidence > likely.confidence) {
       likely.confidence = freqBoost.confidence;
       likely.confidence_reason = freqBoost.reason;
-      console.log('🔁 Confidence aangepast op basis van frequentieboost:', freqBoost);
+log.dbg('confidence freq boost', freqBoost);
     }
   }
 
@@ -2605,7 +2625,7 @@ try {
     );
 
     if (!validatedLikely) {
-  console.log(`⛔ Domein uit signals geblokkeerd door cleanAndValidateDomain: ${likely.domain}`);
+log.info(`blocked by cleanAndValidateDomain: ${likely.domain}`);
   await markQueue('skipped', 'skipped: blocked by cleanAndValidateDomain');
   return res.status(200).json({ ignored: true, reason: 'blocked by cleanAndValidateDomain' });
 }
@@ -2616,7 +2636,7 @@ try {
     confidence = likely.confidence;
     confidence_reason = likely.confidence_reason;
 
-    console.log('🧠 Gekozen domein op basis van signalen:', company_domain);
+log.info('chosen domain', company_domain);
 
     await supabaseAdmin.from('domain_signal_log').insert({
       ip_address,
@@ -2637,7 +2657,7 @@ if (typeof likely?.confidence === 'number' && !Number.isNaN(likely.confidence)) 
 }
   
   else {
-    console.log('❌ Geen domein gekozen op basis van gecombineerde signalen');
+log.info('no domain from signals');
 
     await supabaseAdmin.from('domain_signal_log').insert({
       ip_address,
@@ -2700,7 +2720,12 @@ return res.status(200).json({ ignored: true, reason: 'no domain found' });
         .single();
 
       if (domainCache && !domainCacheError) {
-        console.log('🧠 Hergebruik enrichment uit ip_enrichment_cache:', domainCache);
+log.dbg('reuse ip_enrichment_cache', {
+  hasPhone: !!domainCache?.phone,
+  hasEmail: !!domainCache?.email,
+  hasSocial: !!(domainCache?.linkedin_url || domainCache?.facebook_url || domainCache?.instagram_url || domainCache?.twitter_url),
+  hasMeta: !!domainCache?.meta_description
+});
 
         domain_lat = domainCache.lat || null;
         domain_lon = domainCache.lon || null;
@@ -2762,6 +2787,21 @@ return res.status(200).json({ ignored: true, reason: 'no domain found' });
 
       try {
 domainEnrichment = await enrichFromDomain(company_domain);
+// 👉 Vul telefoon/e-mail vanuit Places, maar alleen als we ze nog niet hebben.
+// (Scrape mag later nog invullen/overrulen; zie Patch B.)
+try {
+  if (domainEnrichment) {
+    if (phone == null && domainEnrichment.phone != null) {
+      phone = domainEnrichment.phone;
+    }
+    if (email == null && domainEnrichment.email != null) {
+      email = domainEnrichment.email;
+    }
+  }
+} catch (e) {
+  log.warn('places contact adopt failed (safe to ignore):', e.message);
+}
+
 
 // --- MAPS GUARDRAIL: website eTLD+1 moet exact matchen met gekozen domein ---
 try {
@@ -2769,26 +2809,36 @@ try {
   const mapsUrl = domainEnrichment?.website_url || domainEnrichment?.website || null;
 
   if (mapsUrl && company_domain) {
-    const mapsHost = new URL(mapsUrl).hostname.toLowerCase();
-    const mapsRoot = psl.parse(mapsHost)?.domain || null;
+    const mapsHost   = new URL(mapsUrl).hostname.toLowerCase();
+    const mapsRoot   = psl.parse(mapsHost)?.domain || null;
     const chosenRoot = psl.parse(company_domain)?.domain || null;
 
     if (!mapsRoot || !chosenRoot || mapsRoot !== chosenRoot) {
-      console.warn(`⚠️ Maps-website (${mapsRoot || 'n/a'}) ≠ chosen domain (${chosenRoot || 'n/a'}) → bedrijf/adres NIET overschrijven`);
-      // Blokkeer het overschrijven van naam/adres (domein en andere signalen blijven intact)
+      log.warn(`maps mismatch: ${mapsRoot || 'n/a'} ≠ ${chosenRoot || 'n/a'} → NIET overschrijven met Places-gegevens`);
+
+      // ❌ Niets uit Places overnemen dat bedrijfsidentiteit kan vertekenen:
+      // - naam/adres velden
+      // - telefoon
+      // - categorie(ën)
       if (domainEnrichment) {
-        domainEnrichment.name = null;
-        domainEnrichment.domain_address = null;
-        domainEnrichment.domain_postal_code = null;
-        domainEnrichment.domain_city = null;
-        domainEnrichment.domain_country = null;
+        domainEnrichment.name                = null;
+        domainEnrichment.domain_address      = null;
+        domainEnrichment.domain_postal_code  = null;
+        domainEnrichment.domain_city         = null;
+        domainEnrichment.domain_country      = null;
+        domainEnrichment.phone               = null;  // <-- NIEUW: telefoon niet overnemen
+        domainEnrichment.category            = null;  // <-- NIEUW: categorie niet overnemen
+        domainEnrichment.category_nl         = null;  // <-- NIEUW: NL-categorie niet overnemen
+        // NB: overige velden (place_id, place_types, email, etc.) laten we ongemoeid voor nu.
       }
-      // Informatieve reden; PATCH 1 houdt confidence toch ≥ signalen-score
-      confidence_reason = (confidence_reason ? confidence_reason + ' + ' : '') + `Maps mismatch ${mapsRoot || '?'} ≠ ${chosenRoot || '?'}`;
+
+      // Informatieve reden; confidence blijft later nog door "signal floor" beschermd
+      confidence_reason = (confidence_reason ? confidence_reason + ' + ' : '')
+        + `Maps mismatch ${mapsRoot || '?'} ≠ ${chosenRoot || '?'}`;
     }
   }
 } catch (e) {
-  console.warn('⚠️ Maps guardrail: website parse error:', e.message);
+  log.warn('Maps guardrail: website parse error:', e.message);
 }
 
         if (domainEnrichment?.domain) {
@@ -2949,7 +2999,7 @@ const MIN_CONFIDENCE = 0.5;
 // 👉 Als er wél een domein is, mag hij altijd door (ook bij lage confidence)
 if ((!company_domain || company_domain.trim() === '') 
     && (typeof finalConfidence === 'number' && finalConfidence < MIN_CONFIDENCE)) {
-  console.log(`⛔ Geen domein én confidence (${finalConfidence}) lager dan drempel (${MIN_CONFIDENCE}) → niet in cache`);
+log.info(`skip: no domain & conf ${finalConfidence} < ${MIN_CONFIDENCE}`);
   {
   const { error } = await supabaseAdmin.from('ignored_ip_log').insert({
     ip_address,
@@ -3091,7 +3141,7 @@ confidence: confidence, // clamped waarde uit stap 7
 
 // 🔒 Manual lock? Sla helemaal niets op/over.
 if (manualLock && cached) {
-  console.log('🔒 manual_enrich=true → ipapi_cache niet overschrijven');
+log.info('manual_enrich=true → cache skip');
   ipData = cached;
 } else if (!cached) {
   const { error: insertErr } = await supabaseAdmin
@@ -3100,7 +3150,7 @@ if (manualLock && cached) {
   if (insertErr) {
     console.error('❌ Insert error ipapi_cache:', insertErr);
   } else {
-    console.log('✅ Nieuw profiel opgeslagen in ipapi_cache');
+log.info('ipapi_cache insert ok');
     ipData = cachePayload;
   }
 } else {
@@ -3135,11 +3185,11 @@ if (manualLock && cached) {
     if (updErr) {
       console.error('❌ Update error ipapi_cache:', updErr);
     } else {
-      console.log('✅ Cache succesvol bijgewerkt');
+log.info('ipapi_cache update ok');
       ipData = { ...cached, ...cachePayload };
     }
   } else {
-    console.log('⚠️ Bestaand profiel is al even goed of beter → niet overschreven');
+log.dbg('cache not updated: existing >= new');
     ipData = cached;
   }
 }
@@ -3230,10 +3280,10 @@ try {
     if (leadUpdErr) {
       console.warn('⚠️ Retro-update: update faalde:', leadUpdErr.message);
     } else {
-      console.log(`✅ Retro-update: ${leadsToUpdate.length} lead(s) geüpdatet voor IP ${ip_address} / site ${site_id}`);
+log.info(`retro-update leads: ${leadsToUpdate.length} updated for ${ip_address}/${site_id}`);
     }
   } else {
-    console.log('ℹ️ Retro-update: geen recente leads om bij te werken');
+log.info('retro-update leads: none');
   }
 } catch (e) {
   console.warn('⚠️ Retro-update: onverwachte fout:', e.message);

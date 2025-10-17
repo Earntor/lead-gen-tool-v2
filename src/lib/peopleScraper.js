@@ -305,7 +305,7 @@ const phone = (() => {
 
 
   // -- Heading-gedreven blokken ----------
-$('h1, h2, h3, h4, h5').each((_, h) => {
+$('h2, h3, h4, h5').each((_, h) => {
   const $h = $(h);
 
   // 1) Skip blog/nieuws/case/vacature context
