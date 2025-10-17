@@ -29,6 +29,10 @@ const log = {
 
 // Opt-in vlag voor oude on-throttled co-host insert (default uit)
 const DISABLE_UNTHROTTLED_COHOST_LOG = process.env.DISABLE_UNTHROTTLED_COHOST_LOG !== '0';
+// Feature flags (DB-hits reduceren)
+const HINT_SIGNAL_INLINE_LOG = process.env.HINT_SIGNAL_INLINE_LOG === '1';
+const DISABLE_OBSERVED_FAVICON_LOG = process.env.DISABLE_OBSERVED_FAVICON_LOG === '1';
+
 
 
 const require = createRequire(import.meta.url);
@@ -1060,10 +1064,11 @@ try {
 
   try {
 log.dbg('lead payload (trimmed)', {
-  ip: body?.ip_address,
-  page_url: body?.page_url,
-  asn: body?.asn || body?.asname,
+  ip: req?.body?.ip_address,
+  page_url: req?.body?.page_url,
+  asn: req?.body?.asn || req?.body?.asname,
 });
+
 
 log.dbg('request', { ip: ip_address, org_id, page_url });
 
@@ -1209,6 +1214,43 @@ const isISP = KNOWN_ISPS.some(isp => asname.toLowerCase().includes(isp.toLowerCa
 let place_id = null;
 let place_types = null;
 
+// ---- Gebatchte signal-helper ----
+// forceLog=true => altijd 1-op-1 DB-log (voor harde signalen).
+// HINT_SIGNAL_INLINE_LOG => alle signalen óók per stuk loggen (uit standaard).
+async function addSignal({ ip_address, domain, source, confidence, confidence_reason, forceLog = false }) {
+  if (!domain || !source) return null;
+
+  const sig = {
+    domain,
+    source,
+    confidence: (typeof confidence === 'number' && !Number.isNaN(confidence)) ? confidence : null,
+    confidence_reason: confidence_reason || null
+  };
+
+  // Altijd toevoegen aan in-memory set (voor later combineren)
+  domainSignals.push(sig);
+
+  // Per-stuk DB-log alleen voor harde signalen of als expliciet aangezet
+  if (forceLog || HINT_SIGNAL_INLINE_LOG) {
+    try {
+      await supabaseAdmin.from('domain_signal_log').insert({
+        ip_address,
+        signals: [sig],
+        chosen_domain: null,
+        enrichment_source: source,
+        confidence: sig.confidence,
+        confidence_reason: sig.confidence_reason,
+        logged_at: new Date().toISOString()
+      });
+    } catch (e) {
+      console.warn('⚠️ domain_signal (inline) insert faalde:', e.message);
+    }
+  }
+
+  return sig;
+}
+
+
 // === PARALLEL STARTERS (nieuw) ==============================================
 // Start trage, onafhankelijke calls meteen, zodat ze klaar zijn zodra we ze nodig hebben.
 // Let op: we verwerken de resultaten later op de bestaande plekken.
@@ -1282,25 +1324,23 @@ log.dbg(`confidence te laag (${score}) — genegeerd`);
           continue;
         }
 
-        const signal = await logDomainSignal({
-          ip_address,
-          domain: extracted,
-          source: ENRICHMENT_SOURCES.RDNS,
-          confidence: score,
-          confidence_reason: reason
-        });
+const signal = await addSignal({
+  ip_address,
+  domain: extracted,
+  source: ENRICHMENT_SOURCES.RDNS,
+  confidence: score,
+  confidence_reason: reason,
+  forceLog: true  // harde bron: 1-op-1 DB-log behoud
+});
 
-        if (signal) {
-domainSignals.push(signal);
-          company_domain = extracted; // al gevalideerd door cleanAndValidateDomain
+company_domain = extracted; // al gevalideerd door cleanAndValidateDomain
+enrichment_source = ENRICHMENT_SOURCES.RDNS;
+confidence = score;
+confidence_reason = reason;
+reverseDnsDomain = hostname;
+used = true;
+break;
 
-          enrichment_source = ENRICHMENT_SOURCES.RDNS;
-          confidence = score;
-          confidence_reason = reason;
-          reverseDnsDomain = hostname;
-          used = true;
-          break;
-        }
       }
 
       await supabaseAdmin.from('rdns_log').insert({
@@ -1470,14 +1510,15 @@ try {
 
     if (extracted) {
       // ✅ Alleen bij succesvolle extractie → signaal + log used=true
-      const signal = await logDomainSignal({
-        ip_address,
-        domain: extracted,
-        source: ENRICHMENT_SOURCES.TLS,
-        confidence: 0.75,
-        confidence_reason: CONFIDENCE_REASONS.TLS
-      });
-      if (signal) domainSignals.push(signal);
+await addSignal({
+  ip_address,
+  domain: extracted,
+  source: ENRICHMENT_SOURCES.TLS,
+  confidence: 0.75,
+  confidence_reason: CONFIDENCE_REASONS.TLS,
+  forceLog: true
+});
+
 
       await supabaseAdmin.from('tls_log').insert({
         ip_address,
@@ -1662,18 +1703,21 @@ try {
     if (manifestHost) hintDomains.add(manifestHost);
 
     for (const raw of hintDomains) {
-      const cand = cleanAndValidateDomain(
-        raw, ENRICHMENT_SOURCES.HTTP_FETCH, asname, org_id, page_url, ip_address, confidence, confidence_reason
-      );
-      if (!cand) continue;
-      const sig = await logDomainSignal({
-        ip_address, domain: cand,
-        source: ENRICHMENT_SOURCES.HTTP_FETCH,
-        confidence: 0.53,
-        confidence_reason: 'HTML/headers hint'
-      });
-      if (sig) domainSignals.push(sig);
-    }
+  const cand = cleanAndValidateDomain(
+    raw, ENRICHMENT_SOURCES.HTTP_FETCH, asname, org_id, page_url, ip_address, confidence, confidence_reason
+  );
+  if (!cand) continue;
+
+  await addSignal({
+    ip_address,
+    domain: cand,
+    source: ENRICHMENT_SOURCES.HTTP_FETCH,
+    confidence: 0.53,
+    confidence_reason: 'HTML/headers hint'
+  });
+}
+
+
 
     // Apple-icon pHash/“hash”: upserten in favicon_hash_map + signaal
     for (const item of appleIconItems) {
@@ -1720,14 +1764,14 @@ try {
         confidence, confidence_reason
       );
       if (!cand) continue;
-      const sig = await logDomainSignal({
-        ip_address,
-        domain: cand,
-        source: ENRICHMENT_SOURCES.HTTP_FETCH,
-        confidence: 0.58,
-        confidence_reason: 'Set-Cookie Domain'
-      });
-      if (sig) domainSignals.push(sig);
+      await addSignal({
+  ip_address,
+  domain: cand,
+  source: ENRICHMENT_SOURCES.HTTP_FETCH,
+  confidence: 0.58,
+  confidence_reason: 'Set-Cookie Domain'
+});
+
     }
 
     // 3b) CORS allow-origin
@@ -1774,14 +1818,14 @@ try {
     );
     if (!cand) continue;
 
-    const sig = await logDomainSignal({
-      ip_address,
-      domain: cand,
-      source: ENRICHMENT_SOURCES.HTTP_FETCH,
-      confidence: 0.55,
-      confidence_reason: 'CORS allow-origin'
-    });
-    if (sig) domainSignals.push(sig);
+    await addSignal({
+  ip_address,
+  domain: cand,
+  source: ENRICHMENT_SOURCES.HTTP_FETCH,
+  confidence: 0.55,
+  confidence_reason: 'CORS allow-origin'
+});
+
   }
 }
 
@@ -1795,14 +1839,14 @@ try {
         confidence, confidence_reason
       );
       if (!cand) continue;
-      const sig = await logDomainSignal({
-        ip_address,
-        domain: cand,
-        source: ENRICHMENT_SOURCES.HTTP_FETCH,
-        confidence: 0.6,
-        confidence_reason: 'HTML canonical/og'
-      });
-      if (sig) domainSignals.push(sig);
+      await addSignal({
+  ip_address,
+  domain: cand,
+  source: ENRICHMENT_SOURCES.HTTP_FETCH,
+  confidence: 0.6,
+  confidence_reason: 'HTML canonical/og'
+});
+
     }
     // 3d) CSP header(s) → hosts
     try {
@@ -1816,14 +1860,14 @@ try {
           );
           if (!cand) continue;
           cspHosts.push(cand);
-          const sig = await logDomainSignal({
-            ip_address,
-            domain: cand,
-            source: ENRICHMENT_SOURCES.HTTP_FETCH,
-            confidence: 0.54,
-            confidence_reason: 'CSP host'
-          });
-          if (sig) domainSignals.push(sig);
+          await addSignal({
+  ip_address,
+  domain: cand,
+  source: ENRICHMENT_SOURCES.HTTP_FETCH,
+  confidence: 0.54,
+  confidence_reason: 'CSP host'
+});
+
         }
       }
 
@@ -1837,14 +1881,14 @@ try {
           );
           if (!cand) continue;
           bruteHosts.push(cand);
-          const sig = await logDomainSignal({
-            ip_address,
-            domain: cand,
-            source: ENRICHMENT_SOURCES.HTTP_FETCH,
-            confidence: 0.56,
-            confidence_reason: 'Sitemap/security.txt host'
-          });
-          if (sig) domainSignals.push(sig);
+          await addSignal({
+  ip_address,
+  domain: cand,
+  source: ENRICHMENT_SOURCES.HTTP_FETCH,
+  confidence: 0.56,
+  confidence_reason: 'Sitemap/security.txt host'
+});
+
         }
       } catch (e) {
         console.warn('⚠️ sitemap brute faalde:', e.message);
@@ -1876,15 +1920,16 @@ try {
 
   // bestaand gedrag: direct signaal als extractedDomain er al is
   if (result.success && extractedDomain) {
-    const signal = await logDomainSignal({
-      ip_address,
-      domain: extractedDomain,
-      source: ENRICHMENT_SOURCES.HTTP_FETCH,
-      confidence: result.confidence || 0.6,
-      confidence_reason: result.confidence_reason || CONFIDENCE_REASONS.HTTP_FETCH
-    });
-    if (signal) domainSignals.push(signal);
-  }
+  await addSignal({
+    ip_address,
+    domain: extractedDomain,
+    source: ENRICHMENT_SOURCES.HTTP_FETCH,
+    confidence: result.confidence || 0.6,
+    confidence_reason: result.confidence_reason || CONFIDENCE_REASONS.HTTP_FETCH,
+    forceLog: true
+  });
+}
+
 } catch (e) {
   console.warn('⚠️ HTTP fetch naar IP mislukte:', e.message);
 
@@ -1911,14 +1956,15 @@ try {
       confidence_reason
     );
     if (cleaned) {
-      const sig = await logDomainSignal({
-        ip_address,
-        domain: cleaned,
-        source: ENRICHMENT_SOURCES.HTTP_FETCH,
-        confidence: alt.confidence || 0.62,
-        confidence_reason: alt.confidence_reason || 'HTTP alt-port'
-      });
-      if (sig) domainSignals.push(sig);
+      await addSignal({
+  ip_address,
+  domain: cleaned,
+  source: ENRICHMENT_SOURCES.HTTP_FETCH,
+  confidence: alt.confidence || 0.62,
+  confidence_reason: alt.confidence_reason || 'HTTP alt-port'
+  // géén forceLog → minder writes
+});
+
       // LET OP: geen insert in http_fetch_log hier — bewust stil (geen spam)
     }
   }
@@ -1997,35 +2043,35 @@ try {
       );
     } else {
       // -------- 3B (optioneel): onbekende hash als 'observed' registreren --------
-      {
-        const upsertRes = await supabaseAdmin
-          .from('favicon_hash_map')
-          .upsert(
-            {
-              hash,
-              domain: null,
-              confidence: 0.5,                 // neutrale default
-              source: 'observed',              // aangeeft dat er nog geen mapping is
-              last_seen: new Date().toISOString()
-            },
-            { onConflict: 'hash' }
-          );
-        if (upsertRes.error) {
-          console.warn('⚠️ favicon_hash_map upsert (observed) error:', upsertRes.error.message, upsertRes.error.details || '');
-        }
-      }
-      // ---------------------------------------------------------------------------
+      if (!DISABLE_OBSERVED_FAVICON_LOG) {
+  // onbekende hash registreren (optioneel)
+  {
+    const upsertRes = await supabaseAdmin
+      .from('favicon_hash_map')
+      .upsert({
+        hash,
+        domain: null,
+        confidence: 0.5,
+        source: 'observed',
+        last_seen: new Date().toISOString()
+      }, { onConflict: 'hash' });
+    if (upsertRes.error) {
+      console.warn('⚠️ favicon_hash_map upsert (observed) error:', upsertRes.error.message, upsertRes.error.details || '');
+    }
+  }
 
-      logInserts.push(
-        supabaseAdmin.from('favicon_hash_log').insert({
-          ip_address,
-          favicon_hash: hash,
-          matched_domain: null,
-          used: false,
-          confidence: null,
-          confidence_reason: 'Geen match in favicon_hash_map'
-        })
-      );
+  logInserts.push(
+    supabaseAdmin.from('favicon_hash_log').insert({
+      ip_address,
+      favicon_hash: hash,
+      matched_domain: null,
+      used: false,
+      confidence: null,
+      confidence_reason: 'Geen match in favicon_hash_map'
+    })
+  );
+}
+
     }
 
     // Logging inserts uitvoeren + errors tonen
@@ -2120,22 +2166,28 @@ try {
   );
       }
     } else {
-      await supabaseAdmin.from('favicon_hash_log').insert({
-        ip_address, favicon_phash: phash, matched_domain: null, used: false
-      });
-      await supabaseAdmin
-  .from('favicon_hash_map')
-  .upsert(
-    {
-      hash: match?.hash ?? `ph_${phash}`, // synthetische PK voor pHash-only
-      phash,
-      domain: null,
-      confidence: 0.5,
-      source: 'observed-phash',
-      last_seen: new Date().toISOString()
-    },
-    { onConflict: 'hash' }
-  );
+      if (!DISABLE_OBSERVED_FAVICON_LOG) {
+  await supabaseAdmin.from('favicon_hash_log').insert({
+    ip_address,
+    favicon_phash: phash,
+    matched_domain: null,
+    used: false
+  });
+  await supabaseAdmin
+    .from('favicon_hash_map')
+    .upsert(
+      {
+        hash: match?.hash ?? `ph_${phash}`,
+        phash,
+        domain: null,
+        confidence: 0.5,
+        source: 'observed-phash',
+        last_seen: new Date().toISOString()
+      },
+      { onConflict: 'hash' }
+    );
+}
+
     }
   }
 } catch (e) {
@@ -2148,14 +2200,13 @@ try {
   const banners = await probeServiceBanners(ip_address);
   if (banners?.allDomains?.length) {
     for (const d of banners.allDomains) {
-      const sig = await logDomainSignal({
-        ip_address,
-        domain: d,
-        source: ENRICHMENT_SOURCES.SERVICE_BANNER,
-        confidence: 0.58,
-        confidence_reason: CONFIDENCE_REASONS.SERVICE_BANNER
-      });
-      if (sig) domainSignals.push(sig);
+      await addSignal({
+  ip_address,
+  domain: d,
+  source: ENRICHMENT_SOURCES.SERVICE_BANNER,
+  confidence: 0.58,
+  confidence_reason: CONFIDENCE_REASONS.SERVICE_BANNER
+});
     }
   }
 } catch (e) {
@@ -2455,23 +2506,30 @@ try {
 
   const heur = await computeCohostingHeuristics(ip_address, candidateDomains, 30);
 
-  // Audit loggen
-  await supabaseAdmin.from('ip_cohost_log').insert({
-    ip_address,
-    fdns_total: heur.fdnsTotal,
-    live_checked: heur.liveChecked,
-    live_match_count: heur.liveMatchCount,
-    live_matches: heur.liveMatches.length ? heur.liveMatches : null,
-    classification: heur.classification,
-    penalty_applied: (heur.classification === 'heavy-multitenant') ? -0.07
-                     : (heur.classification === 'moderate') ? -0.04
-                     : (heur.classification === 'low' && heur.liveMatchCount > 0) ? 0.03
-                     : 0,
-    reason: (heur.classification === 'heavy-multitenant') ? 'many fdns domains'
-           : (heur.classification === 'moderate') ? 'some fdns domains'
-           : (heur.classification === 'low' && heur.liveMatchCount > 0) ? 'low cohosting + live match'
-           : 'no change'
-  });
+ // Audit loggen (unthrottled) – standaard UIT via env-vlag
+if (!DISABLE_UNTHROTTLED_COHOST_LOG) {
+  try {
+    await supabaseAdmin.from('ip_cohost_log').insert({
+      ip_address,
+      fdns_total: heur.fdnsTotal,
+      live_checked: heur.liveChecked,
+      live_match_count: heur.liveMatchCount,
+      live_matches: heur.liveMatches.length ? heur.liveMatches : null,
+      classification: heur.classification,
+      penalty_applied: (heur.classification === 'heavy-multitenant') ? -0.07
+                       : (heur.classification === 'moderate') ? -0.04
+                       : (heur.classification === 'low' && heur.liveMatchCount > 0) ? 0.03
+                       : 0,
+      reason: (heur.classification === 'heavy-multitenant') ? 'many fdns domains'
+             : (heur.classification === 'moderate') ? 'some fdns domains'
+             : (heur.classification === 'low' && heur.liveMatchCount > 0) ? 'low cohosting + live match'
+             : 'no change'
+    });
+  } catch (e) {
+    log.warn('unthrottled cohost log failed (ignored):', e?.message);
+  }
+}
+
 
 // --- Co-hosting audit logging: zuinig & alleen bij betekenisvolle wijziging ---
 try {
@@ -2545,12 +2603,6 @@ try {
 
 
   // Signalen licht bijsturen
-  const { adjusted, applied, reason } = applyCohostingAdjustments(domainSignals, heur);
-  domainSignals = adjusted;
-
-  if (applied !== 0) {
-log.dbg(`cohosting adjust: ${applied} (${reason})`);
-  }
 } catch (e) {
   console.warn('⚠️ co-hosting heuristics faalde:', e.message);
 }
