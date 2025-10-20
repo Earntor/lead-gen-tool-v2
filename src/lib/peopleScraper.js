@@ -39,6 +39,8 @@ const CANDIDATE_PATHS = [
   '/about-us','/about-us/',
   '/who-we-are','/who-we-are/',
   '/organisatie','/organisatie/',
+   '/medewerker','/medewerker/',
+    '/medewerkers','/medewerkers/',
   '/management','/management/',
   '/bestuur','/bestuur/',
   '/wie-zijn-wij','/wie-zijn-wij/',

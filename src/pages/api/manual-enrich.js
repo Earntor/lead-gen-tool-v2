@@ -201,6 +201,52 @@ email: pickEmail(scraped?.email),
         .update({ ...payload, manual_enrich: false })
         .eq('ip_address', ip);
 
+        // Update alle leads met dit IP-adres met enrichment uit ipapi_cache
+// Update alle leads met dit IP-adres met enrichment uit ipapi_cache
+await supabaseAdmin
+  .from('leads')
+  .update({
+    company_name: payload.company_name,
+    company_domain: payload.company_domain,
+    linkedin_url: payload.linkedin_url,
+    enriched_at: new Date().toISOString(),
+    ip_street: payload.ip_street || null,
+    ip_postal_code: payload.ip_postal_code || null,
+    ip_city: payload.ip_city || null,
+    ip_country: payload.ip_country || null,
+    domain_address: payload.domain_address || null,
+    domain_postal_code: payload.domain_postal_code || null,
+    domain_city: payload.domain_city || null,
+    domain_country: payload.domain_country || null,
+    confidence: payload.confidence ?? null,
+    confidence_reason: payload.confidence_reason || null,
+    phone: payload.phone || null,
+    email: payload.email || null,
+    facebook_url: payload.facebook_url || null,
+    instagram_url: payload.instagram_url || null,
+    twitter_url: payload.twitter_url || null,
+    meta_description: payload.meta_description || null,
+    selected_random_match: payload.selected_random_match ?? null,
+    category: payload.category || null,
+    domain_lat: payload.domain_lat ?? null,
+    domain_lon: payload.domain_lon ?? null,
+    place_id: payload.place_id || null,
+    place_types: payload.place_types || null,
+    category_nl: payload.category_nl || null,
+    rdns_hostname: payload.rdns_hostname || null
+  })
+  .eq('ip_address', ip)
+.is('company_name', null);
+
+
+        // Sla IP + domein op in fdns_lookup voor toekomstige enrichment
+if (domain && ip) {
+  await supabaseAdmin
+    .from('fdns_lookup')
+    .upsert({ ip, domain }, { onConflict: ['ip', 'domain'] });
+}
+
+
       // 6) ✅ TEAMS SCRAPEN & UPDATEN VAN people_cache
 let peopleResult = null;
 let peopleOutcome = null;

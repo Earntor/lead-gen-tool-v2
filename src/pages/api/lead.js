@@ -32,7 +32,7 @@ const DISABLE_UNTHROTTLED_COHOST_LOG = process.env.DISABLE_UNTHROTTLED_COHOST_LO
 // Feature flags (DB-hits reduceren)
 const HINT_SIGNAL_INLINE_LOG = process.env.HINT_SIGNAL_INLINE_LOG === '1';
 const DISABLE_OBSERVED_FAVICON_LOG = process.env.DISABLE_OBSERVED_FAVICON_LOG === '1';
-
+const ENABLE_SINGLE_EMAIL_HINT = process.env.ENABLE_SINGLE_EMAIL_HINT !== '0';
 
 
 const require = createRequire(import.meta.url);
@@ -568,8 +568,7 @@ const CONFIDENCE_REASONS = {
   ISP_BASELINE: 'Baseline ISP-gegevens',
   IPAPI_BASELINE: 'Baseline IP-API-gegevens',
   CACHE_REUSE: 'Herbruikte domeinverrijking uit cache',
-    SERVICE_BANNER: 'service_banner'
-
+  SERVICE_BANNER: 'service_banner'
 };
 
 // Hostingproviders
@@ -583,7 +582,7 @@ const EXTRA_BLACKLIST_DOMAINS = [
   'kpn.net', 'ziggo.nl', 'ziggozakelijk.nl', 'glasoperator.nl', 't-mobilethuis.nl', 'chello.nl', '',
   'dynamic.upc.nl', 'vodafone.nl', 'versatel.nl', 'msn.com', 'akamaitechnologies.com',
   'telenet.be', 'proximus.be', 'myaisfibre.com', 'filterplatform.nl', 'xs4all.nl', 'home.nl', 'digimobil.es', 'solcon.nl', 'avatel.es',
-  'weserve.nl', '8.9p1', '9.6p1', 'draytek.com', 'telenor.se','crawl.cloudflare.com', 'hide.me',  'hosted-by-vdsina.com', 'ssh-2.0-openssh', 'poneytelecom.eu', 'nextgenerationnetworks.nl', 'kabelnoord.net', 'googlebot.com','client.t-mobilethuis.nl', 'routit.net', 'starlinkisp.net', 'baremetal.scw.cloud','fbsv.net','sprious.com', 'your-server.de', 'vodafone.pt', 'ip.telfort.nl', 'amazonaws.com', 'dataproviderbot.com', 'apple.com', 'belgacom.be' 
+  'weserve.nl', 'ubuntu-3ubuntu0.13', 'cosmote.net', 'orange.be', 'softether.net','mytrinet.ru','myqcloud.com', '8.9p1', '9.6p1', 'draytek.com', 'telenor.se','crawl.cloudflare.com', 'hide.me', 'hosted-by-vdsina.com', 'ssh-2.0-openssh', 'poneytelecom.eu', 'nextgenerationnetworks.nl', 'kabelnoord.net', 'googlebot.com','client.t-mobilethuis.nl', 'routit.net', 'starlinkisp.net', 'baremetal.scw.cloud','fbsv.net','sprious.com', 'your-server.de', 'vodafone.pt', 'ip.telfort.nl', 'amazonaws.com', 'dataproviderbot.com', 'apple.com', 'belgacom.be' 
 ];
 
 async function logBlockedSignal({
@@ -597,7 +596,7 @@ async function logBlockedSignal({
     page_url: page_url || null,
     ignored_at: new Date().toISOString(),
     ignore_type,
-    // Alles wat geen losse kolom heeft bewaren we in JSONB 'signals'
+    // Alles wat geen l osse kolom heeft bewaren we in JSONB 'signals'
     signals: {
       blocked_domain: domain || null,
       blocked_source: source || null,
@@ -982,6 +981,9 @@ export default async function handler(req, res) {
     duration_seconds,
     site_id
   } = req.body;
+
+// Verzamel HTML-maildomeinen uit http_fetch (alleen content-based)
+const contentEmailDomains = new Set();
 
   const parsed = safeUrl(page_url);
   // ongeldig of leeg → niet verrijken
@@ -1649,6 +1651,7 @@ try {
 
     // 3) E-mails / bare domains / inline JS URLs
     const emailDomains = extractEmailDomains(clippedHtml);
+    for (const d of emailDomains) contentEmailDomains.add(d);
     const bareDomains  = extractBareDomains(clippedHtml);
     const jsHosts      = extractInlineJsHosts(clippedHtml);
 
@@ -2733,6 +2736,109 @@ page_url: page_url || null,
   }
 }
 
+// === Single-email-hint (LAST RESORT) =========================================
+// Alleen proberen als:
+//  - er nog géén company_domain is gekozen
+//  - de feature flag aan staat
+//  - we in HTML precies één uniek e-maildomein zagen
+try {
+  if (ENABLE_SINGLE_EMAIL_HINT && !company_domain && contentEmailDomains.size === 1) {
+    const soleEmailDomainRaw = [...contentEmailDomains][0];
+
+    const cand = cleanAndValidateDomain(
+      soleEmailDomainRaw,
+      ENRICHMENT_SOURCES.HTTP_FETCH,
+      asname, org_id, page_url, ip_address,
+      /* confidence */ null,
+      /* reason     */ null
+    );
+
+    if (cand) {
+      // Voeg één extra, iets sterkere hint toe (boven je bestaande 0.53 HTML-hints)
+      await addSignal({
+        ip_address,
+        domain: cand,
+        source: ENRICHMENT_SOURCES.HTTP_FETCH,
+        confidence: 0.55,
+        confidence_reason: 'single email hint (last resort)'
+        // géén forceLog → houdt DB rustig
+      });
+
+      // Nu opnieuw stemmen met de extra hint
+      let fallbackLikely = null;
+      if (domainSignals.length > 0) {
+        fallbackLikely = getLikelyDomainFromSignals(domainSignals);
+      }
+
+      // Mini-boosts zoals eerder (frequentie + confirmed-by-form) opnieuw toepassen
+      if (fallbackLikely?.domain) {
+        const fb = await calculateConfidenceByFrequency(ip_address, fallbackLikely.domain);
+        if (fb && fb.confidence > (fallbackLikely.confidence ?? 0)) {
+          fallbackLikely.confidence = fb.confidence;
+          fallbackLikely.confidence_reason = (fallbackLikely.confidence_reason ? fallbackLikely.confidence_reason + ' + ' : '') + fb.reason;
+        }
+
+        try {
+          const q1 = await supabaseAdmin
+            .from('form_submission_log')
+            .select('id', { count: 'exact', head: true })
+            .eq('ip', ip_address)
+            .eq('domain', fallbackLikely.domain);
+          const count1 = (q1 && typeof q1.count === 'number') ? q1.count : 0;
+
+          const q2 = await supabaseAdmin
+            .from('form_submission_log')
+            .select('id', { count: 'exact', head: true })
+            .eq('ip', ip_address)
+            .ilike('email', `%@${fallbackLikely.domain}`);
+          const count2 = (q2 && typeof q2.count === 'number') ? q2.count : 0;
+
+          if ((count1 + count2) > 0) {
+            fallbackLikely.confidence = Math.max(fallbackLikely.confidence ?? 0, 0.8);
+            fallbackLikely.confidence_reason =
+              (fallbackLikely.confidence_reason ? fallbackLikely.confidence_reason + ' + ' : '') + 'confirmed by form';
+          }
+        } catch (e) {
+          console.warn('⚠️ confirmed-by-form (fallback) check faalde:', e.message);
+        }
+
+        // Valideer, kies en log
+        const validated = cleanAndValidateDomain(
+          fallbackLikely.domain,
+          ENRICHMENT_SOURCES.FINAL_LIKELY,
+          asname, org_id, page_url, ip_address,
+          fallbackLikely.confidence,
+          fallbackLikely.confidence_reason
+        );
+
+        if (validated) {
+          company_domain = validated;
+          enrichment_source = fallbackLikely.enrichment_source || ENRICHMENT_SOURCES.FINAL_LIKELY;
+          confidence = fallbackLikely.confidence ?? 0.55;
+          confidence_reason = fallbackLikely.confidence_reason
+            ? fallbackLikely.confidence_reason + ' + single email hint'
+            : 'single email hint';
+
+          // Audit: aparte rij zodat duidelijk is dat dit een fallback was
+          await supabaseAdmin.from('domain_signal_log').insert({
+            ip_address,
+            signals: domainSignals,
+            chosen_domain: company_domain,
+            enrichment_source,
+            confidence,
+            confidence_reason,
+            site_id: site_id || null,
+            page_url: page_url || null
+          });
+        }
+      }
+    }
+  }
+} catch (e) {
+  console.warn('⚠️ single-email-hint fallback faalde:', e.message);
+}
+// ============================================================================
+
 
     // ---- BASELINE PATHS -----------------------------------------------------
 
@@ -3256,6 +3362,14 @@ log.dbg('cache not updated: existing >= new');
 }
 
   }
+
+  // Sla IP + domein op in fdns_lookup voor toekomstige enrichment
+if (company_domain && ip_address) {
+  await supabaseAdmin
+    .from('fdns_lookup')
+    .upsert({ ip: ip_address, domain: company_domain }, { onConflict: ['ip', 'domain'] });
+}
+
 
 // --- (Optioneel) SYNC naar 'leads' zodat de NL-categorie direct zichtbaar is ---
 try {
