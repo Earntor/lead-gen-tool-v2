@@ -1,4 +1,6 @@
-import * as SI from "react-icons/si";
+// src/components/SocialIcons.jsx
+import * as SI from 'react-icons/si'
+import * as FA from 'react-icons/fa6' // ✅ extra fallback (FaXTwitter)
 
 /**
  * SocialIcons
@@ -12,21 +14,26 @@ import * as SI from "react-icons/si";
  *  - className: extra Tailwind classes voor de wrapper
  */
 export default function SocialIcons({ urls = {}, size = 18, className = "" }) {
-  const TwitterIcon = SI.SiX || SI.SiTwitter; // veilig: X of oude Twitter
-  const items = [
-    { key: "linkedin_url",  label: "LinkedIn",  Icon: SI.SiLinkedin },
-    { key: "facebook_url",  label: "Facebook",  Icon: SI.SiFacebook },
-    { key: "instagram_url", label: "Instagram", Icon: SI.SiInstagram },
-    { key: "twitter_url",   label: "X (Twitter)", Icon: TwitterIcon },
-  ]
-    .filter(Boolean)
-    .map(({ key, label, Icon }) => {
-      const href = normalizeHttps(urls[key]);
-      return href ? { href, label, Icon } : null;
-    })
-    .filter(Boolean);
+  // ✅ 3-traps fallback: SiX → FaXTwitter → SiTwitter
+  const TwitterIcon = SI.SiX || FA.FaXTwitter || SI.SiTwitter || null
 
-  if (items.length === 0) return null;
+  const rawItems = [
+    { key: "linkedin_url",  label: "LinkedIn",      Icon: SI.SiLinkedin },
+    { key: "facebook_url",  label: "Facebook",      Icon: SI.SiFacebook },
+    { key: "instagram_url", label: "Instagram",     Icon: SI.SiInstagram },
+    { key: "twitter_url",   label: "X (Twitter)",   Icon: TwitterIcon },
+  ]
+
+  // filter eruit als er geen URL óf geen Icon is
+  const items = rawItems
+    .map(({ key, label, Icon }) => {
+      const href = normalizeHttps(urls[key])
+      if (!href || !Icon) return null
+      return { href, label, Icon }
+    })
+    .filter(Boolean)
+
+  if (items.length === 0) return null
 
   return (
     <div className={`flex flex-wrap items-center gap-2 ${className}`}>
@@ -44,8 +51,18 @@ export default function SocialIcons({ urls = {}, size = 18, className = "" }) {
         </a>
       ))}
     </div>
-  );
+  )
 }
+
+function normalizeHttps(url) {
+  if (!url || typeof url !== "string") return null
+  const trimmed = url.trim()
+  if (!trimmed) return null
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  // vang 'linkedin.com/...' of 'x.com/...' op
+  return `https://${trimmed.replace(/^\/+/, "")}`
+}
+
 
 function normalizeHttps(url) {
   if (!url || typeof url !== "string") return null;
