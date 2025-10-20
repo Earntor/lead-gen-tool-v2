@@ -62,13 +62,3 @@ function normalizeHttps(url) {
   // vang 'linkedin.com/...' of 'x.com/...' op
   return `https://${trimmed.replace(/^\/+/, "")}`
 }
-
-
-function normalizeHttps(url) {
-  if (!url || typeof url !== "string") return null;
-  const trimmed = url.trim();
-  if (!trimmed) return null;
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  // vang 'linkedin.com/...' of 'x.com/...' op
-  return `https://${trimmed.replace(/^\/+/, "")}`;
-}
