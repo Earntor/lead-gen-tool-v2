@@ -22,7 +22,7 @@ export default function SocialIcons({ urls = {}, size = 18, className = "" }) {
     { key: "facebook_url",  label: "Facebook",      Icon: SI.SiFacebook },
     { key: "instagram_url", label: "Instagram",     Icon: SI.SiInstagram },
     { key: "twitter_url",   label: "X (Twitter)",   Icon: TwitterIcon },
-  ]
+  ] 
 
   // filter eruit als er geen URL óf geen Icon is
   const items = rawItems
