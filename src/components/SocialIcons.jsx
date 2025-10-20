@@ -16,7 +16,7 @@ import * as FA from 'react-icons/fa6' // ✅ extra fallback (FaXTwitter)
 export default function SocialIcons({ urls = {}, size = 18, className = "" }) {
   // ✅ 3-traps fallback: SiX → FaXTwitter → SiTwitter
   const TwitterIcon = SI.SiX || FA.FaXTwitter || SI.SiTwitter || null
-
+ 
   const rawItems = [
     { key: "linkedin_url",  label: "LinkedIn",      Icon: SI.SiLinkedin },
     { key: "facebook_url",  label: "Facebook",      Icon: SI.SiFacebook },
