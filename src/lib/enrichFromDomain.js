@@ -126,15 +126,26 @@ export async function enrichFromDomain(queryString, ipLat, ipLon) {
     if (enriched.length === 0) return null;
 
     // Zelfde keuze-logica als bij jou
-    if (typeof ipLat !== 'number' || typeof ipLon !== 'number') {
-      const first = enriched[0];
-      return {
-        ...first,
-        confidence: 0.5,
-        confidence_reason: "no-ip-location",
-        selected_random_match: false
-      };
-    }
+ if (typeof ipLat !== 'number' || typeof ipLon !== 'number') {
+  const domainMatch = enriched.find((e) => e.website?.includes(queryString));
+  if (domainMatch) {
+    return {
+      ...domainMatch,
+      confidence: 0.9,
+      confidence_reason: "domain-match",
+      selected_random_match: false
+    };
+  } else {
+    const first = enriched[0];
+    return {
+      ...first,
+      confidence: 0.4,
+      confidence_reason: "no-ip-location",
+      selected_random_match: false
+    };
+  }
+}
+
 
     const { match, confidence, reason, selected_random_match } =
       chooseBestLocation(enriched, ipLat, ipLon, queryString);
