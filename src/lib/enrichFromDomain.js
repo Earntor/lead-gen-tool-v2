@@ -14,9 +14,14 @@ function formatCategory(key) {
 }
 
 function pickCategory(types = []) {
-   const specific = types.find(t => !GENERIC_TYPES.has(t));
-   return formatCategory(specific || null); // geen terugval op generiek
- }
+  if (!Array.isArray(types)) return null;
+
+  const specific = types.find(t => !GENERIC_TYPES.has(t));
+  if (specific) return formatCategory(specific);
+
+  return null; // géén generieke categorie invullen
+}
+
 
 function pickAddrObj(comp, type) {
   return comp?.find(c => c.types?.includes(type)) || null;
