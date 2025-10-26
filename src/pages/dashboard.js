@@ -3502,7 +3502,7 @@ try {
     <TableHeader>
       <TableRow>
         <TableHead>Bezochte pagina&apos;s</TableHead>
-        <TableHead>Tijdstip</TableHead>
+        <TableHead>Wanneer</TableHead>
         <TableHead className="text-right">Duur</TableHead>
       </TableRow>
     </TableHeader>

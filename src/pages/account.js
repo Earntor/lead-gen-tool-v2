@@ -58,7 +58,6 @@ export default function Account() {
   const [preferences, setPreferences] = useState({})
   const [generalMessage, setGeneralMessage] = useState(null)
   const [trackingMessage, setTrackingMessage] = useState(null)
-  const [updating, setUpdating] = useState(false)
   const [copySuccess, setCopySuccess] = useState('')
   const [trackingScript, setTrackingScript] = useState('')
   const [lastTrackingPing, setLastTrackingPing] = useState(null);
@@ -72,7 +71,6 @@ const [companyName, setCompanyName] = useState('');
 const [companyDomain, setCompanyDomain] = useState('');
 const [websiteUrl, setWebsiteUrl] = useState('');
 const [isOrgOwner, setIsOrgOwner] = useState(false);
-const [companyMsg, setCompanyMsg] = useState(null);
 const [savingCompany, setSavingCompany] = useState(false);
 
 
@@ -254,38 +252,6 @@ if (org) {
     };
   }, [user, currentOrgId])
 
-  const handleUpdate = async () => {
-    setUpdating(true)
-    setGeneralMessage(null)
-    try {
-      if (email !== user.email) {
-        const { error } = await supabase.auth.updateUser({ email })
-        if (error) throw error
-      }
-
-      const full_name = `${(firstName || '').trim()} ${(lastName || '').trim()}`.trim()
-
-      const { error } = await supabase
-        .from('profiles')
-        .upsert({
-          id: user.id,
-          first_name: firstName || null,
-          last_name:  lastName  || null,
-          full_name:  full_name || null,
-          phone: phone || null,
-          preferences,
-          updated_at: new Date().toISOString(),
-        })
-      if (error) throw error
-
-      setGeneralMessage({ type: 'success', text: 'Profiel succesvol bijgewerkt.' })
-    } catch (error) {
-      setGeneralMessage({ type: 'error', text: error.message })
-    } finally {
-      setUpdating(false)
-    }
-  }
-
   const handlePreferenceChange = (key, value) => {
     setPreferences((prev) => ({ ...prev, [key]: value }))
   }
@@ -391,44 +357,98 @@ async function getBearer() {
   return data?.session?.access_token || null;
 }
 
-async function saveCompanyFromAccount() {
-  setCompanyMsg(null);
+async function saveAccountTab() {
+  // We tonen meldingen in één balk bovenin het tab
+  setGeneralMessage(null);
 
-  if (!isOrgOwner) {
-    setCompanyMsg({ type: 'error', text: 'Alleen de eigenaar kan dit wijzigen.' });
-    return;
-  }
-
+  // 1) Validaties + normalisatie
   const nm = String(companyName || '').trim();
   let dm = String(companyDomain || '').trim();
   dm = dm.replace(/^https?:\/\//i, '').replace(/\/.*$/, ''); // alleen eTLD+1
 
-  if (!nm) { setCompanyMsg({ type: 'error', text: 'Vul je bedrijfsnaam in.' }); return; }
-  if (!dm) { setCompanyMsg({ type: 'error', text: 'Vul je domein in (bijv. bedrijf.nl).' }); return; }
+  // Bepaal of org-velden wijzigen (alleen als eigenaar)
+  const willUpdateOrg = isOrgOwner && nm && dm;
 
+  // 2) Begin met "saving" state (hergebruik savingCompany)
   setSavingCompany(true);
-  try {
-    const t = await getBearer();
-    const resp = await fetch('/api/onboarding', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) },
-      body: JSON.stringify({ action: 'saveCompany', companyName: nm, domain: dm }),
-    });
-    const json = await resp.json().catch(() => null);
-    if (!resp.ok) throw new Error(json?.error || 'Opslaan mislukt');
 
-    // direct lokale UI syncen
-    setCompanyDomain(json?.company_domain || dm);
-    setWebsiteUrl(json?.website_url || (`https://${dm}/`));
-    setCompanyMsg({ type: 'success', text: 'Opgeslagen.' });
+  try {
+    const ops = [];
+
+    // 3) E-mailadres (alleen als het is gewijzigd)
+const newEmail = (email || '').trim().toLowerCase();
+const currentEmail = (user?.email || '').trim().toLowerCase();
+if (newEmail && newEmail !== currentEmail) {
+      ops.push(
+        (async () => {
+const { error } = await supabase.auth.updateUser({ email: newEmail });
+          if (error) throw new Error('E-mail bijwerken: ' + error.message);
+        })()
+      );
+    }
+
+    // 4) Profielvelden en preferences (één upsert)
+    ops.push(
+      (async () => {
+        const full_name = `${(firstName || '').trim()} ${(lastName || '').trim()}`.trim();
+        const { error } = await supabase
+          .from('profiles')
+          .upsert({
+            id: user.id,
+            first_name: firstName || null,
+            last_name:  lastName  || null,
+            full_name:  full_name || null,
+            phone: (phone || '').trim() || null,
+            preferences, // bevat user_role en emailNotifications
+            updated_at: new Date().toISOString(),
+          });
+        if (error) throw new Error('Profiel bijwerken: ' + error.message);
+      })()
+    );
+
+    // 5) Organisatie (alleen als eigenaar en velden ingevuld)
+    if (willUpdateOrg) {
+      ops.push(
+        (async () => {
+          const t = await getBearer();
+          const resp = await fetch('/api/onboarding', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+            body: JSON.stringify({ action: 'saveCompany', companyName: nm, domain: dm }),
+          });
+          const json = await resp.json().catch(() => null);
+          if (!resp.ok) throw new Error('Organisatie opslaan: ' + (json?.error || 'onbekende fout'));
+
+          // UI sync
+          setCompanyDomain(json?.company_domain || dm);
+          setWebsiteUrl(json?.website_url || (`https://${dm}/`));
+        })()
+      );
+    }
+
+    // 6) Uitvoeren (parallel waar kan)
+    await Promise.all(ops);
+
+    // 7) Meldingen
+    if (!willUpdateOrg && !isOrgOwner) {
+      setGeneralMessage({
+        type: 'success',
+        text: 'Profiel opgeslagen. (Organisatie niet bijgewerkt: je bent geen eigenaar.)'
+      });
+    } else if (willUpdateOrg) {
+      setGeneralMessage({ type: 'success', text: 'Profiel en organisatie opgeslagen.' });
+    } else {
+      setGeneralMessage({ type: 'success', text: 'Profiel opgeslagen.' });
+    }
   } catch (e) {
-    setCompanyMsg({ type: 'error', text: e.message || 'Opslaan mislukt' });
+    setGeneralMessage({
+      type: 'error',
+      text: (e?.message || String(e)).replace(/^Error:\s*/i, '')
+    });
   } finally {
     setSavingCompany(false);
   }
 }
-
-
 
   // ⬇️ alle tab-inhoud in één interne component
   function Panels() {
@@ -533,7 +553,7 @@ async function saveCompanyFromAccount() {
 
 {/* --- Bedrijf & Domein (stap 6) --- */}
 <div className="mt-8 border-t pt-6">
-  <h3 className="text-lg font-semibold mb-3">Bedrijf &amp; Domein</h3>
+  <h3 className="text-lg font-semibold mb-3">Bedrijf &amp; website</h3>
   {!isOrgOwner && (
     <p className="text-sm text-gray-600 mb-3">
       Alleen de <b>eigenaar</b> kan deze gegevens wijzigen. Je kunt ze wel bekijken.
@@ -555,7 +575,7 @@ async function saveCompanyFromAccount() {
 
     {/* Domein met grijze prefix "https://" */}
     <div>
-      <label className="block text-sm mb-1">Domein (zonder https://)</label>
+      <label className="block text-sm mb-1">Website (zonder https://)</label>
       <div className="flex items-stretch">
         <span className="inline-flex items-center px-3 rounded-l-lg border border-r-0 bg-gray-100 text-gray-600 text-sm select-none">
           https://
@@ -577,7 +597,7 @@ async function saveCompanyFromAccount() {
         />
       </div>
       <p id="acc-domain-help" className="text-xs text-gray-500 mt-1">
-        Alleen het hoofddomein invullen (eTLD+1). Voorbeeld: <code>bedrijf.nl</code>
+        Alleen het hoofddomein invullen. Voorbeeld: <code>bedrijf.nl</code>
       </p>
     </div>
 
@@ -588,28 +608,17 @@ async function saveCompanyFromAccount() {
       </p>
     )}
 
-    {/* Meldingen */}
-    {companyMsg && (
-      <div
-        className={`p-2 rounded text-sm ${
-          companyMsg.type === 'success'
-            ? 'bg-green-100 text-green-700'
-            : 'bg-red-100 text-red-700'
-        }`}
-      >
-        {companyMsg.text}
-      </div>
-    )}
-
+    
     {/* Opslaan */}
     <div>
       <button
-        onClick={saveCompanyFromAccount}
-        disabled={!isOrgOwner || savingCompany}
-        className="bg-black text-white px-4 py-2 rounded hover:bg-neutral-800 disabled:opacity-50"
-      >
-        {savingCompany ? 'Opslaan…' : 'Opslaan'}
-      </button>
+  onClick={saveAccountTab}
+  disabled={savingCompany}
+  className="bg-black text-white px-4 py-2 rounded hover:bg-neutral-800 disabled:opacity-50"
+>
+  {savingCompany ? 'Opslaan…' : 'Opslaan'}
+</button>
+
       {!isOrgOwner && (
         <span className="ml-3 text-xs text-gray-500">
           Je bent geen eigenaar van deze organisatie.
@@ -618,15 +627,6 @@ async function saveCompanyFromAccount() {
     </div>
   </div>
 </div>
-
-
-            <button
-              onClick={handleUpdate}
-              disabled={updating}
-              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
-            >
-              {updating ? 'Bezig...' : 'Profiel bijwerken'}
-            </button>
 
             <button
               onClick={handlePasswordReset}
