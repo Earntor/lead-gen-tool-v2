@@ -93,25 +93,36 @@ async function resolveCompanyIdByDomain(supabaseClient, orgId, domainRaw) {
 async function fetchAssignmentForCompany(supabaseClient, orgId, companyId) {
   if (!orgId || !companyId) return null;
 
+  // 1) Pak de assignment
   const { data, error } = await supabaseClient
     .from("lead_assignments")
-    .select(
-      "assignee_user_id,assigned_at,profiles!lead_assignments_assignee_user_id_fkey(full_name)"
-    )
+    .select("assignee_user_id, assigned_at")
     .eq("org_id", orgId)
     .eq("company_id", companyId)
     .order("assigned_at", { ascending: false })
-    .limit(1); // 👈 géén maybeSingle()
+    .limit(1);
 
   if (error || !data || data.length === 0) return null;
-
   const row = data[0];
+
+  // 2) Haal de naam uit profiles (profiles.id == auth.users.id)
+  let full_name = null;
+  if (row.assignee_user_id) {
+    const { data: prof } = await supabaseClient
+      .from("profiles")
+      .select("full_name")
+      .eq("id", row.assignee_user_id)
+      .maybeSingle();
+    full_name = prof?.full_name || null;
+  }
+
   return {
     assignee_user_id: row.assignee_user_id || null,
-    full_name: row?.profiles?.full_name || null,
+    full_name,
     assigned_at: row.assigned_at || null,
   };
 }
+
 
 
 
@@ -416,7 +427,7 @@ const to = Math.min(end, total);
   <Pagination className="mt-3">
     <PaginationContent>
       <PaginationItem>
-        <PaginationPrevious
+        <PaginationPrevious     
           href="#"
           onClick={(e) => {
             e.preventDefault();
@@ -454,7 +465,7 @@ const to = Math.min(end, total);
 }
 
 // ==== Lead assignment hook + badge =========================================
-function useAssignmentForDomain(orgId, domainRaw) {
+function useAssignmentForDomain(orgId, domainRaw, version = 0) {
   const [state, setState] = React.useState({
     loading: true,
     company_id: null,
@@ -472,15 +483,12 @@ function useAssignmentForDomain(orgId, domainRaw) {
           return;
         }
 
-        // 1) resolve company_id (cache)
         const { companyId, domainLower } = await resolveCompanyIdByDomain(supabase, orgId, domainRaw);
-
         if (!companyId) {
           if (!cancelled) setState({ loading: false, company_id: null, assignee_user_id: null, full_name: null, assigned_at: null });
           return;
         }
 
-        // 2) assignment (cache)
         const cacheKey = `${orgId}|${domainLower}`;
         if (_assignmentCache.has(cacheKey)) {
           const c = _assignmentCache.get(cacheKey);
@@ -502,25 +510,27 @@ function useAssignmentForDomain(orgId, domainRaw) {
       }
     })();
     return () => { cancelled = true; };
-  }, [orgId, domainRaw]);
-
+  }, [orgId, domainRaw, version]); // 👈 version erbij
   return state;
 }
 
-function OwnerBadge({ orgId, domain }) {
-  const a = useAssignmentForDomain(orgId, domain);
+function OwnerBadge({ orgId, domain, version = 0 }) {
+  const a = useAssignmentForDomain(orgId, domain, version);
   if (a.loading) return null;
-  const assigned = !!a.assignee_user_id;
+
+  // ⛔️ Geen badge tonen als er geen assignee is
+  if (!a.assignee_user_id) return null;
+
   return (
     <span
-      className={`ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border
-        ${assigned ? "bg-blue-100 text-blue-800 border-blue-300" : "bg-gray-100 text-gray-600 border-gray-300"}`}
-      title={assigned ? `Toegewezen aan ${a.full_name || "collega"}` : "Niet toegewezen"}
+      className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border bg-blue-100 text-blue-800 border-blue-300"
+      title={`Toegewezen aan ${a.full_name || "collega"}`}
     >
-      {assigned ? (a.full_name || "Toegewezen") : "Ongeassigned"}
+      {a.full_name || "Toegewezen"}
     </span>
   );
 }
+
 
 
 // Skeletons loading
@@ -669,10 +679,9 @@ function useIsMobile(breakpointPx = 768) {
   return isMobile;
 }
 
-function AssignLeadControls({ orgId, domain, teamMembers, onChanged }) {
-  const a = useAssignmentForDomain(orgId, domain); // ✅ hook netjes in component
+function AssignLeadControls({ orgId, domain, teamMembers, bump }) {
+  const a = useAssignmentForDomain(orgId, domain); // deze hoeft geen version
   if (a.loading) return null;
-
   return (
     <span className="inline-flex ml-2">
       <AssignLeadButton
@@ -680,12 +689,11 @@ function AssignLeadControls({ orgId, domain, teamMembers, onChanged }) {
         companyId={a?.company_id || null}
         currentAssigneeId={a?.assignee_user_id || ""}
         teamMembers={teamMembers}
-        onChanged={onChanged}
+        onChanged={() => bump?.()}  // 👈 na opslaan bumpen
       />
     </span>
   );
 }
-
 
 
 export default function Dashboard() {
@@ -729,6 +737,7 @@ const [authToken, setAuthToken] = useState(null);
 const [notesByDomain, setNotesByDomain] = useState({}); // { [domain]: "note text" }
 const geocodeCacheRef = useRef(new Map()); // key: adres-string → { lat, lon }
 const [profile, setProfile] = useState(null);
+const [assignmentVersion, setAssignmentVersion] = useState(0);
 
 // LeadAssign teamleden + huidige user + force-rerender
 const [teamMembers, setTeamMembers] = useState([]);
@@ -1454,7 +1463,6 @@ const domainToCompany = useMemo(() => {
 
 // Alleen op mobiel: koppel ?company=<domain> aan UI-state
 useEffect(() => {
-  if (!isMobile) return;
   const domain = typeof router.query.company === 'string' ? router.query.company : '';
   if (domain) {
     const company = domainToCompany.get(domain);
@@ -1466,7 +1474,8 @@ useEffect(() => {
   } else if (selectedCompany) {
     setSelectedCompany(null);
   }
-}, [isMobile, router.query.company, domainToCompany]); 
+}, [router.query.company, domainToCompany]); 
+
 
 const openCompany = (companyDomain, companyName) => {
   if (!companyName) return;
@@ -1474,19 +1483,20 @@ const openCompany = (companyDomain, companyName) => {
   setInitialVisitorSet(false);
   setFiltersOpen(false);
 
-  if (isMobile && companyDomain) {
-    const q = { ...router.query, company: String(companyDomain) };
-    router.push({ pathname: '/dashboard', query: q }, undefined, { shallow: true });
-  }
+if (companyDomain) {
+  const q = { ...router.query, company: String(companyDomain) };
+  router.push({ pathname: '/dashboard', query: q }, undefined, { shallow: true });
+}
+
 };
 
 const closeCompany = () => {
   setSelectedCompany(null);
-  if (isMobile && router.query.company) {
-    const q = { ...router.query };
-    delete q.company;
-    router.replace({ pathname: '/dashboard', query: q }, undefined, { shallow: true });
-  }
+  if (router.query.company) {
+  const q = { ...router.query };
+  delete q.company;
+  router.replace({ pathname: '/dashboard', query: q }, undefined, { shallow: true });
+}
 };
 
 
@@ -2837,7 +2847,11 @@ if (leadRating >= 80) {
   </h3>
 
 {/* Owner-badge */}
-<OwnerBadge orgId={profile?.current_org_id} domain={company.company_domain} />
+<OwnerBadge
+  orgId={profile?.current_org_id}
+  domain={company.company_domain}
+  version={assignmentVersion}
+/>
 
 
 
@@ -3033,7 +3047,11 @@ try {
   </span>
 
 {/* Owner-badge (detail) */}
-<OwnerBadge orgId={profile?.current_org_id} domain={selectedCompanyData.company_domain} />
+<OwnerBadge
+  orgId={profile?.current_org_id}
+  domain={selectedCompanyData.company_domain}
+  version={assignmentVersion}
+/>
 
 
 
@@ -3150,13 +3168,14 @@ try {
   orgId={profile?.current_org_id}
   domain={selectedCompanyData.company_domain}
   teamMembers={teamMembers}
-  onChanged={() => {
-    const domainLower = (selectedCompanyData.company_domain || "")
-      .replace(/^www\./i, "")
-      .toLowerCase();
+  bump={() => {
+    // cache ongeldig + globale versie verhogen
+    const domainLower = (selectedCompanyData.company_domain || "").replace(/^www\./i, "").toLowerCase();
     invalidateAssignment(domainLower, profile?.current_org_id);
+    setAssignmentVersion(v => v + 1);
   }}
 />
+
 
 
     </div>

@@ -15,7 +15,7 @@ function parseUUID(val) {
 }
 
 async function getCompanyMeta(org_id, company_id) {
-  // Probeer companies (naam + primary_domain)
+  // 1) companies (naam + primary_domain)
   const { data: comp, error: compErr } = await supabaseAdmin
     .from("companies")
     .select("name, primary_domain")
@@ -26,7 +26,7 @@ async function getCompanyMeta(org_id, company_id) {
   let name = comp?.name || null;
   let domain = comp?.primary_domain || null;
 
-  // Fallback: pak 1 domein uit company_domains
+  // 2) Fallback: 1 domein uit company_domains
   if (!domain) {
     const { data: cd } = await supabaseAdmin
       .from("company_domains")
@@ -40,6 +40,7 @@ async function getCompanyMeta(org_id, company_id) {
 
   return { name, domain };
 }
+
 
 async function sendAssignmentEmail({ to, assigneeName, byName, companyName, companyDomain, message }) {
   if (!to) return;
