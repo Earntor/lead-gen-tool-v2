@@ -4,8 +4,22 @@ import { Resend } from "resend";
 
 // ===================== Email setup =====================
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
-const APP_URL = process.env.APP_URL || "http://localhost:3000";
-const FROM_EMAIL = process.env.ASSIGN_FROM_EMAIL || "Leadetect <noreply@example.com>";
+// Kies een betrouwbare base URL, zonder trailing slash
+const RAW_BASE =
+  process.env.APP_URL ||
+  process.env.NEXT_PUBLIC_APP_URL ||
+  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "") ||
+  "https://app.leadetect.com";
+
+const APP_URL = RAW_BASE.replace(/\/$/, "");
+const FROM_EMAIL = process.env.ASSIGN_FROM_EMAIL || "Leadetect <info@leadetect.com>";
+
+// (optioneel) loggen bij eerste request om te verifiëren
+if (!global._assignments_boot_logged) {
+  console.log("[assignments] APP_URL =", APP_URL, "| FROM_EMAIL =", FROM_EMAIL);
+  global._assignments_boot_logged = true;
+}
+
 
 // ===================== Helpers =========================
 function parseUUID(val) {
