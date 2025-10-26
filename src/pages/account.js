@@ -100,92 +100,105 @@ const [isDesktop, setIsDesktop] = useState(false);
     return r.json();
   };
 
-  useEffect(() => {
+useEffect(() => {
   if (typeof window === 'undefined') return;
-  const mq = window.matchMedia('(min-width: 768px)'); // Tailwind md
+  const mq = window.matchMedia('(min-width: 768px)');
   const onChange = () => setIsDesktop(mq.matches);
+
   onChange(); // initial
-  if (mq.addEventListener) {
+
+  if ('addEventListener' in mq) {
     mq.addEventListener('change', onChange);
   } else {
-    // Safari <14 fallback
-    mq.addListener(onChange);
+    // zeer oude browsers
+    mq.onchange = onChange;
   }
+
   return () => {
-    if (mq.removeEventListener) {
+    if ('removeEventListener' in mq) {
       mq.removeEventListener('change', onChange);
     } else {
-      mq.removeListener(onChange);
+      // cleanup van inline handler
+      mq.onchange = null;
     }
   };
 }, []);
 
+
   useEffect(() => {
-    const fetchUser = async () => {
-      const { data: { user: authUser }, error } = await supabase.auth.getUser()
-      if (error || !authUser) {
-        router.replace('/login')
-        return
+  const fetchUser = async () => {
+    // ✅ Stabieler op first load + voorkomt dat je op "Laden..." blijft hangen
+    const { data: { session }, error } = await supabase.auth.getSession();
+    if (error || !session?.user) {
+      // Altijd loading uit vóór redirect, anders blijft de UI visueel hangen.
+      setLoading(false);
+      router.replace('/login');
+      return;
+    }
+
+    const authUser = session.user;
+    setUser(authUser);
+    setEmail(authUser.email);
+
+    // Profiel ophalen op basis van authUser.id (niet user.id)
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('first_name, last_name, full_name, phone, preferences, current_org_id')
+      .eq('id', authUser.id)
+      .single();
+
+    if (profile) {
+      setFirstName(profile.first_name || '');
+      setLastName(profile.last_name || '');
+      // fallback: derive uit full_name
+      if ((!profile.first_name || !profile.last_name) && (profile.full_name || '').trim()) {
+        const parts = profile.full_name.trim().split(/\s+/);
+        const ln = parts.pop() || '';
+        const fn = parts.join(' ');
+        if (!profile.first_name) setFirstName(fn);
+        if (!profile.last_name) setLastName(ln);
       }
-      setUser(authUser)
-setEmail(authUser.email)
 
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('first_name, last_name, full_name, phone, preferences, current_org_id')
-        .eq('id', user.id)
-        .single()
+      setPhone(profile.phone || '');
+      setPreferences(profile.preferences || {});
+      setCurrentOrgId(profile.current_org_id || null);
 
-      if (profile) {
-        setFirstName(profile.first_name || '')
-        setLastName(profile.last_name || '')
-        // fallback: als first/last leeg → derive uit full_name
-        if ((!profile.first_name || !profile.last_name) && (profile.full_name || '').trim()) {
-          const parts = profile.full_name.trim().split(/\s+/)
-          const ln = parts.pop() || ''
-          const fn = parts.join(' ')
-          if (!profile.first_name) setFirstName(fn)
-          if (!profile.last_name) setLastName(ln)
+      if (profile.current_org_id) {
+        try {
+          const j = await checkTracking(profile.current_org_id);
+          setLastTrackingPing(j?.status === 'active' ? (j.last_ping_at || null) : null);
+        } catch {}
+        const domain = (process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin).replace(/\/$/, '');
+        const script = `<script src="${domain}/tracker.js" data-project-id="${profile.current_org_id}" async></script>`;
+        setTrackingScript(script);
+
+        // Organisatiegegevens laden
+        const { data: org } = await supabase
+          .from('organizations')
+          .select('id, name, company_domain, website_url, owner_user_id')
+          .eq('id', profile.current_org_id)
+          .maybeSingle();
+
+        if (org) {
+          setCompanyName(org.name || '');
+          setCompanyDomain(org.company_domain || '');
+          setWebsiteUrl(org.website_url || '');
+          // ✅ Vergelijk met authUser.id (consistent met hierboven)
+          setIsOrgOwner(org.owner_user_id === authUser.id);
         }
+      }
+    }
 
-        setPhone(profile.phone || '')
-        setPreferences(profile.preferences || {})
-        setCurrentOrgId(profile.current_org_id || null)
-
-        if (profile.current_org_id) {
-          try {
-            const j = await checkTracking(profile.current_org_id);
-            setLastTrackingPing(j?.status === 'active' ? (j.last_ping_at || null) : null);
-          } catch {}
-          const domain = (process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin).replace(/\/$/, '')
-          const script = `<script src="${domain}/tracker.js" data-project-id="${profile.current_org_id}" async></script>`
-          setTrackingScript(script)
-
-          // --- Nieuw: organisatiegegevens inladen ---
-const { data: org } = await supabase
-  .from('organizations')
-  .select('id, name, company_domain, website_url, owner_user_id')
-  .eq('id', profile.current_org_id)
-  .maybeSingle();
-
-if (org) {
-  setCompanyName(org.name || '');
-  setCompanyDomain(org.company_domain || '');
-  setWebsiteUrl(org.website_url || '');
-  setIsOrgOwner(org.owner_user_id === user.id);
+  if (!profile) {
+  await supabase.from('profiles').upsert({ id: authUser.id });
 }
 
-        }
-      }
+    setLoading(false);
+  };
 
-      if (!profile) {
-        await supabase.from('profiles').upsert({ id: user.id });
-      }
+  fetchUser();
+}, [router]);
 
-      setLoading(false)
-    }
-    fetchUser()
-  }, [router])
 
   useEffect(() => {
     const onHashChange = () => {
@@ -216,6 +229,21 @@ if (org) {
       window.removeEventListener('hashchange', onHashChange);
     };
   }, [user, currentOrgId]);
+
+useEffect(() => {
+  const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+    if (session?.user) {
+      setUser(session.user);
+      setEmail(session.user.email);
+    } else {
+      setUser(null);
+    }
+  });
+  return () => {
+    subscription?.subscription?.unsubscribe?.();
+  };
+}, []);
+
 
   // 🔔 Realtime: update velden live als onboarding ze opslaat
   useEffect(() => {
@@ -261,8 +289,8 @@ if (org) {
     setWebsiteUrl(o.website_url || '');
   }
   if (typeof o.owner_user_id !== 'undefined' && user?.id) {
-    setIsOrgOwner(o.owner_user_id === user.id);
-  }
+   setIsOrgOwner(o.owner_user_id === user.id);
+ }
 }
 
       )
@@ -378,6 +406,10 @@ async function getBearer() {
 }
 
 async function saveAccountTab() {
+  if (!user?.id) {
+   setGeneralMessage({ type: 'error', text: 'Gebruiker niet geladen. Probeer het zo opnieuw.' });
+   return;
+ }
   // We tonen meldingen in één balk bovenin het tab
   setGeneralMessage(null);
 
