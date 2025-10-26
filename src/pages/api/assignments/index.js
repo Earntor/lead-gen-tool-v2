@@ -14,6 +14,33 @@ function parseUUID(val) {
   return re.test(val) ? val : null;
 }
 
+async function getUserEmailAndName(userId) {
+  if (!userId) return { email: null, full_name: null };
+
+  // 1) profiles: full_name + optioneel email
+  const { data: prof } = await supabaseAdmin
+    .from("profiles")
+    .select("full_name, email")
+    .eq("id", userId)
+    .maybeSingle();
+
+  let full_name = prof?.full_name || null;
+  let email = prof?.email || null;
+
+  // 2) fallback: Supabase Auth Admin API (vereist service role key)
+  if (!email) {
+    try {
+      const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(userId);
+      email = authUser?.user?.email || null;
+    } catch (e) {
+      console.warn("[assignments] getUserEmailAndName admin fallback failed:", e?.message || e);
+    }
+  }
+
+  return { email, full_name };
+}
+
+
 async function getCompanyMeta(org_id, company_id) {
   // 1) companies (naam + primary_domain)
   const { data: comp, error: compErr } = await supabaseAdmin
@@ -80,6 +107,7 @@ async function sendAssignmentEmail({ to, assigneeName, byName, companyName, comp
     </div>
   `;
 
+  try {
   await resend.emails.send({
     from: FROM_EMAIL,
     to,
@@ -87,6 +115,15 @@ async function sendAssignmentEmail({ to, assigneeName, byName, companyName, comp
     text: textLines.join("\n"),
     html,
   });
+  console.log("[assignments] resend.emails.send OK →", to);
+} catch (e) {
+  console.error("[assignments] resend.emails.send FAILED", {
+    name: e?.name,
+    message: e?.message,
+    cause: e?.cause,
+  });
+  throw e;
+}
 }
 
 // ===================== Handler =========================
@@ -209,32 +246,39 @@ export default async function handler(req, res) {
       // === E-mail notificatie ===
       // Alleen bij toewijzen (niet bij unassign)
       // Haal assignee + afzender + bedrijf info op
-      const [{ data: assignee }, { data: byUser }, meta] = await Promise.all([
-        supabaseAdmin
-          .from("profiles")
-          .select("full_name, email")
-          .eq("id", assigneeId)
-          .maybeSingle(),
-        byUserId
-          ? supabaseAdmin
-              .from("profiles")
-              .select("full_name")
-              .eq("id", byUserId)
-              .maybeSingle()
-          : Promise.resolve({ data: null }),
-        getCompanyMeta(orgId, companyId),
-      ]);
+      // === E-mail notificatie ===
+try {
+  const [assigneeInfo, byUserInfo, meta] = await Promise.all([
+    getUserEmailAndName(assigneeId),
+    byUserId ? getUserEmailAndName(byUserId) : Promise.resolve({ email: null, full_name: null }),
+    getCompanyMeta(orgId, companyId),
+  ]);
 
-      if (assignee?.email) {
-        await sendAssignmentEmail({
-          to: assignee.email,
-          assigneeName: assignee.full_name || "",
-          byName: byUser?.full_name || "",
-          companyName: meta?.name || "",
-          companyDomain: meta?.domain || "",
-          message: typeof message === "string" ? message.trim() : "",
-        });
-      }
+  console.log("[assignments] email-check", {
+    haveResend: !!resend,
+    FROM_EMAIL,
+    to: assigneeInfo?.email || null,
+    assigneeName: assigneeInfo?.full_name || null,
+    byName: byUserInfo?.full_name || null,
+    companyName: meta?.name || null,
+    companyDomain: meta?.domain || null,
+  });
+
+  if (assigneeInfo?.email) {
+    await sendAssignmentEmail({
+      to: assigneeInfo.email,
+      assigneeName: assigneeInfo.full_name || "",
+      byName: byUserInfo?.full_name || "",
+      companyName: meta?.name || "",
+      companyDomain: meta?.domain || "",
+      message: typeof message === "string" ? message.trim() : "",
+    });
+  } else {
+    console.warn("[assignments] skipped: no assignee email");
+  }
+} catch (e) {
+  console.error("[assignments] email error:", e);
+}
 
       return res.status(200).json({ message: "Lead toegewezen" });
     } catch (err) {
