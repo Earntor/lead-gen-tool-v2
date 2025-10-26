@@ -51,6 +51,69 @@ import SocialIcons from "../components/SocialIcons";
 import dynamic from 'next/dynamic';
 import * as React from "react";
 
+// ===== LeadAssign module-level caches (NIET in component) =====
+const _companyIdCache = new Map();   // key: `${orgId}|${domainLower}` -> company_id
+const _assignmentCache = new Map();  // key: `${orgId}|${domainLower}` -> { company_id, assignee_user_id, full_name, assigned_at }
+
+// Helpers (buiten component)
+async function resolveCompanyIdByDomain(supabaseClient, orgId, domainRaw) {
+  if (!orgId || !domainRaw) return { companyId: null, domainLower: "" };
+  const domainLower = String(domainRaw).replace(/^www\./i, "").toLowerCase();
+  const key = `${orgId}|${domainLower}`;
+
+  if (_companyIdCache.has(key)) return { companyId: _companyIdCache.get(key), domainLower };
+
+  // 1) company_domains
+  const cd = await supabaseClient
+    .from("company_domains")
+    .select("company_id")
+    .eq("org_id", orgId)
+    .eq("domain", domainLower)
+    .maybeSingle();
+  if (!cd.error && cd.data?.company_id) {
+    _companyIdCache.set(key, cd.data.company_id);
+    return { companyId: cd.data.company_id, domainLower };
+  }
+
+  // 2) companies.primary_domain
+  const c = await supabaseClient
+    .from("companies")
+    .select("company_id")
+    .eq("org_id", orgId)
+    .eq("primary_domain", domainLower)
+    .maybeSingle();
+  if (!c.error && c.data?.company_id) {
+    _companyIdCache.set(key, c.data.company_id);
+    return { companyId: c.data.company_id, domainLower };
+  }
+
+  return { companyId: null, domainLower };
+}
+
+async function fetchAssignmentForCompany(supabaseClient, orgId, companyId) {
+  if (!orgId || !companyId) return null;
+  const { data, error } = await supabaseClient
+    .from("lead_assignments")
+    .select(`
+      assignee_user_id,
+      assigned_at,
+      profiles!lead_assignments_assignee_user_id_fkey ( full_name )
+    `)
+    .eq("org_id", orgId)
+    .eq("company_id", companyId)
+    .maybeSingle()
+    .order("assigned_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  return {
+    assignee_user_id: data.assignee_user_id || null,
+    full_name: data?.profiles?.full_name || null,
+    assigned_at: data.assigned_at || null,
+  };
+}
+
+
 const OnboardingWizard = dynamic(() => import('../components/OnboardingWizard'), { ssr: false });
 
 
@@ -389,6 +452,75 @@ const to = Math.min(end, total);
   );
 }
 
+// ==== Lead assignment hook + badge =========================================
+function useAssignmentForDomain(orgId, domainRaw) {
+  const [state, setState] = React.useState({
+    loading: true,
+    company_id: null,
+    assignee_user_id: null,
+    full_name: null,
+    assigned_at: null,
+  });
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (!orgId || !domainRaw) {
+          if (!cancelled) setState((s) => ({ ...s, loading: false }));
+          return;
+        }
+
+        // 1) resolve company_id (cache)
+        const { companyId, domainLower } = await resolveCompanyIdByDomain(supabase, orgId, domainRaw);
+
+        if (!companyId) {
+          if (!cancelled) setState({ loading: false, company_id: null, assignee_user_id: null, full_name: null, assigned_at: null });
+          return;
+        }
+
+        // 2) assignment (cache)
+        const cacheKey = `${orgId}|${domainLower}`;
+        if (_assignmentCache.has(cacheKey)) {
+          const c = _assignmentCache.get(cacheKey);
+          if (!cancelled) setState({ loading: false, company_id: companyId, ...c });
+          return;
+        }
+
+        const a = await fetchAssignmentForCompany(supabase, orgId, companyId);
+        const payload = {
+          company_id: companyId,
+          assignee_user_id: a?.assignee_user_id || null,
+          full_name: a?.full_name || null,
+          assigned_at: a?.assigned_at || null,
+        };
+        _assignmentCache.set(cacheKey, payload);
+        if (!cancelled) setState({ loading: false, ...payload });
+      } catch {
+        if (!cancelled) setState((s) => ({ ...s, loading: false }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [orgId, domainRaw]);
+
+  return state;
+}
+
+function OwnerBadge({ orgId, domain }) {
+  const a = useAssignmentForDomain(orgId, domain);
+  if (a.loading) return null;
+  const assigned = !!a.assignee_user_id;
+  return (
+    <span
+      className={`ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border
+        ${assigned ? "bg-blue-100 text-blue-800 border-blue-300" : "bg-gray-100 text-gray-600 border-gray-300"}`}
+      title={assigned ? `Toegewezen aan ${a.full_name || "collega"}` : "Niet toegewezen"}
+    >
+      {assigned ? (a.full_name || "Toegewezen") : "Ongeassigned"}
+    </span>
+  );
+}
+
 
 // Skeletons loading
 function FiltersSkeleton() {
@@ -578,6 +710,17 @@ const [authToken, setAuthToken] = useState(null);
 const [notesByDomain, setNotesByDomain] = useState({}); // { [domain]: "note text" }
 const geocodeCacheRef = useRef(new Map()); // key: adres-string → { lat, lon }
 const [profile, setProfile] = useState(null);
+
+// LeadAssign teamleden + huidige user + force-rerender
+const [teamMembers, setTeamMembers] = useState([]);
+const [currentUserId, setCurrentUserId] = useState(null);
+const [, forceTick] = useState(0);
+function invalidateAssignment(domainLower, orgId) {
+  const key = `${orgId}|${domainLower}`;
+  _assignmentCache.delete(key);
+  forceTick(x => x + 1);
+}
+
 const [filtersOpen, setFiltersOpen] = useState(false); // mobiel: open/gesloten filters
 // Onboarding wizard
 const [wizardOpen, setWizardOpen] = useState(false);
@@ -839,6 +982,36 @@ setUniqueCategories(Array.from(categoriesSet).sort());
   };
 }, [router]);
 
+// -- Teamleden laden voor AssignLeadButton --
+useEffect(() => {
+  const orgId = profile?.current_org_id;
+  if (!orgId) return;
+
+  let cancelled = false;
+  (async () => {
+    try {
+      // Haal id + full_name op van iedereen met dezelfde current_org_id
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .eq('current_org_id', orgId);
+
+      if (error) throw error;
+      if (cancelled) return;
+
+      setTeamMembers(Array.isArray(data) ? data : []);
+      setCurrentUserId(user?.id || null);
+    } catch (e) {
+      console.error('Teamleden laden mislukt:', e);
+      setTeamMembers([]);
+      setCurrentUserId(user?.id || null);
+    }
+  })();
+
+  return () => { cancelled = true; };
+}, [profile?.current_org_id, user?.id]);
+
+
 // Wizard tonen op basis van serverstaat (completed + snooze) of geforceerd via ?onboarding=1
 useEffect(() => {
   if (!user || loading) return;
@@ -1027,7 +1200,8 @@ const isInDateRange = (dateStr) => {
 
     case "deze-week":
       const weekStart = new Date(today);
-      weekStart.setDate(today.getDate() - today.getDay());
+  const jsDay = today.getDay() || 7; // zo(0) → 7
+  weekStart.setDate(today.getDate() - (jsDay - 1)); // maandag als start
       const weekEnd = new Date(weekStart);
       weekEnd.setDate(weekStart.getDate() + 7);
       return date >= weekStart && date < weekEnd;
@@ -2643,6 +2817,11 @@ if (leadRating >= 80) {
     {company.company_name}
   </h3>
 
+{/* Owner-badge */}
+<OwnerBadge orgId={profile?.current_org_id} domain={company.company_domain} />
+
+
+
   {overrideDomains.has(company.company_domain) && (
     <span className="ml-1 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-300">
       Buiten je filter
@@ -2834,6 +3013,11 @@ try {
     {selectedCompanyData.company_name}
   </span>
 
+{/* Owner-badge (detail) */}
+<OwnerBadge orgId={profile?.current_org_id} domain={selectedCompanyData.company_domain} />
+
+
+
   {/* Vlag op basis van domain_country */}
   {(() => {
   const flagCode = getFlagCodeFromLead(selectedCompanyData); // gebruikt alleen domain_country
@@ -2941,6 +3125,27 @@ try {
           </div>
         )}
       </div>
+
+      {/* Vierkante toewijs-knop naast "Label toevoegen" */}
+{(() => {
+const a = useAssignmentForDomain(profile?.current_org_id, selectedCompanyData.company_domain);
+  
+  return (
+    <span className="inline-flex ml-2">
+      <AssignLeadButton
+        orgId={profile?.current_org_id}
+        companyId={a?.company_id || null}
+        currentAssigneeId={a?.assignee_user_id || ""}
+        teamMembers={teamMembers}
+        onChanged={() => {
+          const domainLower = (selectedCompanyData.company_domain || "").replace(/^www\./i, "").toLowerCase();
+          invalidateAssignment(domainLower, profile?.current_org_id);
+        }}
+      />
+    </span>
+  );
+})()}
+
     </div>
 
     {selectedCompanyData.kvk_number && (
@@ -3343,3 +3548,146 @@ try {
 </div>    
 );
 }
+// ==== AssignLeadButton ======================================================
+function AssignLeadButton({ orgId, companyId, currentAssigneeId, teamMembers, onChanged }) {
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [assignee, setAssignee] = useState(currentAssigneeId || "");
+  const [note, setNote] = useState(""); // ✨ persoonlijk bericht
+
+  useEffect(() => { setAssignee(currentAssigneeId || ""); }, [currentAssigneeId]);
+
+  // Mobile vs desktop (≤640px bottom sheet)
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 640px)");
+    const apply = () => setIsMobile(mq.matches);
+    apply();
+    mq.addEventListener?.("change", apply);
+    return () => mq.removeEventListener?.("change", apply);
+  }, []);
+
+  async function save() {
+    try {
+      if (!orgId) throw new Error("Geen orgId");
+      if (!companyId) throw new Error("Geen companyId (domein kon niet resolven)");
+
+      setSaving(true);
+      const u = await supabase.auth.getUser();
+      const assigned_by_user_id = u?.data?.user?.id || null;
+
+      const res = await fetch("/api/assignments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          org_id: orgId,
+          company_id: companyId,
+          assignee_user_id: assignee || null, // leeg = unassign
+          assigned_by_user_id,
+          reason: assignee ? "manual" : "unassign",
+          message: note || "",                // ✨ jouw persoonlijke tekst
+        }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error || `HTTP ${res.status}`);
+      }
+
+      setOpen(false);
+      setNote("");
+      onChanged?.();
+    } catch (e) {
+      alert("Toewijzen mislukt: " + e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      {/* kleine vierkante knop */}
+      <button
+        type="button"
+        title="Lead toewijzen"
+        className="inline-flex h-8 w-8 items-center justify-center rounded border border-gray-300 hover:bg-gray-50"
+        onClick={() => setOpen(true)}
+      >
+        {/* profiel-icoon */}
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4"
+             viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 12c2.7 0 5-2.3 5-5s-2.3-5-5-5-5 2.3-5 5 2.3 5 5 5zm0 2c-3.3 0-10 1.7-10 5v3h20v-3c0-3.3-6.7-5-10-5z"/>
+        </svg>
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/40" onClick={() => !saving && setOpen(false)} />
+          <div
+            className={
+              isMobile
+                ? "absolute left-0 right-0 bottom-0 bg-white rounded-t-2xl p-4 shadow-xl"
+                : "absolute left-1/2 top-1/2 w-[90vw] max-w-md -translate-x-1/2 -translate-y-1/2 bg-white rounded-xl p-6 shadow-xl"
+            }
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-semibold">Lead toewijzen</h3>
+              <button
+                type="button"
+                className="h-8 w-8 inline-flex items-center justify-center rounded hover:bg-gray-100"
+                onClick={() => !saving && setOpen(false)}
+                aria-label="Sluiten"
+              >
+                ✕
+              </button>
+            </div>
+
+            <label className="block text-sm text-gray-700 mb-1">Eigenaar</label>
+            <select
+              className="w-full border rounded px-3 py-2 text-sm mb-3"
+              value={assignee}
+              onChange={(e) => setAssignee(e.target.value)}
+              disabled={saving}
+            >
+              <option value="">(Ongeassigned)</option>
+              {teamMembers.map((m) => (
+                <option key={m.id} value={m.id}>{m.full_name || m.id}</option>
+              ))}
+            </select>
+
+            {/* ✨ Persoonlijk bericht aan collega */}
+            <label className="block text-sm text-gray-700 mb-1">Persoonlijk bericht (optioneel)</label>
+            <textarea
+              className="w-full border rounded px-3 py-2 text-sm"
+              rows={4}
+              placeholder="Typ hier je bericht aan je collega…"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              disabled={saving}
+            />
+
+            <div className="mt-6 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className="px-3 h-9 rounded border"
+                onClick={() => !saving && setOpen(false)}
+                disabled={saving}
+              >
+                Annuleren
+              </button>
+              <button
+                type="button"
+                className="px-3 h-9 rounded bg-blue-600 text-white disabled:opacity-60"
+                onClick={save}
+                disabled={saving}
+              >
+                {saving ? "Opslaan…" : "Opslaan"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
