@@ -92,26 +92,27 @@ async function resolveCompanyIdByDomain(supabaseClient, orgId, domainRaw) {
 
 async function fetchAssignmentForCompany(supabaseClient, orgId, companyId) {
   if (!orgId || !companyId) return null;
+
   const { data, error } = await supabaseClient
     .from("lead_assignments")
-    .select(`
-      assignee_user_id,
-      assigned_at,
-      profiles!lead_assignments_assignee_user_id_fkey ( full_name )
-    `)
+    .select(
+      "assignee_user_id,assigned_at,profiles!lead_assignments_assignee_user_id_fkey(full_name)"
+    )
     .eq("org_id", orgId)
     .eq("company_id", companyId)
-    .maybeSingle()
     .order("assigned_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error || !data) return null;
+    .limit(1); // 👈 géén maybeSingle()
+
+  if (error || !data || data.length === 0) return null;
+
+  const row = data[0];
   return {
-    assignee_user_id: data.assignee_user_id || null,
-    full_name: data?.profiles?.full_name || null,
-    assigned_at: data.assigned_at || null,
+    assignee_user_id: row.assignee_user_id || null,
+    full_name: row?.profiles?.full_name || null,
+    assigned_at: row.assigned_at || null,
   };
 }
+
 
 
 const OnboardingWizard = dynamic(() => import('../components/OnboardingWizard'), { ssr: false });
@@ -411,7 +412,7 @@ const to = Math.min(end, total);
 
       {/* Paginatie-knop (2 → +20 → +20) */}
       {/* Paginatie: Vorige / Volgende */}
-{(page > 0 || total > rows.length) && (
+{total > PAGE_SIZE && (
   <Pagination className="mt-3">
     <PaginationContent>
       <PaginationItem>
@@ -667,6 +668,24 @@ function useIsMobile(breakpointPx = 768) {
   }, [breakpointPx]);
   return isMobile;
 }
+
+function AssignLeadControls({ orgId, domain, teamMembers, onChanged }) {
+  const a = useAssignmentForDomain(orgId, domain); // ✅ hook netjes in component
+  if (a.loading) return null;
+
+  return (
+    <span className="inline-flex ml-2">
+      <AssignLeadButton
+        orgId={orgId}
+        companyId={a?.company_id || null}
+        currentAssigneeId={a?.assignee_user_id || ""}
+        teamMembers={teamMembers}
+        onChanged={onChanged}
+      />
+    </span>
+  );
+}
+
 
 
 export default function Dashboard() {
@@ -3127,24 +3146,18 @@ try {
       </div>
 
       {/* Vierkante toewijs-knop naast "Label toevoegen" */}
-{(() => {
-const a = useAssignmentForDomain(profile?.current_org_id, selectedCompanyData.company_domain);
-  
-  return (
-    <span className="inline-flex ml-2">
-      <AssignLeadButton
-        orgId={profile?.current_org_id}
-        companyId={a?.company_id || null}
-        currentAssigneeId={a?.assignee_user_id || ""}
-        teamMembers={teamMembers}
-        onChanged={() => {
-          const domainLower = (selectedCompanyData.company_domain || "").replace(/^www\./i, "").toLowerCase();
-          invalidateAssignment(domainLower, profile?.current_org_id);
-        }}
-      />
-    </span>
-  );
-})()}
+<AssignLeadControls
+  orgId={profile?.current_org_id}
+  domain={selectedCompanyData.company_domain}
+  teamMembers={teamMembers}
+  onChanged={() => {
+    const domainLower = (selectedCompanyData.company_domain || "")
+      .replace(/^www\./i, "")
+      .toLowerCase();
+    invalidateAssignment(domainLower, profile?.current_org_id);
+  }}
+/>
+
 
     </div>
 
