@@ -1803,11 +1803,11 @@ useEffect(() => {
 
 
 
-const isSelectedOverride =
-  !!(selectedCompanyData?.company_domain && overrideDomains.has(selectedCompanyData.company_domain));
+// Detailkolom moet ALTIJD alle sessies tonen (volledige historie), los van de filter
+const filteredActivities = allLeads.filter(
+  (l) => l.company_name === selectedCompany
+);
 
-const filteredActivities = (isSelectedOverride ? allLeads : filteredLeads)
-  .filter(l => l.company_name === selectedCompany);
 
 
 const groupedByVisitor = filteredActivities.reduce((acc, activity) => {
@@ -3508,37 +3508,43 @@ try {
     </TableHeader>
 
     <TableBody>
-      {sessionsOrdered.map((s, idx) => (
-        <TableRow key={s.id}>
-          <TableCell className="max-w-[420px]">
-            <div className="truncate">
-              <span className="break-all text-gray-800" title={s.page_url}>
-                {s.page_url}
-              </span>
-            </div>
-            {idx === sessionsOrdered.length - 1 &&
-              (s.utm_source || s.utm_medium) && (
-                <div className="text-xs text-gray-500 mt-1">
-                  🎯 via{" "}
-                  <span className="font-medium text-gray-700">
-                    {s.utm_source || "onbekend"}
-                  </span>
-                  {s.utm_medium && (
-                    <span className="text-gray-400"> / {s.utm_medium}</span>
-                  )}
-                </div>
-              )}
-          </TableCell>
+      {sessionsOrdered.map((s, idx) => {
+  const inFilter = isInDateRange(s.timestamp); // reuse van je bestaande helper
+  return (
+    <TableRow key={s.id} className={inFilter ? "bg-blue-50/50" : ""}>
+      <TableCell className="max-w-[420px]">
+        <div className="truncate">
+          <span className="break-all text-gray-800" title={s.page_url}>
+            {s.page_url}
+          </span>
+        </div>
+        {idx === sessionsOrdered.length - 1 && (s.utm_source || s.utm_medium) && (
+          <div className="text-xs text-gray-500 mt-1">
+            🎯 via{" "}
+            <span className="font-medium text-gray-700">
+              {s.utm_source || "onbekend"}
+            </span>
+            {s.utm_medium && <span className="text-gray-400"> / {s.utm_medium}</span>}
+          </div>
+        )}
+        {inFilter && (
+          <span className="mt-1 inline-flex items-center rounded-full bg-blue-100 text-blue-800 text-[10px] px-1.5 py-0.5 border border-blue-200">
+            In filter
+          </span>
+        )}
+      </TableCell>
 
-          <TableCell className="whitespace-nowrap">
-            {formatDutchDateTime(s.timestamp)}
-          </TableCell>
+      <TableCell className="whitespace-nowrap">
+        {formatDutchDateTime(s.timestamp)}
+      </TableCell>
 
-          <TableCell className="text-right whitespace-nowrap">
-            {formatDuration(s.duration_seconds)}
-          </TableCell>
-        </TableRow>
-      ))}
+      <TableCell className="text-right whitespace-nowrap">
+        {formatDuration(s.duration_seconds)}
+      </TableCell>
+    </TableRow>
+  );
+})}
+
     </TableBody>
 
     <TableFooter>
@@ -3681,7 +3687,7 @@ function AssignLeadButton({ orgId, companyId, currentAssigneeId, teamMembers, on
               onChange={(e) => setAssignee(e.target.value)}
               disabled={saving}
             >
-              <option value="">(Ongeassigned)</option>
+              <option value="">Niet toegewezen</option>
               {teamMembers.map((m) => (
                 <option key={m.id} value={m.id}>{m.full_name || m.id}</option>
               ))}
