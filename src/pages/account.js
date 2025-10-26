@@ -101,29 +101,10 @@ const [isDesktop, setIsDesktop] = useState(false);
   };
 
 useEffect(() => {
-  if (typeof window === 'undefined') return;
-  const mq = window.matchMedia('(min-width: 768px)');
-  const onChange = () => setIsDesktop(mq.matches);
-
-  onChange(); // initial
-
-  if ('addEventListener' in mq) {
-    mq.addEventListener('change', onChange);
-  } else {
-    // zeer oude browsers
-    mq.onchange = onChange;
-  }
-
-  return () => {
-    if ('removeEventListener' in mq) {
-      mq.removeEventListener('change', onChange);
-    } else {
-      // cleanup van inline handler
-      mq.onchange = null;
-    }
-  };
-}, []);
-
+   if (typeof window === 'undefined') return;
+   // Eénmalig bepalen bij mount; niet live luisteren.
+   setIsDesktop(window.innerWidth >= 768);
+ }, []);
 
   useEffect(() => {
   const fetchUser = async () => {
