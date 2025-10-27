@@ -102,13 +102,15 @@ function AccountPanels({ ctx }) {
         <div className="space-y-4">
           <div>
   <label className="block text-sm mb-1">E-mailadres (login)</label>
-  <div className="flex items-center gap-2">
+
+  {/* Input + knop als 1 aaneengesloten groep */}
+  <div className="flex items-stretch">
     <Input
       type="email"
       value={email}
       readOnly
       aria-label="Login e-mailadres"
-      className="bg-gray-50"
+      className="bg-gray-50 rounded-l-lg rounded-r-none border-r-0"
     />
     <button
       type="button"
@@ -117,7 +119,8 @@ function AccountPanels({ ctx }) {
         ctx.setNewEmail2('');
         ctx.setShowEmailModal(true);
       }}
-      className="px-3 py-2 rounded border hover:bg-gray-50"
+      className="inline-flex items-center px-3 py-2 text-sm border rounded-r-lg border-l-0 bg-gray-100 hover:bg-gray-200 whitespace-nowrap"
+      aria-label="Wijzig e-mail"
     >
       Wijzig e-mail
     </button>
@@ -145,6 +148,7 @@ function AccountPanels({ ctx }) {
     </div>
   ) : null}
 </div>
+
 
 
           {/* Voornaam + Achternaam naast elkaar op desktop */}
@@ -580,22 +584,31 @@ export default function Account() {
   const [newEmail1, setNewEmail1] = useState('');
   const [newEmail2, setNewEmail2] = useState('');
   const [emailChanging, setEmailChanging] = useState(false);
+  const [emailError, setEmailError] = useState('');
 
   function isValidEmail(s){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s||'').trim()); }
 
-  async function requestEmailChange(){
-    const a = (newEmail1||'').trim().toLowerCase();
-    const b = (newEmail2||'').trim().toLowerCase();
-    if (!isValidEmail(a) || a !== b) {
-      setGeneralMessage({ type:'error', text:'Vul twee keer hetzelfde, geldige e-mailadres in.' });
-      return;
-    }
-    if (a === (email||'').toLowerCase()) {
-      setGeneralMessage({ type:'error', text:'Dit is al je huidige e-mail.' });
-      return;
-    }
+ async function requestEmailChange(){
+  const a = (newEmail1||'').trim().toLowerCase();
+  const b = (newEmail2||'').trim().toLowerCase();
 
-    setEmailChanging(true);
+  // ⬇️ VALIDEER EN TOON FOUT IN MODAL
+  if (!isValidEmail(a)) {
+    setEmailError('Voer een geldig e-mailadres in.');
+    return;
+  }
+  if (a !== b) {
+    setEmailError('Beide e-mailadressen moeten overeenkomen.');
+    return;
+  }
+  if (a === (email||'').toLowerCase()) {
+    setEmailError('Dit is al je huidige e-mail.');
+    return;
+  }
+
+  setEmailError(''); // eventueel vorige fout wissen
+  setEmailChanging(true);
+
     try {
      // 1) Supabase stuurt bevestigingsmail
 const { error: authErr } = await supabase.auth.updateUser({ email: a });
@@ -758,25 +771,42 @@ try {
     };
   }, [user, currentOrgId]);
 
-  useEffect(() => {
-  const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+ useEffect(() => {
+  const { data: subscription } = supabase.auth.onAuthStateChange(async (event, session) => {
     if (session?.user) {
+      // Altijd UI-syncen met Auth
       setUser(session.user);
       setEmail(session.user.email);
 
-      // ✅ profiel-email syncen met auth-email (ook als de rij nog niet bestaat)
-(async () => {
-  try {
-    await supabase
-      .from('profiles')
-      .upsert({
-        id: session.user.id,
-        email: session.user.email ?? null,
-        updated_at: new Date().toISOString(),
-      });
-  } catch {}
-})();
+      // 1) profiles.email upserten (blijft je digest-trigger)
+      try {
+        await supabase
+          .from('profiles')
+          .upsert({
+            id: session.user.id,
+            email: session.user.email ?? null,
+            updated_at: new Date().toISOString(),
+          });
+      } catch {}
 
+      // 2) Als de user net is geüpdatet (na email-verify), pending_email opruimen
+      if (event === 'USER_UPDATED') {
+        try {
+          await supabase
+            .from('profiles')
+            .update({
+              pending_email: null,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', session.user.id);
+        } catch {}
+        // UI meteen opschonen
+        setPendingEmail('');
+        setGeneralMessage({
+          type: 'success',
+          text: 'Je e-mailadres is bevestigd en bijgewerkt.'
+        });
+      }
     } else {
       setUser(null);
     }
@@ -786,6 +816,7 @@ try {
     subscription?.subscription?.unsubscribe?.();
   };
 }, []);
+
 
 
   // 🔔 Realtime updates
@@ -1180,21 +1211,32 @@ try {
       </p>
 
       <label className="block text-sm mb-1">Nieuw e-mailadres</label>
-      <Input
-        type="email"
-        value={newEmail1}
-        onChange={(e)=>setNewEmail1(e.target.value)}
-        placeholder="naam@bedrijf.nl"
-        className="mb-3"
-      />
+<Input
+  type="email"
+  value={newEmail1}
+  onChange={(e) => {
+    setNewEmail1(e.target.value);
+    setEmailError(''); // ⬅️ foutmelding wissen tijdens typen
+  }}
+  placeholder="naam@bedrijf.nl"
+  className="mb-3"
+/>
 
       <label className="block text-sm mb-1">Herhaal e-mailadres</label>
-      <Input
-        type="email"
-        value={newEmail2}
-        onChange={(e)=>setNewEmail2(e.target.value)}
-        placeholder="naam@bedrijf.nl"
-      />
+<Input
+  type="email"
+  value={newEmail2}
+  onChange={(e) => {
+    setNewEmail2(e.target.value);
+    setEmailError(''); // ⬅️ foutmelding wissen tijdens typen
+  }}
+  placeholder="naam@bedrijf.nl"
+/>
+
+{/* ⬇️ Toon inline foutmelding in de modal */}
+{emailError && (
+  <p className="mt-2 text-sm text-red-600">{emailError}</p>
+)}
 
       <div className="mt-4 flex items-center justify-end gap-2">
         <button
