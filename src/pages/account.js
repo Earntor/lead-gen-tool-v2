@@ -101,15 +101,51 @@ function AccountPanels({ ctx }) {
         <h2 className="text-xl font-semibold mb-4">Accountgegevens</h2>
         <div className="space-y-4">
           <div>
-            <label className="block text-sm mb-1">E-mailadres</label>
-            <Input
-              type="email"
-              autoComplete="email"
-              aria-label="E-mailadres"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </div>
+  <label className="block text-sm mb-1">E-mailadres (login)</label>
+  <div className="flex items-center gap-2">
+    <Input
+      type="email"
+      value={email}
+      readOnly
+      aria-label="Login e-mailadres"
+      className="bg-gray-50"
+    />
+    <button
+      type="button"
+      onClick={() => {
+        ctx.setNewEmail1('');
+        ctx.setNewEmail2('');
+        ctx.setShowEmailModal(true);
+      }}
+      className="px-3 py-2 rounded border hover:bg-gray-50"
+    >
+      Wijzig e-mail
+    </button>
+  </div>
+
+  {ctx.pendingEmail ? (
+    <div className="mt-2 text-sm rounded bg-yellow-50 text-yellow-800 p-2">
+      Bevestig je nieuwe e-mail <b>{ctx.pendingEmail}</b> via de link die we zojuist stuurden.
+      <div className="mt-2 flex gap-2">
+        <button
+          type="button"
+          onClick={ctx.cancelPendingEmailChange}
+          className="px-2 py-1 text-xs rounded border hover:bg-gray-50"
+        >
+          Annuleren
+        </button>
+        <button
+          type="button"
+          onClick={ctx.resendEmailChange}
+          className="px-2 py-1 text-xs rounded border hover:bg-gray-50"
+        >
+          Link opnieuw sturen
+        </button>
+      </div>
+    </div>
+  ) : null}
+</div>
+
 
           {/* Voornaam + Achternaam naast elkaar op desktop */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -538,6 +574,72 @@ export default function Account() {
     setIsDesktop(window.innerWidth >= 768);
   }, []);
 
+    // ---- E-MAIL WIJZIGEN FLOW ----
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [pendingEmail, setPendingEmail] = useState('');
+  const [newEmail1, setNewEmail1] = useState('');
+  const [newEmail2, setNewEmail2] = useState('');
+  const [emailChanging, setEmailChanging] = useState(false);
+
+  function isValidEmail(s){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s||'').trim()); }
+
+  async function requestEmailChange(){
+    const a = (newEmail1||'').trim().toLowerCase();
+    const b = (newEmail2||'').trim().toLowerCase();
+    if (!isValidEmail(a) || a !== b) {
+      setGeneralMessage({ type:'error', text:'Vul twee keer hetzelfde, geldige e-mailadres in.' });
+      return;
+    }
+    if (a === (email||'').toLowerCase()) {
+      setGeneralMessage({ type:'error', text:'Dit is al je huidige e-mail.' });
+      return;
+    }
+
+    setEmailChanging(true);
+    try {
+     // 1) Supabase stuurt bevestigingsmail
+const { error: authErr } = await supabase.auth.updateUser({ email: a });
+if (authErr) throw authErr;
+
+// 2) UI-status opslaan (alleen als 1 gelukt is)
+const { error: upErr } = await supabase
+  .from('profiles')
+  .update({ pending_email: a, updated_at: new Date().toISOString() })
+  .eq('id', user.id);
+if (upErr) throw upErr;
+
+
+      setPendingEmail(a);
+      setShowEmailModal(false);
+      setGeneralMessage({ type:'success', text:`We hebben een bevestigingslink gestuurd naar ${a}.` });
+    } catch(e){
+      setGeneralMessage({ type:'error', text:'Wijzigen mislukt: ' + (e?.message || e) });
+    } finally {
+      setEmailChanging(false);
+    }
+  }
+
+  async function cancelPendingEmailChange(){
+    await supabase
+      .from('profiles')
+      .update({ pending_email: null, updated_at: new Date().toISOString() })
+      .eq('id', user.id);
+    setPendingEmail('');
+    setGeneralMessage({ type:'success', text:'E-mailwijziging geannuleerd.' });
+  }
+
+  async function resendEmailChange(){
+    const a = (pendingEmail||'').trim().toLowerCase();
+    if (!isValidEmail(a)) {
+      setGeneralMessage({ type:'error', text:'Geen geldig e-mailadres in behandeling.' });
+      return;
+    }
+    const { error } = await supabase.auth.updateUser({ email: a });
+    if (error) setGeneralMessage({ type:'error', text:'Opnieuw sturen mislukt: ' + error.message });
+    else setGeneralMessage({ type:'success', text:`Bevestigingsmail opnieuw verstuurd naar ${a}.` });
+  }
+
+
   useEffect(() => {
     const fetchUser = async () => {
       const { data: { session }, error } = await supabase.auth.getSession();
@@ -551,9 +653,22 @@ export default function Account() {
       setUser(authUser);
       setEmail(authUser.email);
 
+// ✅ Houd profiles.email in sync met Auth (ook als de rij nog niet bestaat)
+try {
+  await supabase
+    .from('profiles')
+    .upsert({
+      id: authUser.id,
+      email: authUser.email ?? null,
+      updated_at: new Date().toISOString(),
+    });
+} catch {}
+
+
+
       const { data: profile } = await supabase
         .from('profiles')
-        .select('first_name, last_name, full_name, phone, preferences, current_org_id')
+        .select('first_name, last_name, full_name, phone, preferences, current_org_id, pending_email')
         .eq('id', authUser.id)
         .single();
 
@@ -571,6 +686,7 @@ export default function Account() {
         setPhone(profile.phone || '');
         setPreferences(profile.preferences || {});
         setCurrentOrgId(profile.current_org_id || null);
+        setPendingEmail(profile.pending_email || '');
 
         if (profile.current_org_id) {
           try {
@@ -594,10 +710,16 @@ export default function Account() {
             setIsOrgOwner(org.owner_user_id === authUser.id);
           }
         }
-      }
-
-      if (!profile) {
-        await supabase.from('profiles').upsert({ id: authUser.id });
+        try {
+  const authEmail = (authUser.email || '').toLowerCase();
+  if (profile?.pending_email && profile.pending_email.toLowerCase() === authEmail) {
+    await supabase
+      .from('profiles')
+      .update({ pending_email: null, updated_at: new Date().toISOString() })
+      .eq('id', authUser.id);
+    setPendingEmail('');
+  }
+} catch {}
       }
 
       setLoading(false);
@@ -637,18 +759,34 @@ export default function Account() {
   }, [user, currentOrgId]);
 
   useEffect(() => {
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        setUser(session.user);
-        setEmail(session.user.email);
-      } else {
-        setUser(null);
-      }
-    });
-    return () => {
-      subscription?.subscription?.unsubscribe?.();
-    };
-  }, []);
+  const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+    if (session?.user) {
+      setUser(session.user);
+      setEmail(session.user.email);
+
+      // ✅ profiel-email syncen met auth-email (ook als de rij nog niet bestaat)
+(async () => {
+  try {
+    await supabase
+      .from('profiles')
+      .upsert({
+        id: session.user.id,
+        email: session.user.email ?? null,
+        updated_at: new Date().toISOString(),
+      });
+  } catch {}
+})();
+
+    } else {
+      setUser(null);
+    }
+  });
+
+  return () => {
+    subscription?.subscription?.unsubscribe?.();
+  };
+}, []);
+
 
   // 🔔 Realtime updates
   useEffect(() => {
@@ -824,18 +962,6 @@ export default function Account() {
     try {
       const ops = [];
 
-      const newEmail = (email || '').trim().toLowerCase();
-      const currentEmail = (user?.email || '').trim().toLowerCase();
-      if (newEmail && newEmail !== currentEmail) {
-        ops.push(
-          (async () => {
-            const { error } = await supabase.auth.updateUser({ email: newEmail });
-            if (error) throw new Error('E-mail bijwerken: ' + error.message);
-            setUser((u) => (u ? { ...u, email: newEmail } : u));
-          })()
-        );
-      }
-
       ops.push(
         (async () => {
           const full_name = `${(firstName || '').trim()} ${(lastName || '').trim()}`.trim();
@@ -922,6 +1048,13 @@ export default function Account() {
     digest, digestLoading, digestSaving, saveDigest,
     // nodig voor knoppen/TeamTab in child
     user, currentOrgId, pollRef, checkTracking, handlePasswordReset,
+    // e-mail wijziging helpers/state
+   pendingEmail,
+   setShowEmailModal,
+   setNewEmail1,
+   setNewEmail2,
+   cancelPendingEmailChange,
+   resendEmailChange,
   };
 
   if (loading || !user) {
@@ -1038,6 +1171,51 @@ export default function Account() {
           </main>
         </div>
       )}
+      {showEmailModal && (
+  <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+    <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-lg">
+      <h3 className="text-lg font-semibold mb-2">Nieuw e-mailadres</h3>
+      <p className="text-sm text-gray-600 mb-4">
+        We sturen een bevestigingslink naar je nieuwe e-mail. Tot die tijd blijft je huidige login werken.
+      </p>
+
+      <label className="block text-sm mb-1">Nieuw e-mailadres</label>
+      <Input
+        type="email"
+        value={newEmail1}
+        onChange={(e)=>setNewEmail1(e.target.value)}
+        placeholder="naam@bedrijf.nl"
+        className="mb-3"
+      />
+
+      <label className="block text-sm mb-1">Herhaal e-mailadres</label>
+      <Input
+        type="email"
+        value={newEmail2}
+        onChange={(e)=>setNewEmail2(e.target.value)}
+        placeholder="naam@bedrijf.nl"
+      />
+
+      <div className="mt-4 flex items-center justify-end gap-2">
+        <button
+          className="px-3 py-2 rounded border hover:bg-gray-50"
+          onClick={()=>setShowEmailModal(false)}
+          disabled={emailChanging}
+        >
+          Annuleren
+        </button>
+        <button
+          className="px-3 py-2 rounded bg-black text-white hover:bg-neutral-800 disabled:opacity-50"
+          onClick={requestEmailChange}
+          disabled={emailChanging || !newEmail1 || !newEmail2}
+        >
+          {emailChanging ? 'Versturen…' : 'Bevestigingsmail sturen'}
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
     </div>
   )
 }
