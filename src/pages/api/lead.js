@@ -1006,6 +1006,34 @@ let ip_city = null;
 let ip_postal_code = null;
 let location = null;
 
+// --- Globale enrichment-variabelen (altijd beschikbaar, ook in catch) ---
+let company_name = null;
+let company_domain = null;
+let domainSignals = [];
+let enrichment_source = null;
+let confidence = null;
+let confidence_reason = null;
+let reverseDnsDomain = null;
+
+let domain_address = null;
+let domain_postal_code = null;
+let domain_city = null;
+let domain_country = null;
+let domain_lat = null;
+let domain_lon = null;
+
+let phone = null;
+let email = null;
+let linkedin_url = null;
+let facebook_url = null;
+let instagram_url = null;
+let twitter_url = null;
+let meta_description = null;
+let category = null;
+let category_nl = null;
+let place_id = null;
+let place_types = null;
+
 
 // Queue-status bijwerken voor alle pending jobs van deze bezoeker (ip+site)
 const markQueue = async (status, reason) => {
@@ -1189,32 +1217,32 @@ const isISP = KNOWN_ISPS.some(isp => asname.toLowerCase().includes(isp.toLowerCa
 });
       }
 
-      let company_name = null;
-      let company_domain = null;
-      let domainSignals = [];
-      let enrichment_source = null;
-      let confidence = null;
-      let confidence_reason = null;
-      let reverseDnsDomain = null;
+      //let company_name = null;
+      //let company_domain = null;
+      //let domainSignals = [];
+      //let enrichment_source = null;
+      //let confidence = null;
+      //let confidence_reason = null;
+      //let reverseDnsDomain = null;
 
-      let domain_address = null;
-      let domain_postal_code = null;
-      let domain_city = null;
-      let domain_country = null;
-      let domain_lat = null;
-      let domain_lon = null;
+      //let domain_address = null;
+      //let domain_postal_code = null;
+      //let domain_city = null;
+      //let domain_country = null;
+      //let domain_lat = null;
+      //let domain_lon = null;
 
-      let phone = null;
-      let email = null;
-      let linkedin_url = null;
-      let facebook_url = null;
-      let instagram_url = null;
-      let twitter_url = null;
-      let meta_description = null;
-      let category = null;
-      let category_nl = null;
-let place_id = null;
-let place_types = null;
+      //let phone = null;
+      //let email = null;
+      //let linkedin_url = null;
+      //let facebook_url = null;
+      //let instagram_url = null;
+      //let twitter_url = null;
+      //let meta_description = null;
+      //let category = null;
+      //let category_nl = null;
+//let place_id = null;
+//let place_types = null;
 
 // ---- Gebatchte signal-helper ----
 // forceLog=true => altijd 1-op-1 DB-log (voor harde signalen).
@@ -1976,9 +2004,6 @@ try {
 }
 
 
-
-
-   // 🖼️ Stap 7 – favicon hash matching → SIGNAL
 // 🖼️ Stap 7 – favicon hash matching → SIGNAL
 try {
   const hash = await getFaviconHash(ip_address);
@@ -3477,8 +3502,7 @@ await markQueue('done', 'auto-done via live enrichment');
 
   } catch (err) {
   console.error('Server error:', err);
-  // Label eventuele pending jobs als error
   await markQueue('error', `lead.js error: ${err?.message || 'unknown'}`);
-  res.status(500).json({ error: 'Internal server error' });
+  return res.status(500).json({ error: 'Internal server error' });
 }
 }
