@@ -165,22 +165,6 @@ function AccountPanels({ ctx }) {
             </p>
           </div>
 
-          <fieldset>
-            <legend className="text-sm font-medium mb-2">Voorkeuren</legend>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="pref-email"
-                checked={!!preferences.emailNotifications}
-                onCheckedChange={(val) =>
-                  setPreferences((p) => ({ ...p, emailNotifications: !!val }))
-                }
-              />
-              <Label htmlFor="pref-email" className="text-sm">
-                E-mail notificaties ontvangen
-              </Label>
-            </div>
-          </fieldset>
-
           {/* --- Bedrijf & Domein --- */}
           <div className="mt-8 border-t pt-6">
             <h3 className="text-lg font-semibold mb-3">Bedrijf &amp; website</h3>

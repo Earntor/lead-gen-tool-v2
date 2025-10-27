@@ -39,9 +39,6 @@ export default function TeamTab() {
   const [inviteRole, setInviteRole] = useState('member')
   const [inviteLink, setInviteLink] = useState('')
 
-  const [orgName, setOrgName] = useState('')
-  const [savingName, setSavingName] = useState(false)
-
   // Zoeken / notices
   const [q, setQ] = useState('')
   const [notice, setNotice] = useState(null) // {type:'success'|'warning'|'error', text:string} | null
@@ -99,13 +96,13 @@ export default function TeamTab() {
       setMeRole(myMember?.role || null)
 
       // 3) org naam + owner
-      const { data: org } = await supabase
-        .from('organizations')
-        .select('name, owner_user_id')
-        .eq('id', currentOrg)
-        .single()
-      setOrgName(org?.name || '')
-      setOwnerId(org?.owner_user_id || null)
+      // 3) alleen owner ophalen (naam niet meer nodig hier)
+  const { data: org } = await supabase
+    .from('organizations')
+    .select('owner_user_id')
+    .eq('id', currentOrg)
+    .single()
+  setOwnerId(org?.owner_user_id || null)
     } catch {
       // stil falen
     }
@@ -309,36 +306,6 @@ export default function TeamTab() {
     }
   }
 
-  async function saveOrgName(e) {
-    e.preventDefault()
-    setSavingName(true)
-    setError(null)
-    try {
-      if (!canAdmin) {
-        setSavingName(false)
-        return setError('Alleen admins mogen de naam wijzigen.')
-      }
-      const token = await getToken()
-      if (!token) {
-        setSavingName(false)
-        return setError('Niet ingelogd.')
-      }
-      const res = await fetch('/api/org/update-org', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name: orgName }),
-      })
-      const json = await res.json().catch(() => ({}))
-      if (!res.ok) return setError(json?.error || 'Opslaan mislukt.')
-
-      flash('success', 'Naam opgeslagen.')
-      await loadContext()
-    } catch (e) {
-      setError(e?.message || 'Onbekende fout bij opslaan.')
-    } finally {
-      setSavingName(false)
-    }
-  }
 
   function safeSince(ts) {
     if (!ts) return '-'
@@ -410,35 +377,7 @@ export default function TeamTab() {
           )}
         </div>
       )}
-
-      {/* Organisatienaam */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="font-semibold">Organisatienaam</h3>
-          {!canAdmin && <span className="text-xs text-gray-500">Alleen admin kan wijzigen</span>}
-        </div>
-
-        <form onSubmit={saveOrgName} className="flex flex-col sm:flex-row gap-2">
-          <Input
-            type="text"
-            aria-label="Organisatienaam"
-            placeholder="Organisatienaam"
-            value={orgName}
-            onChange={(e) => setOrgName(e.target.value)}
-            disabled={!canAdmin}
-            className="flex-1"
-          />
-          <button
-            className="px-4 py-2 rounded-lg bg-black text-white disabled:opacity-50"
-            disabled={savingName || !orgName.trim() || !canAdmin}
-          >
-            {savingName ? 'Opslaan…' : 'Opslaan'}
-          </button>
-        </form>
-      </section>
-
-      <div className="h-px bg-gray-200 my-8" />
-
+      
       {/* Teamleden */}
       <section className="space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
