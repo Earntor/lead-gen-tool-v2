@@ -13,6 +13,13 @@ const roleOptions = ['Sales', 'Marketing', 'Management', 'Technisch', 'Overig'] 
 // ⬇️ mini helper om secties conditioneel te tonen
 const Section = ({ when, children }) => (when ? <>{children}</> : null)
 
+const APP_URL =
+  (typeof window !== 'undefined' ? window.location.origin : process.env.NEXT_PUBLIC_SITE_URL) ||
+  'https://app.leadetect.com';
+
+const EMAIL_REDIRECT_TO = `${APP_URL}/auth/callback`; // <- pagina waar je Supabase email links op landen
+
+
 // ⬅️ TeamTab alleen client-side (voorkomt SSR/hydration errors)
 const TeamTab = dynamic(() => import('../components/TeamTab'), {
   ssr: false,
@@ -101,7 +108,7 @@ function AccountPanels({ ctx }) {
         <h2 className="text-xl font-semibold mb-4">Accountgegevens</h2>
         <div className="space-y-4">
           <div>
-  <label className="block text-sm mb-1">E-mailadres (login)</label>
+  <label className="block text-sm mb-1">E-mailadres</label>
 
   {/* Input + knop als 1 aaneengesloten groep */}
   <div className="flex items-stretch">
@@ -588,49 +595,51 @@ export default function Account() {
 
   function isValidEmail(s){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s||'').trim()); }
 
- async function requestEmailChange(){
-  const a = (newEmail1||'').trim().toLowerCase();
-  const b = (newEmail2||'').trim().toLowerCase();
+async function requestEmailChange() {
+  const a = (newEmail1 || '').trim().toLowerCase();
+  const b = (newEmail2 || '').trim().toLowerCase();
 
-  // ⬇️ VALIDEER EN TOON FOUT IN MODAL
-  if (!isValidEmail(a)) {
-    setEmailError('Voer een geldig e-mailadres in.');
-    return;
-  }
-  if (a !== b) {
-    setEmailError('Beide e-mailadressen moeten overeenkomen.');
-    return;
-  }
-  if (a === (email||'').toLowerCase()) {
-    setEmailError('Dit is al je huidige e-mail.');
-    return;
-  }
+  if (!isValidEmail(a)) { setEmailError('Voer een geldig e-mailadres in.'); return; }
+  if (a !== b) { setEmailError('Beide e-mailadressen moeten overeenkomen.'); return; }
+  if (a === (email || '').toLowerCase()) { setEmailError('Dit is al je huidige e-mail.'); return; }
 
-  setEmailError(''); // eventueel vorige fout wissen
+  setEmailError('');
   setEmailChanging(true);
 
-    try {
-     // 1) Supabase stuurt bevestigingsmail
-const { error: authErr } = await supabase.auth.updateUser({ email: a });
-if (authErr) throw authErr;
+  // Promise.race timeout (12s)
+  const withTimeout = (p, ms = 12000) =>
+    Promise.race([
+      p,
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms)),
+    ]);
 
-// 2) UI-status opslaan (alleen als 1 gelukt is)
-const { error: upErr } = await supabase
-  .from('profiles')
-  .update({ pending_email: a, updated_at: new Date().toISOString() })
-  .eq('id', user.id);
-if (upErr) throw upErr;
+  try {
+    // 1) Mail sturen met redirect (nu met echte timeout)
+    await withTimeout(
+      supabase.auth.updateUser(
+        { email: a },
+        { emailRedirectTo: EMAIL_REDIRECT_TO }
+      )
+    ).then(({ error }) => { if (error) throw error; });
 
+    // 2) pending_email opslaan (ook met timeout)
+    await withTimeout(
+      supabase
+        .from('profiles')
+        .update({ pending_email: a, updated_at: new Date().toISOString() })
+        .eq('id', user.id)
+    ).then(({ error }) => { if (error) throw error; });
 
-      setPendingEmail(a);
-      setShowEmailModal(false);
-      setGeneralMessage({ type:'success', text:`We hebben een bevestigingslink gestuurd naar ${a}.` });
-    } catch(e){
-      setGeneralMessage({ type:'error', text:'Wijzigen mislukt: ' + (e?.message || e) });
-    } finally {
-      setEmailChanging(false);
-    }
+    setPendingEmail(a);
+    setShowEmailModal(false);
+    setGeneralMessage({ type: 'success', text: `We hebben een bevestigingslink gestuurd naar ${a}.` });
+  } catch (e) {
+    setGeneralMessage({ type: 'error', text: `Wijzigen mislukt: ${e?.message || e}` });
+  } finally {
+    setEmailChanging(false);
   }
+}
+
 
   async function cancelPendingEmailChange(){
     await supabase
@@ -647,17 +656,24 @@ if (upErr) throw upErr;
       setGeneralMessage({ type:'error', text:'Geen geldig e-mailadres in behandeling.' });
       return;
     }
-    const { error } = await supabase.auth.updateUser({ email: a });
+const { error } = await supabase.auth.updateUser({ email: a }, { emailRedirectTo: EMAIL_REDIRECT_TO });
     if (error) setGeneralMessage({ type:'error', text:'Opnieuw sturen mislukt: ' + error.message });
     else setGeneralMessage({ type:'success', text:`Bevestigingsmail opnieuw verstuurd naar ${a}.` });
   }
 
 
   useEffect(() => {
-    const fetchUser = async () => {
+  if (!router.isReady) return;         // ⬅️ wacht tot Next router klaar is
+  let isMounted = true;
+
+  const fetchUser = async () => {
+    try {
       const { data: { session }, error } = await supabase.auth.getSession();
+      if (!isMounted) return;
+
+      // Geen sessie of fout ⇒ naar login
       if (error || !session?.user) {
-        setLoading(false);
+        setLoading(false);             // ⬅️ belangrijk: loading altijd clearen
         router.replace('/login');
         return;
       }
@@ -666,24 +682,25 @@ if (upErr) throw upErr;
       setUser(authUser);
       setEmail(authUser.email);
 
-// ✅ Houd profiles.email in sync met Auth (ook als de rij nog niet bestaat)
-try {
-  await supabase
-    .from('profiles')
-    .upsert({
-      id: authUser.id,
-      email: authUser.email ?? null,
-      updated_at: new Date().toISOString(),
-    });
-} catch {}
+      // Profiel-email in sync houden (upsert)
+      try {
+        await supabase
+          .from('profiles')
+          .upsert({
+            id: authUser.id,
+            email: authUser.email ?? null,
+            updated_at: new Date().toISOString(),
+          });
+      } catch {}
 
-
-
+      // Profiel ophalen
       const { data: profile } = await supabase
         .from('profiles')
         .select('first_name, last_name, full_name, phone, preferences, current_org_id, pending_email')
         .eq('id', authUser.id)
         .single();
+
+      if (!isMounted) return;
 
       if (profile) {
         setFirstName(profile.first_name || '');
@@ -695,7 +712,6 @@ try {
           if (!profile.first_name) setFirstName(fn);
           if (!profile.last_name) setLastName(ln);
         }
-
         setPhone(profile.phone || '');
         setPreferences(profile.preferences || {});
         setCurrentOrgId(profile.current_org_id || null);
@@ -704,8 +720,11 @@ try {
         if (profile.current_org_id) {
           try {
             const j = await checkTracking(profile.current_org_id);
-            setLastTrackingPing(j?.status === 'active' ? (j.last_ping_at || null) : null);
+            if (isMounted) {
+              setLastTrackingPing(j?.status === 'active' ? (j.last_ping_at || null) : null);
+            }
           } catch {}
+
           const domain = (process.env.NEXT_PUBLIC_TRACKING_DOMAIN || window.location.origin).replace(/\/$/, '');
           const script = `<script src="${domain}/tracker.js" data-project-id="${profile.current_org_id}" async></script>`;
           setTrackingScript(script);
@@ -716,30 +735,36 @@ try {
             .eq('id', profile.current_org_id)
             .maybeSingle();
 
-          if (org) {
+          if (isMounted && org) {
             setCompanyName(org.name || '');
             setCompanyDomain(org.company_domain || '');
             setWebsiteUrl(org.website_url || '');
             setIsOrgOwner(org.owner_user_id === authUser.id);
           }
         }
+
+        // pending_email opruimen als Auth.email == pending_email
         try {
-  const authEmail = (authUser.email || '').toLowerCase();
-  if (profile?.pending_email && profile.pending_email.toLowerCase() === authEmail) {
-    await supabase
-      .from('profiles')
-      .update({ pending_email: null, updated_at: new Date().toISOString() })
-      .eq('id', authUser.id);
-    setPendingEmail('');
-  }
-} catch {}
+          const authEmail = (authUser.email || '').toLowerCase();
+          if (profile?.pending_email && profile.pending_email.toLowerCase() === authEmail) {
+            await supabase
+              .from('profiles')
+              .update({ pending_email: null, updated_at: new Date().toISOString() })
+              .eq('id', authUser.id);
+            if (isMounted) setPendingEmail('');
+          }
+        } catch {}
       }
+    } finally {
+      if (isMounted) setLoading(false);  // ⬅️ ALTIJD loading uit, ook bij fouten
+    }
+  };
 
-      setLoading(false);
-    };
+  fetchUser();
 
-    fetchUser();
-  }, [router]);
+  return () => { isMounted = false; };
+}, [router.isReady]); // ⬅️ let op: dependency is router.isReady, NIET router
+
 
   useEffect(() => {
     const onHashChange = () => {
@@ -759,10 +784,15 @@ try {
       }
     };
 
-    const hash = window.location.hash.replace('#', '');
-    if (hash) {
-      onHashChange();
-    }
+    let hash = window.location.hash.replace('#', '');
+if (!hash) {
+  // altijd een geldige tab forceren
+  const def = 'account';
+  window.location.hash = def;
+  hash = def;
+}
+onHashChange();
+
 
     window.addEventListener('hashchange', onHashChange);
     return () => {
@@ -902,7 +932,9 @@ try {
       setGeneralMessage({ type: 'error', text: 'Vul een geldig e-mailadres in.' })
       return
     }
-    const { error } = await supabase.auth.resetPasswordForEmail(email)
+const { error } = await supabase.auth.resetPasswordForEmail(email, {
+  redirectTo: EMAIL_REDIRECT_TO,
+});
     if (error) {
       setGeneralMessage({ type: 'error', text: error.message })
     } else {
@@ -1088,13 +1120,14 @@ try {
    resendEmailChange,
   };
 
-  if (loading || !user) {
-    return (
-      <div className="flex justify-center items-center h-screen">
-        <p className="text-gray-600">Laden...</p>
-      </div>
-    )
-  }
+  if (loading) {
+  return (
+    <div className="flex justify-center items-center h-screen">
+      <p className="text-gray-600">Laden...</p>
+    </div>
+  );
+}
+
 
   return (
     <div className="max-w-4xl mx-auto w-full px-4 py-10">
@@ -1203,7 +1236,11 @@ try {
         </div>
       )}
       {showEmailModal && (
-  <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+  <div
+    className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center"
+    onKeyDown={(e) => { if (e.key === 'Escape') setShowEmailModal(false); }}
+    tabIndex={-1}
+  >
     <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-lg">
       <h3 className="text-lg font-semibold mb-2">Nieuw e-mailadres</h3>
       <p className="text-sm text-gray-600 mb-4">
@@ -1240,12 +1277,11 @@ try {
 
       <div className="mt-4 flex items-center justify-end gap-2">
         <button
-          className="px-3 py-2 rounded border hover:bg-gray-50"
-          onClick={()=>setShowEmailModal(false)}
-          disabled={emailChanging}
-        >
-          Annuleren
-        </button>
+  className="px-3 py-2 rounded border hover:bg-gray-50"
+  onClick={() => setShowEmailModal(false)}
+>
+  Annuleren
+</button>
         <button
           className="px-3 py-2 rounded bg-black text-white hover:bg-neutral-800 disabled:opacity-50"
           onClick={requestEmailChange}
