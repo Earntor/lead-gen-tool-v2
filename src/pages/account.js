@@ -592,9 +592,29 @@ export default function Account() {
   const [newEmail2, setNewEmail2] = useState('');
   const [emailChanging, setEmailChanging] = useState(false);
   const [emailError, setEmailError] = useState('');
+  const [emailCooldown, setEmailCooldown] = useState(false);
+
 
   function isValidEmail(s){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s||'').trim()); }
 
+async function updatePendingEmailWithRetry(val, tries = 3, delay = 300) {
+  for (let i = 0; i < tries; i++) {
+    const { error } = await supabase
+      .from('profiles')
+      .update(
+        { pending_email: val, updated_at: new Date().toISOString() },
+        { returning: 'minimal' }
+      )
+      .eq('id', user.id);
+
+    if (!error) return true;
+    // wachttijd 300ms, 600ms, 1200ms
+    await new Promise(r => setTimeout(r, delay * (2 ** i)));
+  }
+  return false;
+}
+
+  
 async function requestEmailChange() {
   const a = (newEmail1 || '').trim().toLowerCase();
   const b = (newEmail2 || '').trim().toLowerCase();
@@ -603,91 +623,89 @@ async function requestEmailChange() {
   if (a !== b)          { setEmailError('Beide e-mailadressen moeten overeenkomen.'); return; }
   if (a === (email || '').toLowerCase()) { setEmailError('Dit is al je huidige e-mail.'); return; }
 
-  setEmailError('');
-  setEmailChanging(true);
+  // cooldown-guard (4s)
+if (emailCooldown) return;
+setEmailCooldown(true);
+setTimeout(() => setEmailCooldown(false), 4000);
 
-  // 👉 Safety guard: forceer spinner-uit na 15s, wat er ook gebeurt
-  const spinnerGuard = setTimeout(() => {
-    console.warn('[email-change] spinner guard fired → setEmailChanging(false)');
-    setEmailChanging(false);
-  }, 15000);
+
+  setEmailError('');
+
+  // ---- 1) Optimistische UI meteen zetten (geen wachttijd) ----
+  // spinner kort aan/uit voor feedback, maar niet blokkeren
+  setEmailChanging(true);
+  // toon direct de banner onder het e-mailveld
+  const prevPending = pendingEmail;
+  setPendingEmail(a);
+  // modal dicht + globale melding tonen
+  setShowEmailModal(false);
+  setGeneralMessage({ type: 'success', text: `We hebben een bevestigingslink gestuurd naar ${a}.` });
+  // spinner direct uit — UI mag nu nooit "vast" voelen
+  setEmailChanging(false);
+
+  // ---- 2) Auth-call (leidend). Als dit faalt, rol UI terug. ----
+  try {
+    const { error: authErr } = await supabase.auth.updateUser(
+      { email: a },
+      { emailRedirectTo: EMAIL_REDIRECT_TO } // (v2) redirect-parameter
+    );
+    if (authErr) throw authErr;
+  } catch (e) {
+    // UI rollback + fout tonen
+    setPendingEmail(prevPending || '');
+    setGeneralMessage({ type: 'error', text: `Wijzigen mislukt: ${e?.message || e}` });
+    return;
+  }
+
+  // ---- 3) DB-notitie best-effort (non-blocking, fout = alleen console) ----
+  // Geen await: UX hangt niet af van de DB
+  // --- 3) DB-notitie best-effort + retry (nog steeds non-blocking)
+(async () => {
+  try {
+    const ok = await updatePendingEmailWithRetry(a, 3, 300);
+    if (!ok) console.warn('[email-change] DB update niet gelukt na retries (non-blocking).');
+  } catch (subErr) {
+    console.warn('[email-change] DB update exception (non-blocking):', subErr);
+  }
+})();
+
+}
+
+  async function cancelPendingEmailChange() {
+  const prev = pendingEmail;
+  // Optimistisch: direct uit UI
+  setPendingEmail('');
+  setGeneralMessage({ type:'success', text:'E-mailwijziging geannuleerd.' });
 
   try {
-    console.log('[email-change] START updateUser →', a, 'redirect:', EMAIL_REDIRECT_TO);
-
-    // --- A: AUTH (leidend)
-    const { data: authData, error: authErr } = await supabase.auth.updateUser(
-      { email: a },
-      { emailRedirectTo: EMAIL_REDIRECT_TO } // v2: emailRedirectTo; (v1 heette 'redirectTo')
-    );
-
-    console.log('[email-change] updateUser result:', { authErr, authData });
-
-    if (authErr) {
-      throw new Error(authErr.message || 'Onbekende auth error');
-    }
-
-    // ✔️ DIRECT succes op basis van A
-    setPendingEmail(a); // banner meteen
-    setShowEmailModal(false);
-    setGeneralMessage({ type: 'success', text: `We hebben een bevestigingslink gestuurd naar ${a}.` });
-
-    // 👇 Zet spinner NU al uit (we wachten niet op stap B)
-    setEmailChanging(false);
-    clearTimeout(spinnerGuard);
-
-    // --- B: DB notitie (non-blocking; fouten loggen, nooit UI breken)
-    // Let op: GEEN await hier
-    (async () => {
-      try {
-        console.log('[email-change] DB update → pending_email');
-        const { error: dbErr } = await supabase
-          .from('profiles')
-          .update(
-            { pending_email: a, updated_at: new Date().toISOString() },
-            { returning: 'minimal' } // sneller: geen payload terug
-          )
-          .eq('id', user.id);
-
-        if (dbErr) console.warn('[email-change] DB update fout (non-blocking):', dbErr.message);
-        else console.log('[email-change] DB update klaar (non-blocking)');
-      } catch (e) {
-        console.warn('[email-change] DB update exception (non-blocking):', e);
-      }
-    })();
-
+    const { error } = await supabase
+      .from('profiles')
+      .update({ pending_email: null, updated_at: new Date().toISOString() }, { returning: 'minimal' })
+      .eq('id', user.id);
+    if (error) throw error;
   } catch (e) {
-    console.error('[email-change] FAIL:', e);
-    setGeneralMessage({ type: 'error', text: `Wijzigen mislukt: ${e?.message || e}` });
-    setEmailChanging(false);
-    clearTimeout(spinnerGuard);
+    // Rollback bij fout
+    setPendingEmail(prev);
+    setGeneralMessage({ type:'error', text:'Annuleren mislukt: ' + (e?.message || e) });
   }
 }
 
-  async function cancelPendingEmailChange(){
-    await supabase
-      .from('profiles')
-      .update({ pending_email: null, updated_at: new Date().toISOString() })
-      .eq('id', user.id);
-    setPendingEmail('');
-    setGeneralMessage({ type:'success', text:'E-mailwijziging geannuleerd.' });
-  }
 
   async function resendEmailChange() {
+    
   const a = (pendingEmail||'').trim().toLowerCase();
   if (!isValidEmail(a)) {
     setGeneralMessage({ type:'error', text:'Geen geldig e-mailadres in behandeling.' });
     return;
   }
-  console.time('auth-resend-updateUser');
   const { error } = await supabase.auth.updateUser(
     { email: a },
     { emailRedirectTo: EMAIL_REDIRECT_TO }
   );
-  console.timeEnd('auth-resend-updateUser');
   if (error) setGeneralMessage({ type:'error', text:'Opnieuw sturen mislukt: ' + error.message });
   else setGeneralMessage({ type:'success', text:`Bevestigingsmail opnieuw verstuurd naar ${a}.` });
 }
+
 
 
 
@@ -744,7 +762,10 @@ async function requestEmailChange() {
         setPhone(profile.phone || '');
         setPreferences(profile.preferences || {});
         setCurrentOrgId(profile.current_org_id || null);
-        setPendingEmail(profile.pending_email || '');
+// Alleen serverwaarde overnemen als we lokaal nog niets hebben gezet
+if (!pendingEmail) {
+  setPendingEmail(profile.pending_email || '');
+}
 
         if (profile.current_org_id) {
           try {
@@ -1315,7 +1336,7 @@ const { error } = await supabase.auth.resetPasswordForEmail(email, {
   type="button"
   className="px-3 py-2 rounded bg-black text-white hover:bg-neutral-800 disabled:opacity-50"
   onClick={requestEmailChange}
-  disabled={emailChanging || !newEmail1 || !newEmail2}
+disabled={emailChanging || emailCooldown || !newEmail1 || !newEmail2}
 >
   {emailChanging ? 'Versturen…' : 'Bevestigingsmail sturen'}
 </button>
