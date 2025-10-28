@@ -630,10 +630,9 @@ async function requestEmailChange() {
   setTimeout(() => setEmailCooldown(false), 4000);
 
   // Reset fout en zet spinner AAN (modal blijft open!)
-  setEmailError('');
-  setEmailChanging(true);
-
-  try {
+  setEmailError('');       // wis oude fout
+setEmailChanging(true);  // spinner aan
+try {
     // 1) Auth-call (leidend). Stuurt de bevestigingsmail.
     const { error: authErr } = await supabase.auth.updateUser(
       { email: a },
