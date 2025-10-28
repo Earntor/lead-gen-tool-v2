@@ -619,56 +619,43 @@ async function requestEmailChange() {
   const a = (newEmail1 || '').trim().toLowerCase();
   const b = (newEmail2 || '').trim().toLowerCase();
 
+  // Validatie – toon fouten IN de modal
   if (!isValidEmail(a)) { setEmailError('Voer een geldig e-mailadres in.'); return; }
   if (a !== b)          { setEmailError('Beide e-mailadressen moeten overeenkomen.'); return; }
   if (a === (email || '').toLowerCase()) { setEmailError('Dit is al je huidige e-mail.'); return; }
 
-  // cooldown-guard (4s)
-if (emailCooldown) return;
-setEmailCooldown(true);
-setTimeout(() => setEmailCooldown(false), 4000);
+  // Cooldown (4s)
+  if (emailCooldown) return;
+  setEmailCooldown(true);
+  setTimeout(() => setEmailCooldown(false), 4000);
 
-
+  // Reset fout en zet spinner AAN (modal blijft open!)
   setEmailError('');
-
-  // ---- 1) Optimistische UI meteen zetten (geen wachttijd) ----
-  // spinner kort aan/uit voor feedback, maar niet blokkeren
   setEmailChanging(true);
-  // toon direct de banner onder het e-mailveld
-  const prevPending = pendingEmail;
-  setPendingEmail(a);
-  // modal dicht + globale melding tonen
-  setShowEmailModal(false);
-  setGeneralMessage({ type: 'success', text: `We hebben een bevestigingslink gestuurd naar ${a}.` });
-  // spinner direct uit — UI mag nu nooit "vast" voelen
-  setEmailChanging(false);
 
-  // ---- 2) Auth-call (leidend). Als dit faalt, rol UI terug. ----
   try {
+    // 1) Auth-call (leidend). Stuurt de bevestigingsmail.
     const { error: authErr } = await supabase.auth.updateUser(
       { email: a },
-      { emailRedirectTo: EMAIL_REDIRECT_TO } // (v2) redirect-parameter
+      { emailRedirectTo: EMAIL_REDIRECT_TO }
     );
     if (authErr) throw authErr;
-  } catch (e) {
-    // UI rollback + fout tonen
-    setPendingEmail(prevPending || '');
-    setGeneralMessage({ type: 'error', text: `Wijzigen mislukt: ${e?.message || e}` });
-    return;
-  }
 
-  // ---- 3) DB-notitie best-effort (non-blocking, fout = alleen console) ----
-  // Geen await: UX hangt niet af van de DB
-  // --- 3) DB-notitie best-effort + retry (nog steeds non-blocking)
-(async () => {
-  try {
+    // 2) DB-notitie best-effort + retry (non-blocking, maar we wachten wél kort)
+    //    (we wachten even mee zodat pendingEmail in UI direct klopt)
     const ok = await updatePendingEmailWithRetry(a, 3, 300);
     if (!ok) console.warn('[email-change] DB update niet gelukt na retries (non-blocking).');
-  } catch (subErr) {
-    console.warn('[email-change] DB update exception (non-blocking):', subErr);
-  }
-})();
 
+    // 3) UI bijwerken: pas nu modal sluiten + banners tonen
+    setPendingEmail(a);
+    setShowEmailModal(false);
+    setGeneralMessage({ type: 'success', text: `We hebben een bevestigingslink gestuurd naar ${a}.` });
+  } catch (e) {
+    // Fout IN de modal tonen
+    setEmailError(e?.message || String(e));
+  } finally {
+    setEmailChanging(false);
+  }
 }
 
   async function cancelPendingEmailChange() {
@@ -694,28 +681,27 @@ setTimeout(() => setEmailCooldown(false), 4000);
   async function resendEmailChange() {
   const a = (pendingEmail || '').trim().toLowerCase();
 
-  // 1) Validatie eerst → direct feedback bij fout
+  // Validatie eerst → directe feedback
   if (!isValidEmail(a)) {
     setGeneralMessage({ type: 'error', text: 'Geen geldig e-mailadres in behandeling.' });
     return;
   }
 
-  // 2) ⬅️ HIER de cooldown (1D)
+  // Cooldown (4s)
   if (emailCooldown) return;
   setEmailCooldown(true);
   setTimeout(() => setEmailCooldown(false), 4000);
 
-  // 3) Auth-call
-  const { error } = await supabase.auth.updateUser(
-    { email: a },
-    { emailRedirectTo: EMAIL_REDIRECT_TO }
-  );
+  try {
+    const { error } = await supabase.auth.updateUser(
+      { email: a },
+      { emailRedirectTo: EMAIL_REDIRECT_TO }
+    );
+    if (error) throw error;
 
-  // 4) UI melding
-  if (error) {
-    setGeneralMessage({ type: 'error', text: 'Opnieuw sturen mislukt: ' + error.message });
-  } else {
     setGeneralMessage({ type: 'success', text: `Bevestigingsmail opnieuw verstuurd naar ${a}.` });
+  } catch (e) {
+    setGeneralMessage({ type: 'error', text: 'Opnieuw sturen mislukt: ' + (e?.message || e) });
   }
 }
 
