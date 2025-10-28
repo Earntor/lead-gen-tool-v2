@@ -606,52 +606,63 @@ async function requestEmailChange() {
   setEmailError('');
   setEmailChanging(true);
 
-  try {
-    // --- Stap A: AUTH (leidend) ---
-    console.time('auth-updateUser'); // instrumentatie
-    const { error: authErr } = await supabase.auth.updateUser(
-      { email: a },
-      { emailRedirectTo: EMAIL_REDIRECT_TO }
-    );
-    console.timeEnd('auth-updateUser');
-    if (authErr) throw authErr;
+  // 👉 Safety guard: forceer spinner-uit na 15s, wat er ook gebeurt
+  const spinnerGuard = setTimeout(() => {
+    console.warn('[email-change] spinner guard fired → setEmailChanging(false)');
+    setEmailChanging(false);
+  }, 15000);
 
-    // ✔️ DIRECT success UI tonen op basis van stap A
-    setPendingEmail(a);         // banner meteen zichtbaar
+  try {
+    console.log('[email-change] START updateUser →', a, 'redirect:', EMAIL_REDIRECT_TO);
+
+    // --- A: AUTH (leidend)
+    const { data: authData, error: authErr } = await supabase.auth.updateUser(
+      { email: a },
+      { emailRedirectTo: EMAIL_REDIRECT_TO } // v2: emailRedirectTo; (v1 heette 'redirectTo')
+    );
+
+    console.log('[email-change] updateUser result:', { authErr, authData });
+
+    if (authErr) {
+      throw new Error(authErr.message || 'Onbekende auth error');
+    }
+
+    // ✔️ DIRECT succes op basis van A
+    setPendingEmail(a); // banner meteen
     setShowEmailModal(false);
     setGeneralMessage({ type: 'success', text: `We hebben een bevestigingslink gestuurd naar ${a}.` });
 
-    // --- Stap B: DB notitie (best-effort, non-blocking) ---
-    // Let op: we blokkeren de UI hier NIET. We loggen alleen fouten.
+    // 👇 Zet spinner NU al uit (we wachten niet op stap B)
+    setEmailChanging(false);
+    clearTimeout(spinnerGuard);
+
+    // --- B: DB notitie (non-blocking; fouten loggen, nooit UI breken)
+    // Let op: GEEN await hier
     (async () => {
       try {
-        console.time('profiles-pending-email-update');
+        console.log('[email-change] DB update → pending_email');
         const { error: dbErr } = await supabase
           .from('profiles')
           .update(
             { pending_email: a, updated_at: new Date().toISOString() },
-            { returning: 'minimal' } // snel: geen payload terug
+            { returning: 'minimal' } // sneller: geen payload terug
           )
           .eq('id', user.id);
-        console.timeEnd('profiles-pending-email-update');
-        if (dbErr) {
-          // Log in console; geen UI-fout, want Auth is leidend
-          console.warn('pending_email notitie mislukte (niet blokkerend):', dbErr.message);
-        }
-      } catch (subErr) {
-        console.warn('pending_email notitie exception (niet blokkerend):', subErr);
+
+        if (dbErr) console.warn('[email-change] DB update fout (non-blocking):', dbErr.message);
+        else console.log('[email-change] DB update klaar (non-blocking)');
+      } catch (e) {
+        console.warn('[email-change] DB update exception (non-blocking):', e);
       }
     })();
 
   } catch (e) {
-    // Alleen falen als de AUTH-stap faalt
+    console.error('[email-change] FAIL:', e);
     setGeneralMessage({ type: 'error', text: `Wijzigen mislukt: ${e?.message || e}` });
-  } finally {
     setEmailChanging(false);
+    clearTimeout(spinnerGuard);
   }
 }
-
-
 
   async function cancelPendingEmailChange(){
     await supabase
@@ -1301,12 +1312,14 @@ const { error } = await supabase.auth.resetPasswordForEmail(email, {
   Annuleren
 </button>
         <button
-          className="px-3 py-2 rounded bg-black text-white hover:bg-neutral-800 disabled:opacity-50"
-          onClick={requestEmailChange}
-          disabled={emailChanging || !newEmail1 || !newEmail2}
-        >
-          {emailChanging ? 'Versturen…' : 'Bevestigingsmail sturen'}
-        </button>
+  type="button"
+  className="px-3 py-2 rounded bg-black text-white hover:bg-neutral-800 disabled:opacity-50"
+  onClick={requestEmailChange}
+  disabled={emailChanging || !newEmail1 || !newEmail2}
+>
+  {emailChanging ? 'Versturen…' : 'Bevestigingsmail sturen'}
+</button>
+
       </div>
     </div>
   </div>
