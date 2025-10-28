@@ -692,19 +692,33 @@ setTimeout(() => setEmailCooldown(false), 4000);
 
 
   async function resendEmailChange() {
-    
-  const a = (pendingEmail||'').trim().toLowerCase();
+  const a = (pendingEmail || '').trim().toLowerCase();
+
+  // 1) Validatie eerst → direct feedback bij fout
   if (!isValidEmail(a)) {
-    setGeneralMessage({ type:'error', text:'Geen geldig e-mailadres in behandeling.' });
+    setGeneralMessage({ type: 'error', text: 'Geen geldig e-mailadres in behandeling.' });
     return;
   }
+
+  // 2) ⬅️ HIER de cooldown (1D)
+  if (emailCooldown) return;
+  setEmailCooldown(true);
+  setTimeout(() => setEmailCooldown(false), 4000);
+
+  // 3) Auth-call
   const { error } = await supabase.auth.updateUser(
     { email: a },
     { emailRedirectTo: EMAIL_REDIRECT_TO }
   );
-  if (error) setGeneralMessage({ type:'error', text:'Opnieuw sturen mislukt: ' + error.message });
-  else setGeneralMessage({ type:'success', text:`Bevestigingsmail opnieuw verstuurd naar ${a}.` });
+
+  // 4) UI melding
+  if (error) {
+    setGeneralMessage({ type: 'error', text: 'Opnieuw sturen mislukt: ' + error.message });
+  } else {
+    setGeneralMessage({ type: 'success', text: `Bevestigingsmail opnieuw verstuurd naar ${a}.` });
+  }
 }
+
 
 
 
