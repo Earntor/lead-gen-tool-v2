@@ -600,45 +600,57 @@ async function requestEmailChange() {
   const b = (newEmail2 || '').trim().toLowerCase();
 
   if (!isValidEmail(a)) { setEmailError('Voer een geldig e-mailadres in.'); return; }
-  if (a !== b) { setEmailError('Beide e-mailadressen moeten overeenkomen.'); return; }
+  if (a !== b)          { setEmailError('Beide e-mailadressen moeten overeenkomen.'); return; }
   if (a === (email || '').toLowerCase()) { setEmailError('Dit is al je huidige e-mail.'); return; }
 
   setEmailError('');
   setEmailChanging(true);
 
-  // Promise.race timeout (12s)
-  const withTimeout = (p, ms = 12000) =>
-    Promise.race([
-      p,
-      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms)),
-    ]);
-
   try {
-    // 1) Mail sturen met redirect (nu met echte timeout)
-    await withTimeout(
-      supabase.auth.updateUser(
-        { email: a },
-        { emailRedirectTo: EMAIL_REDIRECT_TO }
-      )
-    ).then(({ error }) => { if (error) throw error; });
+    // --- Stap A: AUTH (leidend) ---
+    console.time('auth-updateUser'); // instrumentatie
+    const { error: authErr } = await supabase.auth.updateUser(
+      { email: a },
+      { emailRedirectTo: EMAIL_REDIRECT_TO }
+    );
+    console.timeEnd('auth-updateUser');
+    if (authErr) throw authErr;
 
-    // 2) pending_email opslaan (ook met timeout)
-    await withTimeout(
-      supabase
-        .from('profiles')
-        .update({ pending_email: a, updated_at: new Date().toISOString() })
-        .eq('id', user.id)
-    ).then(({ error }) => { if (error) throw error; });
-
-    setPendingEmail(a);
+    // ✔️ DIRECT success UI tonen op basis van stap A
+    setPendingEmail(a);         // banner meteen zichtbaar
     setShowEmailModal(false);
     setGeneralMessage({ type: 'success', text: `We hebben een bevestigingslink gestuurd naar ${a}.` });
+
+    // --- Stap B: DB notitie (best-effort, non-blocking) ---
+    // Let op: we blokkeren de UI hier NIET. We loggen alleen fouten.
+    (async () => {
+      try {
+        console.time('profiles-pending-email-update');
+        const { error: dbErr } = await supabase
+          .from('profiles')
+          .update(
+            { pending_email: a, updated_at: new Date().toISOString() },
+            { returning: 'minimal' } // snel: geen payload terug
+          )
+          .eq('id', user.id);
+        console.timeEnd('profiles-pending-email-update');
+        if (dbErr) {
+          // Log in console; geen UI-fout, want Auth is leidend
+          console.warn('pending_email notitie mislukte (niet blokkerend):', dbErr.message);
+        }
+      } catch (subErr) {
+        console.warn('pending_email notitie exception (niet blokkerend):', subErr);
+      }
+    })();
+
   } catch (e) {
+    // Alleen falen als de AUTH-stap faalt
     setGeneralMessage({ type: 'error', text: `Wijzigen mislukt: ${e?.message || e}` });
   } finally {
     setEmailChanging(false);
   }
 }
+
 
 
   async function cancelPendingEmailChange(){
@@ -650,16 +662,22 @@ async function requestEmailChange() {
     setGeneralMessage({ type:'success', text:'E-mailwijziging geannuleerd.' });
   }
 
-  async function resendEmailChange(){
-    const a = (pendingEmail||'').trim().toLowerCase();
-    if (!isValidEmail(a)) {
-      setGeneralMessage({ type:'error', text:'Geen geldig e-mailadres in behandeling.' });
-      return;
-    }
-const { error } = await supabase.auth.updateUser({ email: a }, { emailRedirectTo: EMAIL_REDIRECT_TO });
-    if (error) setGeneralMessage({ type:'error', text:'Opnieuw sturen mislukt: ' + error.message });
-    else setGeneralMessage({ type:'success', text:`Bevestigingsmail opnieuw verstuurd naar ${a}.` });
+  async function resendEmailChange() {
+  const a = (pendingEmail||'').trim().toLowerCase();
+  if (!isValidEmail(a)) {
+    setGeneralMessage({ type:'error', text:'Geen geldig e-mailadres in behandeling.' });
+    return;
   }
+  console.time('auth-resend-updateUser');
+  const { error } = await supabase.auth.updateUser(
+    { email: a },
+    { emailRedirectTo: EMAIL_REDIRECT_TO }
+  );
+  console.timeEnd('auth-resend-updateUser');
+  if (error) setGeneralMessage({ type:'error', text:'Opnieuw sturen mislukt: ' + error.message });
+  else setGeneralMessage({ type:'success', text:`Bevestigingsmail opnieuw verstuurd naar ${a}.` });
+}
+
 
 
   useEffect(() => {
