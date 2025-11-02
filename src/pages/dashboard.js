@@ -708,7 +708,7 @@ export default function Dashboard() {
   const [initialVisitorSet, setInitialVisitorSet] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [labelFilter, setLabelFilter] = useState("");
-  const [filterType, setFilterType] = useState("vandaag");
+  const [filterType, setFilterType] = useState("deze-week");
   const [customRange, setCustomRange] = useState([null, null]);
   const [minVisits, setMinVisits] = useState("");
   const [pageSearch, setPageSearch] = useState("");
@@ -1860,7 +1860,7 @@ const sortedVisitors = Object.entries(groupedByVisitor).sort((a, b) => {
 };
 
 const resetFilters = () => {
-  setFilterType("vandaag");
+  setFilterType("deze-week");
   setCustomRange([null, null]);
   setLabelFilter("");
   setMinVisits("");

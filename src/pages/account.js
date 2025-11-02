@@ -7,6 +7,17 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+} from "@/components/ui/dropdown-menu";
+import { ChevronDown } from "lucide-react";
 
 const roleOptions = ['Sales', 'Marketing', 'Management', 'Technisch', 'Overig'] // zelfde set als API
 
@@ -149,17 +160,35 @@ function AccountPanels({ ctx }) {
 
           <div>
             <label className="block text-sm mb-1">Functietitel / Rol</label>
-            <select
-              aria-label="Functietitel / Rol"
-              className="w-full border rounded px-3 py-2 text-sm"
-              value={preferences?.user_role || ''}
-              onChange={(e) => handlePreferenceChange('user_role', e.target.value)}
-            >
-              <option value="">Kies je rol…</option>
-              {roleOptions.map((r) => (
-                <option key={r} value={r}>{r}</option>
-              ))}
-            </select>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-between"
+                  aria-label="Functietitel / Rol"
+                >
+                  {preferences?.user_role || 'Kies je rol…'}
+                  <ChevronDown className="w-4 h-4 opacity-60" />
+                </Button>
+              </DropdownMenuTrigger>
+
+              <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
+                <DropdownMenuLabel>Functietitel / Rol</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuRadioGroup
+                  value={preferences?.user_role || ''}
+                  onValueChange={(val) => handlePreferenceChange('user_role', val)}
+                >
+                  <DropdownMenuRadioItem value="">Geen voorkeur</DropdownMenuRadioItem>
+                  {roleOptions.map((r) => (
+                    <DropdownMenuRadioItem key={r} value={r}>
+                      {r}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <p className="text-xs text-gray-500 mt-1">
               Wordt gebruikt voor tips en rapporten in je dashboard.
             </p>
