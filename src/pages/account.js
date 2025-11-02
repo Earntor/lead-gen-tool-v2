@@ -114,12 +114,16 @@ function AccountPanels({ ctx }) {
           <div>
             <label className="block text-sm mb-1">E-mailadres</label>
             <Input
-              type="email"
-              autoComplete="email"
-              aria-label="E-mailadres"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
+  type="email"
+  autoComplete="email"
+  aria-label="E-mailadres"
+  value={email}
+  readOnly
+  aria-readonly="true"
+  className="bg-gray-100 text-gray-700 cursor-text select-text"
+  // geen onChange: veld is niet aanpasbaar
+/>
+
           </div>
 
           {/* Voornaam + Achternaam naast elkaar op desktop */}
@@ -852,18 +856,6 @@ export default function Account() {
 
     try {
       const ops = [];
-
-      const newEmail = (email || '').trim().toLowerCase();
-      const currentEmail = (user?.email || '').trim().toLowerCase();
-      if (newEmail && newEmail !== currentEmail) {
-        ops.push(
-          (async () => {
-            const { error } = await supabase.auth.updateUser({ email: newEmail });
-            if (error) throw new Error('E-mail bijwerken: ' + error.message);
-            setUser((u) => (u ? { ...u, email: newEmail } : u));
-          })()
-        );
-      }
 
       ops.push(
         (async () => {
