@@ -2257,8 +2257,11 @@ async function markOnboardingDone() {
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="p-2 -mr-2 rounded hover:bg-gray-100" aria-label="Profielmenu">
-                <User className="w-5 h-5" />
+              <button
+                className="flex items-center px-2 py-2 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition"
+                aria-label="Profielmenu"
+              >
+                <User className="w-5 h-5 text-gray-700" />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
@@ -2381,10 +2384,10 @@ return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
-          className="p-2 -mr-2 rounded hover:bg-gray-100"
+          className="flex items-center px-2 py-2 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition"
           aria-label="Profielmenu"
         >
-          <User className="w-5 h-5" />
+          <User className="w-5 h-5 text-gray-700" />
         </button>
       </DropdownMenuTrigger>
 
