@@ -1,67 +1,375 @@
-﻿import { useEffect, useState } from "react";
-import { useRouter } from "next/router";
-import { supabase } from "../lib/supabaseClient";
+﻿// src/pages/analytics.js
+"use client"
 
+import { useEffect, useMemo, useState, useRef } from "react"
+import { useRouter } from "next/router"
+import { supabase } from "../lib/supabaseClient"
+
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from "@/components/ui/dropdown-menu"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Calendar } from "@/components/ui/calendar"
+import { Calendar as CalendarIcon, ChevronDown } from "lucide-react"
+
+import { BarChartComponent, BarChartHorizontalComponent } from "@/components/ui/chart"
+
+// =============== Tijdzone helpers (Europe/Amsterdam) ===============
+const TZ = "Europe/Amsterdam"
+// start van dag in NL
+function startOfDayNL(d) {
+  const z = new Date(d)
+  // naar middernacht NL: maak eerst lokale NL str, dan terug naar Date
+  const y = z.toLocaleString("en-CA", { timeZone: TZ, year: "numeric" })
+  const m = z.toLocaleString("en-CA", { timeZone: TZ, month: "2-digit" })
+  const dd = z.toLocaleString("en-CA", { timeZone: TZ, day: "2-digit" })
+  return new Date(`${y}-${m}-${dd}T00:00:00`)
+}
+function endOfDayNL(d) {
+  const s = startOfDayNL(d)
+  return new Date(s.getTime() + 24 * 60 * 60 * 1000 - 1)
+}
+function addDays(d, n) {
+  const x = new Date(d)
+  x.setDate(x.getDate() + n)
+  return x
+}
+function addMonths(d, n) {
+  const x = new Date(d)
+  x.setMonth(x.getMonth() + n)
+  return x
+}
+function startOfWeekNL(d) {
+  // Maandag = weekstart
+  const day = d.getDay() || 7 // 1..7 (ma=1)
+  const monday = addDays(d, 1 - day)
+  return startOfDayNL(monday)
+}
+function endOfWeekNL(d) {
+  const s = startOfWeekNL(d)
+  return endOfDayNL(addDays(s, 6))
+}
+function startOfMonthNL(d) {
+  const x = new Date(d.getFullYear(), d.getMonth(), 1)
+  return startOfDayNL(x)
+}
+function endOfMonthNL(d) {
+  const x = new Date(d.getFullYear(), d.getMonth() + 1, 0)
+  return endOfDayNL(x)
+}
+function startOfYearNL(d) {
+  return startOfDayNL(new Date(d.getFullYear(), 0, 1))
+}
+function endOfYearNL(d) {
+  return endOfDayNL(new Date(d.getFullYear(), 11, 31))
+}
+
+// As-labels
+const fmtDay = (d) =>
+  d.toLocaleDateString("nl-NL", { day: "2-digit", month: "short" }, { timeZone: TZ }).replace(".", "")
+const fmtMonth = (d) =>
+  d.toLocaleDateString("nl-NL", { month: "short", year: "2-digit" }, { timeZone: TZ }).replace(".", "").toLowerCase()
+
+// =============== Aggregatie ===============
+function eachDayRange(from, to) {
+  const out = []
+  let cur = startOfDayNL(from)
+  const end = endOfDayNL(to)
+  while (cur <= end) {
+    out.push(cur)
+    cur = addDays(cur, 1)
+  }
+  return out
+}
+
+function eachMonthRange(from, to) {
+  const out = []
+  let cur = new Date(from.getFullYear(), from.getMonth(), 1)
+  const end = new Date(to.getFullYear(), to.getMonth(), 1)
+  while (cur <= end) {
+    out.push(new Date(cur))
+    cur = addMonths(cur, 1)
+  }
+  return out
+}
+
+function diffDays(from, to) {
+  const ms = startOfDayNL(to) - startOfDayNL(from)
+  return Math.floor(ms / (24 * 60 * 60 * 1000)) + 1
+}
+
+/**
+ * leads: [{created_at: ISO, ...}]
+ * Bepaalt automatisch de granulariteit:
+ * - <= 31 dagen  => per dag
+ * - >  31 dagen  => per maand
+ * Retourneert [{ name, value }]
+ */
+function groupLeadsAuto(leads, from, to) {
+  const days = diffDays(from, to)
+  if (days <= 31) {
+    // per dag
+    const buckets = new Map(eachDayRange(from, to).map((d) => [fmtDay(d), 0]))
+    for (const row of (leads || [])) {
+      const dt = new Date(row.created_at)
+      const key = fmtDay(dt)
+      if (buckets.has(key)) buckets.set(key, buckets.get(key) + 1)
+    }
+    return Array.from(buckets, ([name, value]) => ({ name, value }))
+  } else {
+    // per maand
+    const months = eachMonthRange(from, to)
+    const buckets = new Map(months.map((d) => [fmtMonth(d), 0]))
+    for (const row of (leads || [])) {
+      const dt = new Date(row.created_at)
+      const key = fmtMonth(new Date(dt.getFullYear(), dt.getMonth(), 1))
+      if (buckets.has(key)) buckets.set(key, buckets.get(key) + 1)
+    }
+    return Array.from(buckets, ([name, value]) => ({ name, value }))
+  }
+}
+
+// NIEUW: categorie-aggregatie (top N, aflopend)
+function groupCategories(leads, topN = 12) {
+  const map = new Map()
+  for (const row of (leads || [])) {
+    const key = row.category?.trim() || "Onbekend"
+    map.set(key, (map.get(key) || 0) + 1)
+  }
+  const arr = Array.from(map, ([name, value]) => ({ name, value }))
+  arr.sort((a, b) => b.value - a.value)
+  return arr.slice(0, topN)
+}
+
+
+// =============== Presets ===============
+const PRESETS = {
+  vandaag: "vandaag",
+  gisteren: "gisteren",
+  dezeWeek: "deze_week",
+  vorigeWeek: "vorige_week",
+  vorigeMaand: "vorige_maand",
+  ditJaar: "dit_jaar",
+  aangepast: "aangepast",
+}
+
+function getRangeForPreset(preset) {
+  const now = new Date()
+  switch (preset) {
+    case PRESETS.vandaag: {
+      const f = startOfDayNL(now)
+      const t = endOfDayNL(now)
+      return { from: f, to: t }
+    }
+    case PRESETS.gisteren: {
+      const y = addDays(now, -1)
+      return { from: startOfDayNL(y), to: endOfDayNL(y) }
+    }
+    case PRESETS.dezeWeek: {
+      return { from: startOfWeekNL(now), to: endOfWeekNL(now) }
+    }
+    case PRESETS.vorigeWeek: {
+      const lastWeek = addDays(now, -7)
+      return { from: startOfWeekNL(lastWeek), to: endOfWeekNL(lastWeek) }
+    }
+    case PRESETS.vorigeMaand: {
+      const lastMonth = addMonths(now, -1)
+      return { from: startOfMonthNL(lastMonth), to: endOfMonthNL(lastMonth) }
+    }
+    case PRESETS.ditJaar: {
+      return { from: startOfYearNL(now), to: endOfYearNL(now) }
+    }
+    default:
+      return { from: startOfMonthNL(now), to: endOfDayNL(now) }
+  }
+}
+
+// =============== UI Component ===============
 export default function Analytics() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(true);
+  const router = useRouter()
+  const [loading, setLoading] = useState(true)
 
+  // filter state
+  const [preset, setPreset] = useState(PRESETS.dezeWeek)
+  const initialRange = getRangeForPreset(PRESETS.dezeWeek)
+  const [range, setRange] = useState({ from: initialRange.from, to: initialRange.to })
+  const [openCustom, setOpenCustom] = useState(false) // popover voor kalender
+
+  // data
+const [chartData, setChartData] = useState([])
+const [categoryData, setCategoryData] = useState([])
+const [fetching, setFetching] = useState(false)
+
+  // auth
   useEffect(() => {
-    let isActive = true;
-
+    let isActive = true
     const ensureAuthenticated = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
+      const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
-        router.replace("/login?next=/analytics");
-        return;
+        router.replace("/login?next=/analytics")
+        return
       }
+      if (isActive) setLoading(false)
+    }
+    ensureAuthenticated()
+    return () => { isActive = false }
+  }, [router])
 
-      if (isActive) {
-        setLoading(false);
+  // leads ophalen wanneer preset of range wijzigt
+  useEffect(() => {
+    if (loading) return
+
+    async function fetchLeads(from, to) {
+      setFetching(true)
+
+      const { data: rows, error } = await supabase
+        .from("leads")
+        .select("id, created_at, category")
+        .gte("created_at", from.toISOString())
+        .lte("created_at", to.toISOString())
+        .order("created_at", { ascending: true })
+
+      if (error) {
+        console.error("Supabase error:", error)
+setChartData([])
+        setCategoryData([])     
+       } else {
+        setChartData(groupLeadsAuto(rows || [], from, to))
+        setCategoryData(groupCategories(rows || [], 12)) // top 12 categorieën
+
       }
-    };
+      setFetching(false)
+    }
 
-    ensureAuthenticated();
+    fetchLeads(range.from, range.to)
+  }, [loading, preset, range.from, range.to])
 
-    return () => {
-      isActive = false;
-    };
-  }, [router]);
+  // preset wisselen
+  function handlePresetChange(nextPreset) {
+    setPreset(nextPreset)
+    if (nextPreset === PRESETS.aangepast) {
+      setOpenCustom(true) // toon kalender
+    } else {
+      const r = getRangeForPreset(nextPreset)
+      setRange(r)
+      setOpenCustom(false)
+    }
+  }
+
+  // kalenderselectie: zodra 2 datums gekozen -> toepassen
+  function handleCalendarSelect(sel) {
+    const { from, to } = sel || {}
+    if (from && to) {
+      const f = startOfDayNL(from)
+      const t = endOfDayNL(to)
+      setRange({ from: f, to: t })
+      setPreset(PRESETS.aangepast)
+      setOpenCustom(false)
+    }
+  }
+
+  // UI labels
+  const currentLabel = useMemo(() => {
+    switch (preset) {
+      case PRESETS.vandaag: return "Vandaag"
+      case PRESETS.gisteren: return "Gisteren"
+      case PRESETS.dezeWeek: return "Deze week"
+      case PRESETS.vorigeWeek: return "Vorige week"
+      case PRESETS.vorigeMaand: return "Vorige maand"
+      case PRESETS.ditJaar: return "Dit jaar"
+      case PRESETS.aangepast: {
+        const a = range.from?.toLocaleDateString("nl-NL")
+        const b = range.to?.toLocaleDateString("nl-NL")
+        return a && b ? `${a} – ${b}` : "Aangepast"
+      }
+      default: return "Filter"
+    }
+  }, [preset, range])
 
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <p className="text-gray-600">Analytics laden...</p>
       </div>
-    );
+    )
   }
 
   return (
     <section className="mx-auto w-full max-w-6xl px-4 py-8">
-      <header className="mb-8 flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold text-gray-900">Analytics</h1>
-        <p className="text-gray-600">
-          Hier verschijnen straks alle inzichten over je bezoekers en leads.
-        </p>
+      <header className="mb-6 flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Analytics</h1>
+          <p className="text-gray-600">Leads per periode</p>
+        </div>
+
+        {/* Preset dropdown + Custom kalender */}
+        <div className="flex items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="inline-flex items-center gap-2">
+                <CalendarIcon className="h-4 w-4" />
+                {currentLabel}
+                <ChevronDown className="h-4 w-4 opacity-70" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>Periode</DropdownMenuLabel>
+              <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.vandaag)}>Vandaag</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.gisteren)}>Gisteren</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.dezeWeek)}>Deze week</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.vorigeWeek)}>Vorige week</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.vorigeMaand)}>Vorige maand</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.ditJaar)}>Dit jaar</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.aangepast)}>
+                Aangepast…
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* Losse popover voor het "Aangepast" bereik */}
+          <Popover open={openCustom} onOpenChange={setOpenCustom}>
+            <PopoverTrigger asChild>
+              {/* onzichtbare anchor; we sturen openen via state */}
+              <span />
+            </PopoverTrigger>
+            <PopoverContent align="end" className="p-0">
+              <div className="p-3">
+                <Calendar
+                  mode="range"
+                  numberOfMonths={2}
+                  selected={{ from: range.from, to: range.to }}
+                  onSelect={handleCalendarSelect}
+                />
+                <div className="mt-3 flex justify-end gap-2">
+                  <Button variant="ghost" onClick={() => setOpenCustom(false)}>Sluiten</Button>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
       </header>
 
+      {/* ✅ Responsive: mobiel onder elkaar, desktop naast elkaar */}
       <div className="grid gap-6 md:grid-cols-2">
-        <div className="rounded-xl border border-dashed border-gray-200 bg-white p-6 text-center shadow-sm">
-          <p className="text-sm font-medium text-gray-700">Komt binnenkort</p>
-          <p className="mt-2 text-sm text-gray-500">
-            We werken aan grafieken en statistieken die je helpen trends te ontdekken.
-          </p>
-        </div>
-        <div className="rounded-xl border border-dashed border-gray-200 bg-white p-6 text-center shadow-sm">
-          <p className="text-sm font-medium text-gray-700">Feedback?</p>
-          <p className="mt-2 text-sm text-gray-500">
-            Laat ons weten welke inzichten voor jou het belangrijkst zijn.
-          </p>
-        </div>
+        <BarChartComponent
+          title="Leads (auto-groepeerd per dag/maand)"
+          data={chartData}
+        />
+        <BarChartHorizontalComponent
+          title="Industrieën (meest voorkomend)"
+          data={categoryData}
+        />
       </div>
+      {fetching && (
+        <p className="mt-3 text-sm text-muted-foreground">Bezig met ophalen…</p>
+      )}
     </section>
-  );
+  )
 }

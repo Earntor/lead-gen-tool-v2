@@ -6,7 +6,7 @@ import { Building2, BarChart3, User } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: Building2 },
-  { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/analytics", label: "Statistieken", icon: BarChart3 },
 ];
 
 export default function Layout({ children }) {
