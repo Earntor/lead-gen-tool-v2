@@ -50,6 +50,8 @@ export default function Layout({ children }) {
     NAV_ITEMS.some((item) => pathname.startsWith(item.href)) ||
     pathname === "/account";
 
+  const navItems = pathname === "/account" ? NAV_ITEMS.slice(0, 1) : NAV_ITEMS;
+
   const showExportButton = pathname === "/dashboard";
 
   const renderExportButton = () => (
@@ -155,19 +157,13 @@ export default function Layout({ children }) {
                     <span className="font-bold text-gray-800">Mijn SaaS</span>
                   </div>
                 </Link>
-                {user && (
-                  <div className="flex items-center gap-2 md:hidden">
-                    {showExportButton && renderExportButton()}
-                    {renderAccountMenu()}
-                  </div>
-                )}
               </div>
 
               {user && (
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
                   <nav className="w-full md:w-auto">
                     <ul className="flex w-full gap-2 overflow-x-auto whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                      {NAV_ITEMS.map((item) => {
+                      {navItems.map((item) => {
                         const Icon = item.icon;
                         const isActive =
                           pathname === item.href ||
