@@ -49,7 +49,8 @@ export default function Layout({ children }) {
     NAV_ITEMS.some((item) => pathname.startsWith(item.href)) ||
     pathname === "/account";
 
-  const navItems = pathname === "/account" ? NAV_ITEMS.slice(0, 1) : NAV_ITEMS;
+// Toon altijd alle tabs, behalve op pagina's die niet in het hoofdmenu horen
+const navItems = NAV_ITEMS;
 
   const showExportButton = pathname === "/dashboard";
 
@@ -132,7 +133,7 @@ export default function Layout({ children }) {
       {showHeader && (
         <header className="bg-white border-b">
           {/* Full-bleed: geen max width, geen horizontale padding */}
-          <div className="w-full px-0 py-3">
+          <div className="w-full px-6 py-3">
             {/* Eén rij: links logo + tabs, rechts acties */}
             <div className="flex items-center justify-between gap-3">
               {/* LINKS: Logo + tabs direct ernaast */}
