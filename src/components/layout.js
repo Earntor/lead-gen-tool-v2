@@ -2,7 +2,7 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
-import { Building2, BarChart3 } from "lucide-react";
+import { Building2, BarChart3, User } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: Building2 },
@@ -88,11 +88,15 @@ const navItems = NAV_ITEMS;
     <div className="relative account-menu">
       <button
         onClick={() => setMenuOpen((open) => !open)}
-        className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition"
+        className="flex items-center gap-0 md:gap-2 px-2 py-2 md:px-3 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition"
+        aria-label="Profielmenu"
       >
-        <span className="text-sm font-medium text-gray-700">{user?.email}</span>
+        <User className="w-5 h-5 text-gray-700 md:hidden" aria-hidden="true" />
+        <span className="hidden md:inline text-sm font-medium text-gray-700">
+          {user?.email}
+        </span>
         <svg
-          className={`w-4 h-4 text-gray-500 transform transition ${
+          className={`hidden md:block w-4 h-4 text-gray-500 transform transition ${
             menuOpen ? "rotate-180" : ""
           }`}
           fill="none"
