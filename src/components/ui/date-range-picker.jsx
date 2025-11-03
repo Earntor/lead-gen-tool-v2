@@ -62,7 +62,7 @@ export function DateRangePicker({
       const start = range.from ? new Date(range.from) : null
       const end = range.to ? new Date(range.to) : null
 
-      onChange({ start, end: end || start })
+      onChange({ start, end })
     },
     [onChange]
   )
@@ -87,15 +87,20 @@ export function DateRangePicker({
             {formattedLabel || placeholder}
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="start">
+        <PopoverContent className="w-auto p-0 min-w-[18rem] sm:min-w-[22rem]" align="start">
           <Calendar
             mode="range"
-            numberOfMonths={1}
+            numberOfMonths={2}
             month={month}
             selected={{ from: normalized.start ?? undefined, to: normalized.end ?? undefined }}
             onMonthChange={setMonth}
             onSelect={(range) => {
               handleSelect(range)
+              if (range?.to) {
+                setMonth(range.to)
+              } else if (range?.from) {
+                setMonth(range.from)
+              }
               if (range?.from && range?.to) {
                 setOpen(false)
               }

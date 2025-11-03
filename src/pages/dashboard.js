@@ -832,6 +832,39 @@ useEffect(() => { overrideDomainsRef.current = overrideDomains; }, [overrideDoma
   return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
 }
 
+ const EXPORT_EXCLUDED_COLUMNS = new Set([
+    "id",
+    "user_id",
+    "ip_address",
+    "location",
+    "anon_id",
+    "ip_street",
+    "ip_postal_code",
+    "ip_city",
+    "ip_country",
+    "enriched_at",
+    "confidence_reason",
+    "confidence",
+    "selected_random_match",
+    "auto_confidence",
+    "auto_confidence_reason",
+    "domain",
+    "lon",
+    "lat",
+    "session_id",
+    "rdns_hostname",
+    "org_id",
+    "place_id",
+    "place_type",
+    "category_nl",
+  ]);
+
+  const shouldExcludeExportColumn = (key) => {
+    if (!key) return true;
+    if (EXPORT_EXCLUDED_COLUMNS.has(key)) return true;
+    if (key.startsWith("kvk_")) return true;
+    return false;
+  };
 
 
   function exportLeadsToCSV(leads) {
@@ -839,7 +872,23 @@ useEffect(() => { overrideDomainsRef.current = overrideDomains; }, [overrideDoma
       alert("Geen leads om te exporteren.");
       return;
     }
-    const headers = Object.keys(leads[0]);
+
+const headers = [];
+    const headerSet = new Set();
+    for (const lead of leads) {
+      if (!lead) continue;
+      for (const key of Object.keys(lead)) {
+        if (shouldExcludeExportColumn(key) || headerSet.has(key)) continue;
+        headerSet.add(key);
+        headers.push(key);
+      }
+    }
+
+    if (!headers.length) {
+      alert("Geen exporteerbare velden gevonden voor deze leads.");
+      return;
+    }
+
     const csvRows = [headers.join(",")];
     for (const lead of leads) {
       const values = headers.map((header) => {
@@ -1672,7 +1721,6 @@ const handleConfirmExport = () => {
   exportLeadsToCSV(finalLeads);
   setExportDialogOpen(false);
 };
-
 
 // Refs zodat realtime callbacks altijd de nieuwste sets zien
 const visibleDomainsRef = useRef(new Set());
@@ -3757,7 +3805,7 @@ try {
       </DialogFooter>
     </DialogContent>
   </Dialog>
-
+  
   {/* Onboarding wizard overlay (niet in skeleton!) */}
 {wizardOpen && (
   <OnboardingWizard
