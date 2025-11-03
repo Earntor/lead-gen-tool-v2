@@ -148,6 +148,48 @@ function groupCategories(leads, topN = 12) {
   return arr.slice(0, topN)
 }
 
+// Zelfde als groupLeadsAuto maar met een datumselector (created_at/timestamp)
+function groupLeadsAutoBy(rows, from, to, dateSelector) {
+  const days = diffDays(from, to)
+  if (days <= 31) {
+    // per dag
+    const buckets = new Map(eachDayRange(from, to).map(d => [fmtDay(d), 0]))
+    for (const r of rows) {
+      const iso = dateSelector(r)
+      if (!iso) continue
+      const dt = new Date(iso)
+      const key = fmtDay(dt)
+      if (buckets.has(key)) buckets.set(key, buckets.get(key) + 1)
+    }
+    return Array.from(buckets, ([name, value]) => ({ name, value }))
+  } else {
+    // per maand
+    const months = eachMonthRange(from, to)
+    const buckets = new Map(months.map(d => [fmtMonth(d), 0]))
+    for (const r of rows) {
+      const iso = dateSelector(r)
+      if (!iso) continue
+      const dt = new Date(iso)
+      const key = fmtMonth(new Date(dt.getFullYear(), dt.getMonth(), 1))
+      if (buckets.has(key)) buckets.set(key, buckets.get(key) + 1)
+    }
+    return Array.from(buckets, ([name, value]) => ({ name, value }))
+  }
+}
+
+// Categorie-telling met keySelector (category_nl → category → Onbekend)
+function groupCategoriesBy(rows, topN = 12, keySelector) {
+  const map = new Map()
+  for (const r of rows || []) {
+    const key = keySelector(r) || "Onbekend"
+    map.set(key, (map.get(key) || 0) + 1)
+  }
+  const arr = Array.from(map, ([name, value]) => ({ name, value }))
+  arr.sort((a, b) => b.value - a.value)
+  return arr.slice(0, topN)
+}
+
+
 
 // =============== Presets ===============
 const PRESETS = {
@@ -206,9 +248,6 @@ const [preset, setPreset] = useState(PRESETS.dezeWeek)
 const [chartData, setChartData] = useState([])
 const [categoryData, setCategoryData] = useState([])
 const [fetching, setFetching] = useState(false)
- // scope filters
- const [orgId, setOrgId] = useState(null)
- const [siteId, setSiteId] = useState(null)
 
   // auth
   useEffect(() => {
@@ -219,31 +258,6 @@ const [fetching, setFetching] = useState(false)
         router.replace("/login?next=/analytics")
         return
       }
-      // 👉 profiel ophalen om org/site te weten
-      const { data: profile, error: pErr } = await supabase
-        .from("profiles")
-        .select("organization_id, active_organization_id, default_organization_id, site_id, active_site_id, selected_site_id")
-        .eq("id", user.id)
-        .single()
-      if (pErr) {
-        console.warn("[Analytics] profile error:", pErr)
-      } else {
-        // kies de eerste aanwezige org/site kolom die bestaat
-        const o =
-          profile?.active_organization_id ??
-          profile?.organization_id ??
-          profile?.default_organization_id ??
-          null
-        const s =
-          profile?.active_site_id ??
-          profile?.selected_site_id ??
-          profile?.site_id ??
-          null
-        if (isActive) {
-          setOrgId(o)
-          setSiteId(s)
-        }
-      }
       if (isActive) setLoading(false)
     }
     boot()
@@ -251,52 +265,56 @@ const [fetching, setFetching] = useState(false)
   }, [router])
 
   // leads ophalen wanneer preset of range wijzigt
-  useEffect(() => {
-if (loading) return
-    // wacht tot org-scope bekend is (mag null zijn; dan zonder filter)
-    // als jouw RLS org verplicht, zal null 0 rijen geven → fallback laat het zien.
+  // leads ophalen wanneer preset of range wijzigt
+useEffect(() => {
+  if (loading) return
 
-    async function fetchLeads(from, to) {
-      setFetching(true)
+  async function fetchLeads(from, to) {
+    setFetching(true)
 
-      let q = supabase
-        .from("leads")
- .select("id, created_at, company_category, organization_id, site_id")
-        .gte("created_at", from.toISOString())
-        .lte("created_at", to.toISOString())
-        .order("created_at", { ascending: true })
-      if (orgId) q = q.eq("organization_id", orgId)
-      if (siteId) q = q.eq("site_id", siteId)
+    // Gebruik beide datumkolommen (created_at ÓF timestamp)
+    const fromIso = from.toISOString()
+    const toIso = to.toISOString()
 
-      let { data: rows, error } = await q
-      console.log("[Analytics] rows:", rows?.length ?? "null", "org:", orgId, "site:", siteId, "range:", from.toISOString(), "→", to.toISOString())
+    const { data: rows, error } = await supabase
+      .from("leads")
+      .select("id, created_at, timestamp, category, category_nl")
+      // server-side filter: binnen range op created_at OF op timestamp
+      .or(
+        `and(created_at.gte.${fromIso},created_at.lte.${toIso}),and(timestamp.gte.${fromIso},timestamp.lte.${toIso})`
+      )
+      // netjes oplopend sorteren
+      .order("created_at", { ascending: true, nullsFirst: false })
+      .order("timestamp", { ascending: true, nullsFirst: false })
 
-      // 🧪 Fallback debug: als 0 rijen en we hebben een orgId, probeer zonder filters om te zien of RLS of filters het blokkeren
-      if (!error && rows && rows.length === 0) {
-        const { data: testRows, error: tErr } = await supabase
-          .from("leads")
-          .select("id, created_at, category")
-          .gte("created_at", from.toISOString())
-          .lte("created_at", to.toISOString())
-          .order("created_at", { ascending: true })
-        console.log("[Analytics] fallback rows (no org/site filter):", testRows?.length ?? "null", "err:", tErr?.message)
-      }
+    console.log("[Analytics] rows:", rows?.length ?? "null", "range:", fromIso, "→", toIso)
 
+    if (error) {
+      console.error("Supabase error:", error)
+      setChartData([])
+      setCategoryData([])
+    } else {
+      // Kies de juiste datum & categorie voor aggregatie
+      const safeRows = (rows || []).map(r => ({
+        ...r,
+        __dt: r.created_at ?? r.timestamp,                                  // ISO-string
+        __cat: (r.category_nl?.trim() || r.category?.trim() || "Onbekend"), // NL > EN > Onbekend
+      }))
 
-      if (error) {
-        console.error("Supabase error:", error)
-setChartData([])
-setChartData([])
-        setCategoryData([])       } else {
-        setChartData(groupLeadsAuto(rows || [], from, to))
-        setCategoryData(groupCategories(rows || [], 12)) // top 12 categorieën
-
-      }
-      setFetching(false)
+      setChartData(
+        groupLeadsAutoBy(safeRows, from, to, r => r.__dt)
+      )
+      setCategoryData(
+        groupCategoriesBy(safeRows, 12, r => r.__cat) // top 12
+      )
     }
 
-    fetchLeads(range.from, range.to)
-}, [loading, preset, range.from, range.to, orgId, siteId])
+    setFetching(false)
+  }
+
+  fetchLeads(range.from, range.to)
+}, [loading, preset, range.from, range.to])
+
 
   // preset wisselen
   function handlePresetChange(nextPreset) {
