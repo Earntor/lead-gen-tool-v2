@@ -2997,7 +2997,7 @@ const handleDeleteGlobalLabel = async (labelId) => {
           </div>
 
           {company.kvk_city && <p className="text-xs text-gray-500 mt-0.5">📍 {company.kvk_city}</p>}
-          {company.company_domain && <p className="text-xs text-gray-500 truncate">🌐 {company.company_domain}</p>}
+          {company.domain_city && <p className="text-xs text-gray-500 truncate">🏙️ {company.domain_city}</p>}
           {(company.category_nl || company.category) && (
             <p className="text-xs text-gray-500 truncate">🏷️ {company.category_nl || company.category}</p>
           )}
@@ -3184,10 +3184,10 @@ if (leadRating >= 80) {
               {company.kvk_city && (
                 <p className="text-xs text-gray-500 mt-0.5">📍 {company.kvk_city}</p>
               )}
-              {company.company_domain && (
+              {company.domain_city && (
                 <p className="text-xs text-gray-500 truncate">
 
-                  🌐 {company.company_domain}
+                  🏙️ {company.domain_city}
                 </p>
               )}
 {(company.category_nl || company.category) && (
