@@ -59,6 +59,12 @@ import { ArrowLeft, Menu, User, ExternalLink } from "lucide-react";
 import SocialIcons from "../components/SocialIcons";
 import dynamic from 'next/dynamic';
 import * as React from "react";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { Calendar as CalendarIcon } from "lucide-react";
+import { format } from "date-fns";
+import { nl } from "date-fns/locale";
+
 
 // ===== LeadAssign module-level caches (NIET in component) =====
 const _companyIdCache = new Map();   // key: `${orgId}|${domainLower}` -> company_id
@@ -611,7 +617,7 @@ function DetailSkeleton() {
   );
 }
 
-// ===== Date helpers voor export (lokaal, inclusief einddag) =====
+// ---- Export date-range helpers (local time, NL) ----
 function toLocalDate(d) {
   const x = d instanceof Date ? d : (d ? new Date(d) : null);
   return x && !isNaN(x) ? x : null;
@@ -624,20 +630,19 @@ function endOfDayLocal(d) {
   const L = toLocalDate(d);
   return L ? new Date(L.getFullYear(), L.getMonth(), L.getDate(), 23, 59, 59, 999) : null;
 }
-
-// Sommige pickers geven [start, end], andere {startDate, endDate} of {from,to}.
-// Deze helper haalt er robuust twee Date's uit.
 function normalizeRange(value) {
   if (!value) return [null, null];
-  if (Array.isArray(value)) {
-    const [a, b] = value;
-    return [toLocalDate(a), toLocalDate(b)];
-  }
+  if (Array.isArray(value)) return [toLocalDate(value[0]), toLocalDate(value[1])];
   const a = value.startDate ?? value.start ?? value.from ?? null;
   const b = value.endDate   ?? value.end   ?? value.to   ?? null;
   return [toLocalDate(a), toLocalDate(b)];
 }
-
+function formatRangeLabel(range) {
+  const { from, to } = range || {};
+  if (from && to) return `${format(from, "dd-MM-yyyy", { locale: nl })} – ${format(to, "dd-MM-yyyy", { locale: nl })}`;
+  if (from) return `${format(from, "dd-MM-yyyy", { locale: nl })} – …`;
+  return "Selecteer datumrange (optioneel)";
+}
 
 // Kleine helper: promise met timeout/fallback, zodat UI niet blijft wachten
 function withTimeout(promise, ms = 8000) {
@@ -777,6 +782,7 @@ const [profile, setProfile] = useState(null);
 const [assignmentVersion, setAssignmentVersion] = useState(0);
 const [exportDialogOpen, setExportDialogOpen] = useState(false);
 const [exportRange, setExportRange] = useState({ start: null, end: null });
+const [exportPickerOpen, setExportPickerOpen] = useState(false);
 
 // LeadAssign teamleden + huidige user + force-rerender
 const [teamMembers, setTeamMembers] = useState([]);
@@ -3890,12 +3896,41 @@ try {
         </DialogDescription>
       </DialogHeader>
       <div className="space-y-4">
-        <DateRangePicker
-          label="Datumrange"
-          value={exportRange}
-          onChange={setExportRange}
-          placeholder="Selecteer datumrange (optioneel)"
-        />
+        <div className="space-y-1">
+  <label className="text-sm text-muted-foreground">Datumrange</label>
+
+  <Popover open={exportPickerOpen} onOpenChange={setExportPickerOpen}>
+    <PopoverTrigger asChild>
+      <Button variant="outline" className="w-full justify-start font-normal">
+        <CalendarIcon className="mr-2 h-4 w-4 opacity-60" />
+        {exportRange?.from || exportRange?.to
+          ? formatRangeLabel(exportRange)
+          : "Selecteer datumrange (optioneel)"}
+      </Button>
+    </PopoverTrigger>
+
+    <PopoverContent className="p-0 w-auto" align="start" sideOffset={6}>
+      <Calendar
+        mode="range"
+        numberOfMonths={2}
+        selected={exportRange}
+        defaultMonth={exportRange?.from ?? undefined}
+        locale={nl}
+        onSelect={(range) => {
+          // range is { from?: Date; to?: Date } | undefined
+          setExportRange(range || { from: null, to: null });
+          // sluit pas als beide datums zijn gekozen
+          if (range?.from && range?.to) setExportPickerOpen(false);
+        }}
+      />
+    </PopoverContent>
+  </Popover>
+
+  <p className="text-xs text-muted-foreground">
+    Laat leeg om exact de leads te exporteren die je nu ziet in het dashboard.
+  </p>
+</div>
+
         <p className="text-xs text-muted-foreground">
           Laat de datum leeg om precies de leads te exporteren die je nu ziet.
         </p>
