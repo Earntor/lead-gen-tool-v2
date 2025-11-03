@@ -611,6 +611,34 @@ function DetailSkeleton() {
   );
 }
 
+// ===== Date helpers voor export (lokaal, inclusief einddag) =====
+function toLocalDate(d) {
+  const x = d instanceof Date ? d : (d ? new Date(d) : null);
+  return x && !isNaN(x) ? x : null;
+}
+function startOfDayLocal(d) {
+  const L = toLocalDate(d);
+  return L ? new Date(L.getFullYear(), L.getMonth(), L.getDate(), 0, 0, 0, 0) : null;
+}
+function endOfDayLocal(d) {
+  const L = toLocalDate(d);
+  return L ? new Date(L.getFullYear(), L.getMonth(), L.getDate(), 23, 59, 59, 999) : null;
+}
+
+// Sommige pickers geven [start, end], andere {startDate, endDate} of {from,to}.
+// Deze helper haalt er robuust twee Date's uit.
+function normalizeRange(value) {
+  if (!value) return [null, null];
+  if (Array.isArray(value)) {
+    const [a, b] = value;
+    return [toLocalDate(a), toLocalDate(b)];
+  }
+  const a = value.startDate ?? value.start ?? value.from ?? null;
+  const b = value.endDate   ?? value.end   ?? value.to   ?? null;
+  return [toLocalDate(a), toLocalDate(b)];
+}
+
+
 // Kleine helper: promise met timeout/fallback, zodat UI niet blijft wachten
 function withTimeout(promise, ms = 8000) {
   let timer;
@@ -836,6 +864,7 @@ useEffect(() => { overrideDomainsRef.current = overrideDomains; }, [overrideDoma
     "id",
     "user_id",
     "ip_address",
+    "timestamp",
     "location",
     "anon_id",
     "ip_street",
@@ -848,15 +877,16 @@ useEffect(() => { overrideDomainsRef.current = overrideDomains; }, [overrideDoma
     "selected_random_match",
     "auto_confidence",
     "auto_confidence_reason",
-    "domain",
-    "lon",
-    "lat",
+    "domain_lon",
+    "domain_lat",
     "session_id",
     "rdns_hostname",
     "org_id",
     "place_id",
-    "place_type",
+    "place_types",
     "category_nl",
+    "site_id",
+    "source",
   ]);
 
   const shouldExcludeExportColumn = (key) => {
@@ -1666,61 +1696,140 @@ function normalizeRangeBoundary(date, isEnd = false) {
   return instance;
 }
 
-const handleConfirmExport = () => {
-  const visibleNames = computeVisibleCompanyNames();
-  if (!visibleNames || visibleNames.size === 0) {
-    alert("Geen leads om te exporteren.");
-    setExportDialogOpen(false);
-    return;
-  }
+async function handleConfirmExport() {
+  try {
+    // (A) Lees expliciete export-range uit de modal (indien gezet)
+    //     -> hiermee overschrijven we tijdelijk de datumfilter alléén voor export.
+    let exportFrom = null, exportTo = null;
 
-  const leads = [];
-  const seen = new Set();
-
-  const maybeAddLead = (lead) => {
-    if (!lead || !lead.company_name) return;
-    if (!visibleNames.has(lead.company_name)) return;
-    const key = getLeadKeyForExport(lead);
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    leads.push(lead);
-  };
-
-  for (const lead of filteredLeads) {
-    maybeAddLead(lead);
-  }
-
-  for (const company of overrideCompanies) {
-    const companyLeads = company?.company_name
-      ? fullVisitMap[company.company_name] || []
-      : [];
-    for (const lead of companyLeads) {
-      maybeAddLead(lead);
+    if (exportRange) {
+      const [rawStart, rawEnd] = normalizeRange(exportRange);
+      if (rawStart && rawEnd) {
+        exportFrom = startOfDayLocal(rawStart);
+        exportTo   = endOfDayLocal(rawEnd);
+      } else if (rawStart && !rawEnd) {
+        // één dag exporteren
+        exportFrom = startOfDayLocal(rawStart);
+        exportTo   = endOfDayLocal(rawStart);
+      }
+      // als exportRange leeg/niet gezet is, laten we exportFrom/exportTo null:
+      // -> dan exporteren we precies wat nu zichtbaar is (jouw huidige gedrag/tekst).
     }
-  }
 
-  let finalLeads = leads;
-  if (exportRange?.start || exportRange?.end) {
-    const start = normalizeRangeBoundary(exportRange.start, false);
-    const end = normalizeRangeBoundary(exportRange.end, true);
-    finalLeads = leads.filter((lead) => {
-      if (!lead?.timestamp) return false;
-      const ts = new Date(lead.timestamp);
-      if (Number.isNaN(ts.getTime())) return false;
-      if (start && ts < start) return false;
-      if (end && ts > end) return false;
-      return true;
+    // (B) Bepaal welke bedrijven nu in beeld zijn o.b.v. je bestaande UI-filters
+    //     (search, categorie, etc.). Dit is exact dezelfde check die je al in je render gebruikt.
+    const naamFilter = (globalSearch || "").toLowerCase();
+    const selectedCompanies = [...companies, ...overrideCompanies].filter((c) => {
+      const naam = (c.company_name || "").toLowerCase();
+      const stad = (c.kvk_city || "").toLowerCase();
+      const heeftPage = groupedCompanies[c.company_name]?.some((l) =>
+        (l.page_url || "").toLowerCase().includes(naamFilter)
+      );
+
+      // categorie, zoals in je render
+      const cat = c.category_nl || c.category || "";
+      const catOk = !categoryFilter || categoryFilter === "" || cat === categoryFilter;
+
+      return (naam.includes(naamFilter) || stad.includes(naamFilter) || heeftPage) && catOk;
     });
-  }
 
-  if (!finalLeads.length) {
-    alert("Geen leads om te exporteren.");
-    return;
-  }
+    const companyNameSet = new Set(selectedCompanies.map((c) => c.company_name));
 
-  exportLeadsToCSV(finalLeads);
-  setExportDialogOpen(false);
-};
+    // (C) Flatten naar sessies/leads en filter op datum **alleen als exportRange is gekozen**.
+    //     (Zo niet: we nemen exact de "nu zichtbare" mee → jouw huidige gedrag.)
+    let exportLeads = [];
+    for (const companyName of companyNameSet) {
+      const leads = fullVisitMap[companyName] || [];
+      for (const l of leads) {
+        // Respecteer je bestaande drempels op sessieniveau indien gewenst
+        if (minDuration && Number(l.duration_seconds || 0) < Number(minDuration)) continue;
+
+        if (exportFrom && exportTo) {
+          const ts = toLocalDate(l.timestamp);
+          if (!ts) continue;
+          if (ts < exportFrom || ts > exportTo) continue; // buiten gekozen export-range
+        }
+        exportLeads.push(l);
+      }
+    }
+
+    // (D) Bedrijfsdrempel "minVisits" toepassen (zoals je lijst het op bedrijfsniveau toont)
+    if (minVisits) {
+      const counts = exportLeads.reduce((acc, l) => {
+        const key = l.company_name || l.company_domain || "onbekend";
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {});
+      exportLeads = exportLeads.filter((l) => {
+        const key = l.company_name || l.company_domain || "onbekend";
+        return counts[key] >= Number(minVisits);
+      });
+    }
+
+    // (E) CSV genereren (zoals je al deed)
+    const header = [
+      "company_name",
+      "company_domain",
+      "timestamp",
+      "duration_seconds",
+      "page_url",
+      "utm_source",
+      "utm_medium",
+      "domain_city",
+      "domain_country",
+      "category",
+      "anon_id",
+    ];
+
+    const rows = exportLeads.map((l) => ([
+      l.company_name || "",
+      l.company_domain || "",
+      (l.timestamp ? new Date(l.timestamp).toISOString() : ""),
+      l.duration_seconds ?? "",
+      l.page_url || "",
+      l.utm_source || "",
+      l.utm_medium || "",
+      l.domain_city || "",
+      l.domain_country || "",
+      l.category_nl || l.category || "",
+      l.anon_id || "",
+    ]));
+
+    const csv = [
+      header.join(","),
+      ...rows.map(r =>
+        r.map(v => {
+          const s = String(v).replace(/"/g, '""');
+          return /[",\n]/.test(s) ? `"${s}"` : s;
+        }).join(",")
+      )
+    ].join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+
+    const fileSuffix = (exportFrom && exportTo)
+      ? `${exportFrom.toISOString().slice(0,10)}_${exportTo.toISOString().slice(0,10)}`
+      : "huidig-filter";
+
+    a.href = url;
+    a.download = `leads_export_${fileSuffix}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    // optioneel: exportRange leegmaken zodat de modal "schoon" is voor volgende keer
+    // setExportRange(null);
+
+    setExportDialogOpen(false);
+  } catch (e) {
+    alert("Export mislukt: " + (e?.message || e));
+    console.error(e);
+  }
+}
+
 
 // Refs zodat realtime callbacks altijd de nieuwste sets zien
 const visibleDomainsRef = useRef(new Set());
@@ -3805,7 +3914,7 @@ try {
       </DialogFooter>
     </DialogContent>
   </Dialog>
-  
+
   {/* Onboarding wizard overlay (niet in skeleton!) */}
 {wizardOpen && (
   <OnboardingWizard
