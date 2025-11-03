@@ -1,6 +1,6 @@
 import { useRouter } from "next/router";
 import { supabase } from "../lib/supabaseClient";
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { formatDutchDateTime } from '../lib/formatTimestamp';
@@ -18,6 +18,15 @@ import {
 } from "@/components/ui/pagination";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -738,6 +747,8 @@ const [notesByDomain, setNotesByDomain] = useState({}); // { [domain]: "note tex
 const geocodeCacheRef = useRef(new Map()); // key: adres-string → { lat, lon }
 const [profile, setProfile] = useState(null);
 const [assignmentVersion, setAssignmentVersion] = useState(0);
+const [exportDialogOpen, setExportDialogOpen] = useState(false);
+const [exportRange, setExportRange] = useState({ start: null, end: null });
 
 // LeadAssign teamleden + huidige user + force-rerender
 const [teamMembers, setTeamMembers] = useState([]);
@@ -849,14 +860,32 @@ useEffect(() => { overrideDomainsRef.current = overrideDomains; }, [overrideDoma
     document.body.removeChild(a);
   }
 
+  const getLeadKeyForExport = useCallback((lead) => {
+    if (!lead) return "";
+    if (lead.id != null) return `id:${lead.id}`;
+    const company = lead.company_name || "";
+    const timestamp = lead.timestamp || lead.inserted_at || "";
+    const page = lead.page_url || lead.page_path || "";
+    return `${company}|${timestamp}|${page}`;
+  }, []);
+
   // Laat Layout luisteren naar dit event
   useEffect(() => {
     const handleExport = () => {
-      exportLeadsToCSV(filteredLeads);
+      setExportRange((prev) => {
+        const [rawStart, rawEnd] = customRange || [];
+        const start = rawStart ? new Date(rawStart) : null;
+        const end = rawEnd ? new Date(rawEnd) : null;
+        if (start && end) {
+          return { start, end };
+        }
+        return prev?.start || prev?.end ? prev : { start: null, end: null };
+      });
+      setExportDialogOpen(true);
     };
     window.addEventListener("exportLeads", handleExport);
     return () => window.removeEventListener("exportLeads", handleExport);
-  }, [allLeads, labels]);
+  }, [customRange]);
 
   useEffect(() => {
   let cancelled = false;
@@ -1523,6 +1552,126 @@ const visibleCompanyDomains = useMemo(() => {
   }
   return s;
 }, [companies]);
+
+const computeVisibleCompanyNames = useCallback(() => {
+  const names = new Set();
+
+  for (const company of overrideCompanies) {
+    if (company?.company_name) names.add(company.company_name);
+  }
+
+  const filteredForView = companies.filter((c) => {
+    const naam = (c.company_name || "").toLowerCase();
+    const stad = (c.kvk_city || "").toLowerCase();
+    const heeftPage = groupedCompanies[c.company_name]?.some((l) =>
+      (l.page_url || "").toLowerCase().includes(globalSearch)
+    );
+    return (
+      naam.includes(globalSearch) ||
+      stad.includes(globalSearch) ||
+      heeftPage
+    );
+  });
+
+  filteredForView.sort((a, b) => {
+    if (sortOrder === "aantal") {
+      return (
+        (groupedCompanies[b.company_name]?.length || 0) -
+        (groupedCompanies[a.company_name]?.length || 0)
+      );
+    }
+    if (sortOrder === "recent") {
+      const lastA = groupedCompanies[a.company_name]?.[0]?.timestamp || "";
+      const lastB = groupedCompanies[b.company_name]?.[0]?.timestamp || "";
+      return new Date(lastB) - new Date(lastA);
+    }
+    return 0;
+  });
+
+  const start = (currentPage - 1) * itemsPerPage;
+  const end = currentPage * itemsPerPage;
+  for (const company of filteredForView.slice(start, end)) {
+    if (company?.company_name) names.add(company.company_name);
+  }
+
+  return names;
+}, [
+  overrideCompanies,
+  companies,
+  groupedCompanies,
+  globalSearch,
+  sortOrder,
+  currentPage,
+  itemsPerPage,
+]);
+
+function normalizeRangeBoundary(date, isEnd = false) {
+  if (!date) return null;
+  const instance = date instanceof Date ? new Date(date) : new Date(date);
+  if (Number.isNaN(instance.getTime())) return null;
+  if (isEnd) {
+    instance.setHours(23, 59, 59, 999);
+  } else {
+    instance.setHours(0, 0, 0, 0);
+  }
+  return instance;
+}
+
+const handleConfirmExport = () => {
+  const visibleNames = computeVisibleCompanyNames();
+  if (!visibleNames || visibleNames.size === 0) {
+    alert("Geen leads om te exporteren.");
+    setExportDialogOpen(false);
+    return;
+  }
+
+  const leads = [];
+  const seen = new Set();
+
+  const maybeAddLead = (lead) => {
+    if (!lead || !lead.company_name) return;
+    if (!visibleNames.has(lead.company_name)) return;
+    const key = getLeadKeyForExport(lead);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    leads.push(lead);
+  };
+
+  for (const lead of filteredLeads) {
+    maybeAddLead(lead);
+  }
+
+  for (const company of overrideCompanies) {
+    const companyLeads = company?.company_name
+      ? fullVisitMap[company.company_name] || []
+      : [];
+    for (const lead of companyLeads) {
+      maybeAddLead(lead);
+    }
+  }
+
+  let finalLeads = leads;
+  if (exportRange?.start || exportRange?.end) {
+    const start = normalizeRangeBoundary(exportRange.start, false);
+    const end = normalizeRangeBoundary(exportRange.end, true);
+    finalLeads = leads.filter((lead) => {
+      if (!lead?.timestamp) return false;
+      const ts = new Date(lead.timestamp);
+      if (Number.isNaN(ts.getTime())) return false;
+      if (start && ts < start) return false;
+      if (end && ts > end) return false;
+      return true;
+    });
+  }
+
+  if (!finalLeads.length) {
+    alert("Geen leads om te exporteren.");
+    return;
+  }
+
+  exportLeadsToCSV(finalLeads);
+  setExportDialogOpen(false);
+};
 
 
 // Refs zodat realtime callbacks altijd de nieuwste sets zien
@@ -3573,7 +3722,41 @@ try {
    )}
 </section>
 
- </div>
+</div>
+
+  <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>Leads exporteren</DialogTitle>
+        <DialogDescription>
+          Kies optioneel een datumrange. Alleen de leads die nu zichtbaar zijn in het dashboard worden meegenomen in de export.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="space-y-4">
+        <DateRangePicker
+          label="Datumrange"
+          value={exportRange}
+          onChange={setExportRange}
+          placeholder="Selecteer datumrange (optioneel)"
+        />
+        <p className="text-xs text-muted-foreground">
+          Laat de datum leeg om precies de leads te exporteren die je nu ziet.
+        </p>
+      </div>
+      <DialogFooter className="!flex-col gap-2 sm:!flex-row sm:!justify-end">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => setExportDialogOpen(false)}
+        >
+          Annuleren
+        </Button>
+        <Button type="button" onClick={handleConfirmExport}>
+          Exporteren
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 
   {/* Onboarding wizard overlay (niet in skeleton!) */}
 {wizardOpen && (
