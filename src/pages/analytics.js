@@ -202,6 +202,14 @@ const PRESETS = {
   aangepast: "aangepast",
 }
 
+function mergeUniqueById(a = [], b = []) {
+  const map = new Map()
+  for (const r of a) map.set(r.id, r)
+  for (const r of b) if (!map.has(r.id)) map.set(r.id, r)
+  return Array.from(map.values())
+}
+
+
 function getRangeForPreset(preset) {
   const now = new Date()
   switch (preset) {
@@ -266,54 +274,73 @@ const [fetching, setFetching] = useState(false)
 
   // leads ophalen wanneer preset of range wijzigt
   // leads ophalen wanneer preset of range wijzigt
+// leads ophalen wanneer preset of range wijzigt
 useEffect(() => {
   if (loading) return
 
   async function fetchLeads(from, to) {
     setFetching(true)
 
-    // Gebruik beide datumkolommen (created_at ÓF timestamp)
     const fromIso = from.toISOString()
     const toIso = to.toISOString()
 
-    const { data: rows, error } = await supabase
+    // 1) Simpele query op created_at (snel en index-vriendelijk)
+    const q1 = supabase
       .from("leads")
       .select("id, created_at, timestamp, category, category_nl")
-      // server-side filter: binnen range op created_at OF op timestamp
-      .or(
-        `and(created_at.gte.${fromIso},created_at.lte.${toIso}),and(timestamp.gte.${fromIso},timestamp.lte.${toIso})`
-      )
-      // netjes oplopend sorteren
-      .order("created_at", { ascending: true, nullsFirst: false })
-      .order("timestamp", { ascending: true, nullsFirst: false })
+      .gte("created_at", fromIso)
+      .lte("created_at", toIso)
 
-    console.log("[Analytics] rows:", rows?.length ?? "null", "range:", fromIso, "→", toIso)
+    const { data: rowsByCreated, error: err1 } = await q1
 
-    if (error) {
-      console.error("Supabase error:", error)
+    // 2) Tweede simpele query: alleen rijen zónder created_at, maar wél binnen timestamp
+    //    (voorkomt dubbel tellen)
+    const q2 = supabase
+      .from("leads")
+      .select("id, created_at, timestamp, category, category_nl")
+      .is("created_at", null)
+      .gte("timestamp", fromIso)
+      .lte("timestamp", toIso)
+
+    const { data: rowsByTsOnly, error: err2 } = await q2
+
+    if (err1 || err2) {
+      console.error("Supabase error:", err1?.message || err2?.message, { err1, err2 })
       setChartData([])
       setCategoryData([])
-    } else {
-      // Kies de juiste datum & categorie voor aggregatie
-      const safeRows = (rows || []).map(r => ({
-        ...r,
-        __dt: r.created_at ?? r.timestamp,                                  // ISO-string
-        __cat: (r.category_nl?.trim() || r.category?.trim() || "Onbekend"), // NL > EN > Onbekend
-      }))
-
-      setChartData(
-        groupLeadsAutoBy(safeRows, from, to, r => r.__dt)
-      )
-      setCategoryData(
-        groupCategoriesBy(safeRows, 12, r => r.__cat) // top 12
-      )
+      setFetching(false)
+      return
     }
+
+    // 3) Merge + de-dup op id
+    const merged = mergeUniqueById(rowsByCreated || [], rowsByTsOnly || [])
+
+    console.log("[Analytics] fetched",
+      { created: rowsByCreated?.length || 0, tsOnly: rowsByTsOnly?.length || 0, total: merged.length },
+      "range:", fromIso, "→", toIso
+    )
+
+    // 4) Normaliseer velden voor aggregatie
+    const safeRows = merged.map(r => ({
+      ...r,
+      __dt: r.created_at ?? r.timestamp,                                // datumveld voor grouping
+      __cat: (r.category_nl?.trim() || r.category?.trim() || "Onbekend") // NL > EN > fallback
+    }))
+
+    // 5) Aggregaties
+    setChartData(
+      groupLeadsAutoBy(safeRows, from, to, r => r.__dt)
+    )
+    setCategoryData(
+      groupCategoriesBy(safeRows, 12, r => r.__cat)
+    )
 
     setFetching(false)
   }
 
   fetchLeads(range.from, range.to)
 }, [loading, preset, range.from, range.to])
+
 
 
   // preset wisselen
