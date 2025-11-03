@@ -76,6 +76,7 @@ const fmtDay = (d) =>
 const fmtMonth = (d) =>
   d.toLocaleDateString("nl-NL", { month: "short", year: "2-digit", timeZone: TZ }).replace(".", "").toLowerCase()
 
+
 // =============== Aggregatie ===============
 function eachDayRange(from, to) {
   const out = []
@@ -139,7 +140,7 @@ function groupLeadsAuto(leads, from, to) {
 function groupCategories(leads, topN = 12) {
   const map = new Map()
   for (const row of (leads || [])) {
-    const key = row.category?.trim() || "Onbekend"
+ const key = row.company_category?.trim() || "Onbekend"
     map.set(key, (map.get(key) || 0) + 1)
   }
   const arr = Array.from(map, ([name, value]) => ({ name, value }))
@@ -196,7 +197,7 @@ export default function Analytics() {
   const [loading, setLoading] = useState(true)
 
   // filter state
-  const [preset, setPreset] = useState(PRESETS.dezeWeek)
+const [preset, setPreset] = useState(PRESETS.dezeWeek)
   const initialRange = getRangeForPreset(PRESETS.dezeWeek)
   const [range, setRange] = useState({ from: initialRange.from, to: initialRange.to })
   const [openCustom, setOpenCustom] = useState(false) // popover voor kalender
@@ -205,43 +206,88 @@ export default function Analytics() {
 const [chartData, setChartData] = useState([])
 const [categoryData, setCategoryData] = useState([])
 const [fetching, setFetching] = useState(false)
+ // scope filters
+ const [orgId, setOrgId] = useState(null)
+ const [siteId, setSiteId] = useState(null)
 
   // auth
   useEffect(() => {
     let isActive = true
-    const ensureAuthenticated = async () => {
+    async function boot() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
         router.replace("/login?next=/analytics")
         return
       }
+      // 👉 profiel ophalen om org/site te weten
+      const { data: profile, error: pErr } = await supabase
+        .from("profiles")
+        .select("organization_id, active_organization_id, default_organization_id, site_id, active_site_id, selected_site_id")
+        .eq("id", user.id)
+        .single()
+      if (pErr) {
+        console.warn("[Analytics] profile error:", pErr)
+      } else {
+        // kies de eerste aanwezige org/site kolom die bestaat
+        const o =
+          profile?.active_organization_id ??
+          profile?.organization_id ??
+          profile?.default_organization_id ??
+          null
+        const s =
+          profile?.active_site_id ??
+          profile?.selected_site_id ??
+          profile?.site_id ??
+          null
+        if (isActive) {
+          setOrgId(o)
+          setSiteId(s)
+        }
+      }
       if (isActive) setLoading(false)
     }
-    ensureAuthenticated()
+    boot()
     return () => { isActive = false }
   }, [router])
 
   // leads ophalen wanneer preset of range wijzigt
   useEffect(() => {
-    if (loading) return
+if (loading) return
+    // wacht tot org-scope bekend is (mag null zijn; dan zonder filter)
+    // als jouw RLS org verplicht, zal null 0 rijen geven → fallback laat het zien.
 
     async function fetchLeads(from, to) {
       setFetching(true)
 
-      const { data: rows, error } = await supabase
+      let q = supabase
         .from("leads")
-        .select("id, created_at, category")
+ .select("id, created_at, company_category, organization_id, site_id")
         .gte("created_at", from.toISOString())
         .lte("created_at", to.toISOString())
         .order("created_at", { ascending: true })
-        console.log("[Analytics] rows:", rows?.length, "range:", from.toISOString(), "→", to.toISOString())
+      if (orgId) q = q.eq("organization_id", orgId)
+      if (siteId) q = q.eq("site_id", siteId)
+
+      let { data: rows, error } = await q
+      console.log("[Analytics] rows:", rows?.length ?? "null", "org:", orgId, "site:", siteId, "range:", from.toISOString(), "→", to.toISOString())
+
+      // 🧪 Fallback debug: als 0 rijen en we hebben een orgId, probeer zonder filters om te zien of RLS of filters het blokkeren
+      if (!error && rows && rows.length === 0) {
+        const { data: testRows, error: tErr } = await supabase
+          .from("leads")
+          .select("id, created_at, category")
+          .gte("created_at", from.toISOString())
+          .lte("created_at", to.toISOString())
+          .order("created_at", { ascending: true })
+        console.log("[Analytics] fallback rows (no org/site filter):", testRows?.length ?? "null", "err:", tErr?.message)
+      }
 
 
       if (error) {
         console.error("Supabase error:", error)
 setChartData([])
-        setCategoryData([])     
-       } else {
+setChartData([])
+        setCategoryData([])       } else {
         setChartData(groupLeadsAuto(rows || [], from, to))
         setCategoryData(groupCategories(rows || [], 12)) // top 12 categorieën
 
@@ -250,7 +296,7 @@ setChartData([])
     }
 
     fetchLeads(range.from, range.to)
-  }, [loading, preset, range.from, range.to])
+}, [loading, preset, range.from, range.to, orgId, siteId])
 
   // preset wisselen
   function handlePresetChange(nextPreset) {
