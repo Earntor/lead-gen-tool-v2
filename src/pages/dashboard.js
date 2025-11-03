@@ -1,8 +1,6 @@
 import { useRouter } from "next/router";
 import { supabase } from "../lib/supabaseClient";
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
-import DatePicker from "react-datepicker";
-import "react-datepicker/dist/react-datepicker.css";
 import { formatDutchDateTime } from '../lib/formatTimestamp';
 import { isToday, isYesterday, isWithinInterval, subDays } from 'date-fns';
 import { utcToZonedTime } from 'date-fns-tz';
@@ -61,7 +59,6 @@ import dynamic from 'next/dynamic';
 import * as React from "react";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { Calendar as CalendarIcon } from "lucide-react";
 import { format } from "date-fns";
 import { nl } from "date-fns/locale";
 
@@ -637,13 +634,6 @@ function normalizeRange(value) {
   const b = value.endDate   ?? value.end   ?? value.to   ?? null;
   return [toLocalDate(a), toLocalDate(b)];
 }
-function formatRangeLabel(range) {
-  const { from, to } = range || {};
-  if (from && to) return `${format(from, "dd-MM-yyyy", { locale: nl })} – ${format(to, "dd-MM-yyyy", { locale: nl })}`;
-  if (from) return `${format(from, "dd-MM-yyyy", { locale: nl })} – …`;
-  return "Selecteer datumrange (optioneel)";
-}
-
 // Kleine helper: promise met timeout/fallback, zodat UI niet blijft wachten
 function withTimeout(promise, ms = 8000) {
   let timer;
@@ -751,7 +741,7 @@ export default function Dashboard() {
   const [searchTerm, setSearchTerm] = useState("");
   const [labelFilter, setLabelFilter] = useState("");
   const [filterType, setFilterType] = useState("deze-week");
-  const [customRange, setCustomRange] = useState([null, null]);
+  const [customRange, setCustomRange] = useState({ start: null, end: null });
   const [minVisits, setMinVisits] = useState("");
   const [pageSearch, setPageSearch] = useState("");
   const [minDuration, setMinDuration] = useState("");
@@ -782,7 +772,6 @@ const [profile, setProfile] = useState(null);
 const [assignmentVersion, setAssignmentVersion] = useState(0);
 const [exportDialogOpen, setExportDialogOpen] = useState(false);
 const [exportRange, setExportRange] = useState({ start: null, end: null });
-const [exportPickerOpen, setExportPickerOpen] = useState(false);
 
 // LeadAssign teamleden + huidige user + force-rerender
 const [teamMembers, setTeamMembers] = useState([]);
@@ -958,7 +947,7 @@ const headers = [];
   useEffect(() => {
     const handleExport = () => {
       setExportRange((prev) => {
-        const [rawStart, rawEnd] = customRange || [];
+        const [rawStart, rawEnd] = normalizeRange(customRange);
         const start = rawStart ? new Date(rawStart) : null;
         const end = rawEnd ? new Date(rawEnd) : null;
         if (start && end) {
@@ -1365,14 +1354,16 @@ const isInDateRange = (dateStr) => {
       const nextYear = new Date(today.getFullYear() + 1, 0, 1);
       return date >= janFirst && date < nextYear;
 
-    case "aangepast":
-  if (customRange[0] && customRange[1]) {
-    const rangeStart = utcToZonedTime(new Date(customRange[0]), 'Europe/Amsterdam');
-    const rangeEnd = utcToZonedTime(new Date(customRange[1]), 'Europe/Amsterdam');
-    rangeEnd.setDate(rangeEnd.getDate() + 1);
-    return date >= rangeStart && date < rangeEnd;
-  }
-  return true;
+    case "aangepast": {
+      const [rangeStartRaw, rangeEndRaw] = normalizeRange(customRange);
+      if (rangeStartRaw && rangeEndRaw) {
+        const rangeStart = utcToZonedTime(new Date(rangeStartRaw), 'Europe/Amsterdam');
+        const rangeEnd = utcToZonedTime(new Date(rangeEndRaw), 'Europe/Amsterdam');
+        rangeEnd.setDate(rangeEnd.getDate() + 1);
+        return date >= rangeStart && date < rangeEnd;
+      }
+      return true;
+    }
 
 default:
   return true;
@@ -1548,8 +1539,8 @@ useEffect(() => {
   setCurrentPage(1);
 }, [
   filterType,
-  customRange[0],
-  customRange[1],
+  customRange?.start,
+  customRange?.end,
   labelFilter,
   minVisits,
   minDuration,
@@ -2529,19 +2520,18 @@ return (
 </DropdownMenu>
 
           {filterType === "aangepast" && (
-  <DatePicker
-    selectsRange
-    startDate={customRange[0]}
-    endDate={customRange[1]}
-    onChange={(update) => setCustomRange(update)}
-    isClearable
-    placeholderText="Selecteer datumrange"
-    dateFormat="dd-MM-yyyy"
-    className="w-full border rounded px-3 py-2 text-sm"
-    popperClassName="!z-50 custom-datepicker"
-    calendarClassName="rounded-lg shadow-lg border border-gray-200"
-  />
-)}
+            <DateRangePicker
+              id="filter-date-range"
+              value={customRange}
+              onChange={(range) => setCustomRange(range || { start: null, end: null })}
+              placeholder="Selecteer datumrange"
+              className="w-full"
+              triggerClassName="w-full"
+              contentClassName="sm:min-w-[30rem]"
+              align="start"
+              calendarProps={{ numberOfMonths: isMobile ? 1 : 2, locale: nl }}
+            />
+          )}
 
 
 
@@ -3897,39 +3887,22 @@ try {
       </DialogHeader>
       <div className="space-y-4">
         <div className="space-y-1">
-  <label className="text-sm text-muted-foreground">Datumrange</label>
+          <DateRangePicker
+            id="export-date-range"
+            label="Datumrange"
+            value={exportRange}
+            onChange={(range) => setExportRange(range || { start: null, end: null })}
+            placeholder="Selecteer datumrange (optioneel)"
+            className="w-full"
+            triggerClassName="w-full"
+            contentClassName="sm:min-w-[30rem]"
+            calendarProps={{ numberOfMonths: isMobile ? 1 : 2, locale: nl }}
+          />
 
-  <Popover open={exportPickerOpen} onOpenChange={setExportPickerOpen}>
-    <PopoverTrigger asChild>
-      <Button variant="outline" className="w-full justify-start font-normal">
-        <CalendarIcon className="mr-2 h-4 w-4 opacity-60" />
-        {exportRange?.from || exportRange?.to
-          ? formatRangeLabel(exportRange)
-          : "Selecteer datumrange (optioneel)"}
-      </Button>
-    </PopoverTrigger>
-
-    <PopoverContent className="p-0 w-auto" align="start" sideOffset={6}>
-      <Calendar
-        mode="range"
-        numberOfMonths={2}
-        selected={exportRange}
-        defaultMonth={exportRange?.from ?? undefined}
-        locale={nl}
-        onSelect={(range) => {
-          // range is { from?: Date; to?: Date } | undefined
-          setExportRange(range || { from: null, to: null });
-          // sluit pas als beide datums zijn gekozen
-          if (range?.from && range?.to) setExportPickerOpen(false);
-        }}
-      />
-    </PopoverContent>
-  </Popover>
-
-  <p className="text-xs text-muted-foreground">
-    Laat leeg om exact de leads te exporteren die je nu ziet in het dashboard.
-  </p>
-</div>
+          <p className="text-xs text-muted-foreground">
+            Laat leeg om exact de leads te exporteren die je nu ziet in het dashboard.
+          </p>
+        </div>
 
         <p className="text-xs text-muted-foreground">
           Laat de datum leeg om precies de leads te exporteren die je nu ziet.

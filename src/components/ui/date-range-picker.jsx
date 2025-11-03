@@ -8,11 +8,36 @@ import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { cn } from "@/lib/utils"
+
+function toDate(value) {
+  if (!value) return null
+  const instance = value instanceof Date ? new Date(value) : new Date(value)
+  return Number.isNaN(instance.getTime()) ? null : instance
+}
 
 function normalizeRange(range) {
   if (!range) return { start: null, end: null }
-  const start = range.start instanceof Date ? range.start : range.start ? new Date(range.start) : null
-  const end = range.end instanceof Date ? range.end : range.end ? new Date(range.end) : null
+
+  if (Array.isArray(range)) {
+    const [from, to] = range
+    const start = toDate(from)
+    const end = toDate(to)
+    if (start && end && start > end) {
+      return { start: end, end: start }
+    }
+    return { start, end }
+  }
+
+  const startCandidate = range.start ?? range.startDate ?? range.from ?? null
+  const endCandidate = range.end ?? range.endDate ?? range.to ?? null
+  const start = toDate(startCandidate)
+  const end = toDate(endCandidate)
+
+  if (start && end && start > end) {
+    return { start: end, end: start }
+  }
+
   return { start, end }
 }
 
@@ -23,19 +48,26 @@ export function DateRangePicker({
   onChange,
   placeholder = "Selecteer datums",
   className = "",
+  triggerClassName = "",
+  contentClassName = "",
+  align = "start",
+  calendarProps = {},
+  showClearButton = true,
 }) {
   const [open, setOpen] = React.useState(false)
-  const normalized = normalizeRange(value)
+  const normalized = React.useMemo(() => normalizeRange(value), [value])
   const [month, setMonth] = React.useState(normalized.start || normalized.end || new Date())
+  const hasSelection = Boolean(normalized.start || normalized.end)
+
+  const { numberOfMonths = 2, ...restCalendarProps } = calendarProps ?? {}
 
   React.useEffect(() => {
-    const { start, end } = normalizeRange(value)
-    if (start) {
-      setMonth(start)
-    } else if (end) {
-      setMonth(end)
+    if (normalized.start) {
+      setMonth(normalized.start)
+    } else if (normalized.end) {
+      setMonth(normalized.end)
     }
-  }, [value?.start, value?.end])
+  }, [normalized.start?.getTime?.(), normalized.end?.getTime?.()])
 
   const formattedLabel = React.useMemo(() => {
     const { start, end } = normalized
@@ -49,7 +81,7 @@ export function DateRangePicker({
       return `… – ${format(end, "dd MMM yyyy")}`
     }
     return ""
-  }, [normalized.start, normalized.end])
+  }, [normalized.start?.getTime?.(), normalized.end?.getTime?.()])
 
   const handleSelect = React.useCallback(
     (range) => {
@@ -59,8 +91,8 @@ export function DateRangePicker({
         return
       }
 
-      const start = range.from ? new Date(range.from) : null
-      const end = range.to ? new Date(range.to) : null
+      const start = range.from ? toDate(range.from) : null
+      const end = range.to ? toDate(range.to) : null
 
       onChange({ start, end })
     },
@@ -68,7 +100,7 @@ export function DateRangePicker({
   )
 
   return (
-    <div className={`flex flex-col gap-2 ${className}`}>
+    <div className={cn("flex flex-col gap-2", className)}>
       {label ? (
         <Label htmlFor={id} className="px-1 text-sm font-medium text-foreground">
           {label}
@@ -79,18 +111,27 @@ export function DateRangePicker({
           <Button
             id={id}
             variant="outline"
-            className={`justify-start text-left font-normal ${
-              formattedLabel ? "text-foreground" : "text-muted-foreground"
-            }`}
+            className={cn(
+              "justify-start text-left font-normal",
+              formattedLabel ? "text-foreground" : "text-muted-foreground",
+              hasSelection ? "border-primary/60" : "border-input",
+              triggerClassName
+            )}
           >
             <CalendarIcon className="mr-2 size-4" />
             {formattedLabel || placeholder}
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-auto p-0 min-w-[18rem] sm:min-w-[22rem]" align="start">
+        <PopoverContent
+          className={cn(
+            "w-auto min-w-[18rem] p-0 sm:min-w-[34rem]",
+            contentClassName
+          )}
+          align={align}
+        >
           <Calendar
             mode="range"
-            numberOfMonths={2}
+            numberOfMonths={numberOfMonths}
             month={month}
             selected={{ from: normalized.start ?? undefined, to: normalized.end ?? undefined }}
             onMonthChange={setMonth}
@@ -106,9 +147,33 @@ export function DateRangePicker({
               }
             }}
             initialFocus
+            {...restCalendarProps}
           />
+          {showClearButton ? (
+            <div className="flex items-center justify-between border-t px-3 py-2 text-xs text-muted-foreground">
+              <span>
+                {normalized.start && normalized.end
+                  ? `${format(normalized.start, "dd MMM yyyy")} – ${format(normalized.end, "dd MMM yyyy")}`
+                  : normalized.start
+                    ? `${format(normalized.start, "dd MMM yyyy")} – …`
+                    : "Geen datum geselecteerd"}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  handleSelect(null)
+                  setOpen(false)
+                }}
+                disabled={!hasSelection}
+              >
+                Reset
+              </Button>
+            </div>
+          ) : null}
         </PopoverContent>
       </Popover>
     </div>
   )
 }
+
