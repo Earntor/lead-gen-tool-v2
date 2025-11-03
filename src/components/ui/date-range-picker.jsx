@@ -59,7 +59,11 @@ export function DateRangePicker({
   const [month, setMonth] = React.useState(normalized.start || normalized.end || new Date())
   const hasSelection = Boolean(normalized.start || normalized.end)
 
-  const { numberOfMonths = 2, ...restCalendarProps } = calendarProps ?? {}
+  const {
+    numberOfMonths = 2,
+    locale: calendarLocale,
+    ...restCalendarProps
+  } = calendarProps ?? {}
 
   React.useEffect(() => {
     if (normalized.start) {
@@ -69,19 +73,33 @@ export function DateRangePicker({
     }
   }, [normalized.start?.getTime?.(), normalized.end?.getTime?.()])
 
+  const formatDate = React.useCallback(
+    (date) => {
+      if (!date) return ""
+      try {
+        return calendarLocale
+          ? format(date, "dd MMM yyyy", { locale: calendarLocale })
+          : format(date, "dd MMM yyyy")
+      } catch (error) {
+        return format(date, "dd MMM yyyy")
+      }
+    },
+    [calendarLocale]
+  )
+
   const formattedLabel = React.useMemo(() => {
     const { start, end } = normalized
     if (start && end) {
-      return `${format(start, "dd MMM yyyy")} – ${format(end, "dd MMM yyyy")}`
+      return `${formatDate(start)} – ${formatDate(end)}`
     }
     if (start) {
-      return `${format(start, "dd MMM yyyy")} – …`
+      return `${formatDate(start)} – …`
     }
     if (end) {
-      return `… – ${format(end, "dd MMM yyyy")}`
+      return `… – ${formatDate(end)}`
     }
     return ""
-  }, [normalized.start?.getTime?.(), normalized.end?.getTime?.()])
+  }, [formatDate, normalized.end?.getTime?.(), normalized.start?.getTime?.()])
 
   const handleSelect = React.useCallback(
     (range) => {
@@ -117,6 +135,7 @@ export function DateRangePicker({
               hasSelection ? "border-primary/60" : "border-input",
               triggerClassName
             )}
+            aria-label={label ? `${label} kiezen` : placeholder}
           >
             <CalendarIcon className="mr-2 size-4" />
             {formattedLabel || placeholder}
@@ -147,15 +166,16 @@ export function DateRangePicker({
               }
             }}
             initialFocus
+            locale={calendarLocale}
             {...restCalendarProps}
           />
           {showClearButton ? (
             <div className="flex items-center justify-between border-t px-3 py-2 text-xs text-muted-foreground">
               <span>
                 {normalized.start && normalized.end
-                  ? `${format(normalized.start, "dd MMM yyyy")} – ${format(normalized.end, "dd MMM yyyy")}`
+                  ? `${formatDate(normalized.start)} – ${formatDate(normalized.end)}`
                   : normalized.start
-                    ? `${format(normalized.start, "dd MMM yyyy")} – …`
+                    ? `${formatDate(normalized.start)} – …`
                     : "Geen datum geselecteerd"}
               </span>
               <Button

@@ -181,7 +181,7 @@ const PopoverContent = React.forwardRef(
         style={{ position: "absolute", top: position.top, left: position.left, ...style }}
         data-state={open ? "open" : "closed"}
         className={cn(
-          "z-50 min-w-[8rem] rounded-md border bg-popover p-4 text-popover-foreground shadow-md outline-none",
+          "z-[60] min-w-[8rem] rounded-md border bg-popover p-4 text-popover-foreground shadow-md outline-none",
           className
         )}
         {...props}

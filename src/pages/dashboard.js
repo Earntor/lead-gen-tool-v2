@@ -629,10 +629,22 @@ function endOfDayLocal(d) {
 }
 function normalizeRange(value) {
   if (!value) return [null, null];
-  if (Array.isArray(value)) return [toLocalDate(value[0]), toLocalDate(value[1])];
+  if (Array.isArray(value)) {
+    const start = toLocalDate(value[0]);
+    const end = toLocalDate(value[1]);
+    if (start && end && start > end) {
+      return [end, start];
+    }
+    return [start, end];
+  }
   const a = value.startDate ?? value.start ?? value.from ?? null;
   const b = value.endDate   ?? value.end   ?? value.to   ?? null;
-  return [toLocalDate(a), toLocalDate(b)];
+  const start = toLocalDate(a);
+  const end = toLocalDate(b);
+  if (start && end && start > end) {
+    return [end, start];
+  }
+  return [start, end];
 }
 // Kleine helper: promise met timeout/fallback, zodat UI niet blijft wachten
 function withTimeout(promise, ms = 8000) {
