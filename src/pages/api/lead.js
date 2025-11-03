@@ -2004,14 +2004,54 @@ try {
 }
 
 
+async function getCachedFaviconArtifacts(ip) {
+  try {
+    let { data, error } = await supabaseAdmin
+      .from('favicon_hash_log')
+      .select('id, favicon_hash, favicon_phash')
+      .eq('ip_address', ip)
+      .order('id', { ascending: false })
+      .limit(1);
+
+    if (error && /column\s+"?id"?/i.test(error.message || '')) {
+      ({ data, error } = await supabaseAdmin
+        .from('favicon_hash_log')
+        .select('favicon_hash, favicon_phash')
+        .eq('ip_address', ip)
+        .limit(1));
+    }
+
+    if (error) {
+      console.warn('⚠️ favicon cache lookup error:', error.message);
+      return null;
+    }
+
+    return data?.[0] || null;
+  } catch (err) {
+    console.warn('⚠️ favicon cache lookup faalde:', err.message);
+    return null;
+  }
+}
+
 // 🖼️ Stap 7 – favicon hash matching → SIGNAL
-try {
-  const hash = await getFaviconHash(ip_address);
-  if (hash) {
+let faviconArtifactsCache = await getCachedFaviconArtifacts(ip_address);
+let currentFaviconHash = faviconArtifactsCache?.favicon_hash || null;
+let currentFaviconPHash = faviconArtifactsCache?.favicon_phash || null;try {
+  if (!currentFaviconHash) {
+    currentFaviconHash = await getFaviconHash(ip_address);
+    if (currentFaviconHash) {
+      faviconArtifactsCache = {
+        ...(faviconArtifactsCache || {}),
+        favicon_hash: currentFaviconHash
+      };
+    }
+  }
+
+  if (currentFaviconHash) {
     const { data: match } = await supabaseAdmin
       .from('favicon_hash_map')
       .select('*')
-      .eq('hash', hash)
+      .eq('hash', currentFaviconHash)
       .single();
 
     const logInserts = [];
@@ -2036,7 +2076,7 @@ try {
           .from('favicon_hash_map')
           .upsert(
             {
-              hash,
+              hash: currentFaviconHash,
               domain: matchedDomain,
               confidence: match?.confidence ?? 0.8,
               source: 'favicon_hash',
@@ -2062,7 +2102,7 @@ try {
       logInserts.push(
         supabaseAdmin.from('favicon_hash_log').insert({
           ip_address,
-          favicon_hash: hash,
+          favicon_hash: currentFaviconHash,
           matched_domain: matchedDomain,
           used: true,
           confidence: match?.confidence || 0.8,
@@ -2072,33 +2112,33 @@ try {
     } else {
       // -------- 3B (optioneel): onbekende hash als 'observed' registreren --------
       if (!DISABLE_OBSERVED_FAVICON_LOG) {
-  // onbekende hash registreren (optioneel)
-  {
-    const upsertRes = await supabaseAdmin
-      .from('favicon_hash_map')
-      .upsert({
-        hash,
-        domain: null,
-        confidence: 0.5,
-        source: 'observed',
-        last_seen: new Date().toISOString()
-      }, { onConflict: 'hash' });
-    if (upsertRes.error) {
-      console.warn('⚠️ favicon_hash_map upsert (observed) error:', upsertRes.error.message, upsertRes.error.details || '');
-    }
-  }
+const upsertRes = await supabaseAdmin
+          .from('favicon_hash_map')
+          .upsert(
+            {
+              hash: currentFaviconHash,
+              domain: null,
+              confidence: 0.5,
+              source: 'observed',
+              last_seen: new Date().toISOString()
+            },
+            { onConflict: 'hash' }
+          );
+        if (upsertRes.error) {
+          console.warn('⚠️ favicon_hash_map upsert (observed) error:', upsertRes.error.message, upsertRes.error.details || '');
+        }
 
-  logInserts.push(
-    supabaseAdmin.from('favicon_hash_log').insert({
-      ip_address,
-      favicon_hash: hash,
-      matched_domain: null,
-      used: false,
-      confidence: null,
-      confidence_reason: 'Geen match in favicon_hash_map'
-    })
-  );
-}
+        logInserts.push(
+          supabaseAdmin.from('favicon_hash_log').insert({
+            ip_address,
+            favicon_hash: currentFaviconHash,
+            matched_domain: null,
+            used: false,
+            confidence: null,
+            confidence_reason: 'Geen match in favicon_hash_map'
+          })
+        );
+      }
 
     }
 
@@ -2154,12 +2194,45 @@ async function getFaviconPHash(ip) {
 
 
 try {
-  const phash = await getFaviconPHash(ip_address);
-  if (phash) {
+  if (!currentFaviconHash) {
+    const { data: recentHash } = await supabaseAdmin
+      .from('favicon_hash_log')
+      .select('favicon_hash')
+      .eq('ip_address', ip_address)
+      .order('id', { ascending: false })
+      .limit(1);
+    currentFaviconHash = recentHash?.[0]?.favicon_hash || null;
+  }
+
+  if (!currentFaviconPHash && currentFaviconHash) {
+    const { data: mapEntry, error: mapError } = await supabaseAdmin
+      .from('favicon_hash_map')
+      .select('phash')
+      .eq('hash', currentFaviconHash)
+      .maybeSingle();
+    if (mapError) {
+      console.warn('⚠️ favicon map phash lookup faalde:', mapError.message);
+    }
+    if (mapEntry?.phash) {
+      currentFaviconPHash = mapEntry.phash;
+    }
+  }
+
+  if (!currentFaviconPHash) {
+    currentFaviconPHash = await getFaviconPHash(ip_address);
+    if (currentFaviconPHash) {
+      faviconArtifactsCache = {
+        ...(faviconArtifactsCache || {}),
+        favicon_phash: currentFaviconPHash
+      };
+    }
+  }
+
+  if (currentFaviconPHash) {
     const { data: match } = await supabaseAdmin
       .from('favicon_hash_map')
       .select('*')
-      .eq('phash', phash)
+      .eq('phash', currentFaviconPHash)
       .maybeSingle();
 
     if (match?.domain) {
@@ -2174,7 +2247,7 @@ try {
         if (sig) domainSignals.push(sig);
 
         await supabaseAdmin.from('favicon_hash_log').insert({
-          ip_address, favicon_phash: phash, matched_domain: cand,
+          ip_address, favicon_phash: currentFaviconPHash, matched_domain: cand,
           used: true, confidence: match.confidence ?? 0.75, confidence_reason: 'favicon pHash match'
         });
 
@@ -2183,8 +2256,8 @@ try {
   .upsert(
     {
       // gebruik echte hash als die bestaat, anders stabiele synthetische PK
-      hash: match?.hash ?? `ph_${phash}`,
-      phash,
+       hash: match?.hash ?? `ph_${currentFaviconPHash}`,
+      phash: currentFaviconPHash,
       domain: cand,
       confidence: match?.confidence ?? 0.75,
       source: 'phash',
@@ -2197,7 +2270,7 @@ try {
       if (!DISABLE_OBSERVED_FAVICON_LOG) {
   await supabaseAdmin.from('favicon_hash_log').insert({
     ip_address,
-    favicon_phash: phash,
+    favicon_phash: currentFaviconPHash,
     matched_domain: null,
     used: false
   });
@@ -2205,8 +2278,8 @@ try {
     .from('favicon_hash_map')
     .upsert(
       {
-        hash: match?.hash ?? `ph_${phash}`,
-        phash,
+       hash: match?.hash ?? `ph_${currentFaviconPHash}`,
+        phash: currentFaviconPHash,
         domain: null,
         confidence: 0.5,
         source: 'observed-phash',
