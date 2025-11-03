@@ -72,9 +72,9 @@ function endOfYearNL(d) {
 
 // As-labels
 const fmtDay = (d) =>
-  d.toLocaleDateString("nl-NL", { day: "2-digit", month: "short" }, { timeZone: TZ }).replace(".", "")
+  d.toLocaleDateString("nl-NL", { day: "2-digit", month: "short", timeZone: TZ }).replace(".", "")
 const fmtMonth = (d) =>
-  d.toLocaleDateString("nl-NL", { month: "short", year: "2-digit" }, { timeZone: TZ }).replace(".", "").toLowerCase()
+  d.toLocaleDateString("nl-NL", { month: "short", year: "2-digit", timeZone: TZ }).replace(".", "").toLowerCase()
 
 // =============== Aggregatie ===============
 function eachDayRange(from, to) {
@@ -234,6 +234,8 @@ const [fetching, setFetching] = useState(false)
         .gte("created_at", from.toISOString())
         .lte("created_at", to.toISOString())
         .order("created_at", { ascending: true })
+        console.log("[Analytics] rows:", rows?.length, "range:", from.toISOString(), "→", to.toISOString())
+
 
       if (error) {
         console.error("Supabase error:", error)
@@ -295,7 +297,7 @@ setChartData([])
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
-        <p className="text-gray-600">Analytics laden...</p>
+        <p className="text-gray-600">Statistieken laden...</p>
       </div>
     )
   }
@@ -304,7 +306,7 @@ setChartData([])
     <section className="mx-auto w-full max-w-6xl px-4 py-8">
       <header className="mb-6 flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Analytics</h1>
+          <h1 className="text-2xl font-semibold text-gray-900">Statistieken</h1>
           <p className="text-gray-600">Leads per periode</p>
         </div>
 
@@ -357,16 +359,22 @@ setChartData([])
       </header>
 
       {/* ✅ Responsive: mobiel onder elkaar, desktop naast elkaar */}
-      <div className="grid gap-6 md:grid-cols-2">
-        <BarChartComponent
-          title="Leads (auto-groepeerd per dag/maand)"
-          data={chartData}
-        />
-        <BarChartHorizontalComponent
-          title="Industrieën (meest voorkomend)"
-          data={categoryData}
-        />
-      </div>
+      <div className="flex flex-col gap-6">
+  {/* 1) Boven: volle breedte */}
+  <BarChartComponent
+    title="Leads (auto-groepeerd per dag/maand)"
+    data={chartData}
+  />
+
+  {/* 2) Onder: links uitgelijnd, niet verbreden */}
+  <div className="w-full max-w-xl">
+    <BarChartHorizontalComponent
+      title="Industrieën (meest voorkomend)"
+      data={categoryData}
+    />
+  </div>
+</div>
+
       {fetching && (
         <p className="mt-3 text-sm text-muted-foreground">Bezig met ophalen…</p>
       )}

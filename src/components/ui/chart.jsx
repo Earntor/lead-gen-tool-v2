@@ -43,8 +43,7 @@ export function LineChartComponent({ title = "Lijngrafiek", data }) {
         <XAxis dataKey="name" stroke="#888" />
         <YAxis stroke="#888" />
         <Tooltip />
-        <Legend />
-        <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} />
+{/* <Legend /> */}        <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} />
       </LineChart>
     </ChartWrapper>
   )
@@ -59,8 +58,7 @@ export function BarChartComponent({ title = "Balkgrafiek", data }) {
         <XAxis dataKey="name" stroke="#888" />
         <YAxis stroke="#888" />
         <Tooltip />
-        <Legend />
-        <Bar dataKey="value" fill="#3b82f6" radius={[6, 6, 0, 0]} />
+{/* <Legend /> */}        <Bar dataKey="value" fill="#3b82f6" radius={[6, 6, 0, 0]} />
       </BarChart>
     </ChartWrapper>
   )
@@ -81,8 +79,7 @@ export function AreaChartComponent({ title = "Gebiedgrafiek", data }) {
         <XAxis dataKey="name" stroke="#888" />
         <YAxis stroke="#888" />
         <Tooltip />
-        <Legend />
-        <Area type="monotone" dataKey="value" stroke="#3b82f6" fillOpacity={1} fill="url(#colorValue)" />
+{/* <Legend /> */}        <Area type="monotone" dataKey="value" stroke="#3b82f6" fillOpacity={1} fill="url(#colorValue)" />
       </AreaChart>
     </ChartWrapper>
   )
@@ -109,8 +106,7 @@ export function BarChartHorizontalComponent({ title = "Industrieën", data }) {
         {/* X-as: aantallen */}
         <XAxis type="number" stroke="#888" />
         <Tooltip />
-        <Legend />
-        <Bar
+{/* <Legend /> */}        <Bar
           dataKey="value"
           fill="#3b82f6"            // evt. themable maken: fill="var(--chart-2)"
           radius={[6, 6, 6, 6]}
