@@ -2,7 +2,6 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
-import { Input } from "@/components/ui/input";
 
 
 export default function Layout({ children }) {
@@ -55,29 +54,7 @@ export default function Layout({ children }) {
               <span className="font-bold text-gray-800">Mijn SaaS</span>
             </div>
           </Link>
-
-          {router.pathname === "/dashboard" && (
-  <Input
-    type="text"
-    placeholder="Zoek bedrijf, locatie of pagina..."
-    aria-label="Zoek bedrijf, locatie of pagina"
-    defaultValue={router.query.search || ""}
-    onChange={(e) => {
-      const term = e.target.value;
-      router.replace(
-        {
-          pathname: "/dashboard",
-          query: { ...router.query, search: term },
-        },
-        undefined,
-        { shallow: true }
-      );
-    }}
-    className="w-full max-w-xs"
-  />
-)}
-
-          {user && (
+            {user && (
             <div className="flex items-center gap-4">
               {/* Export knop */}
               {router.pathname === "/dashboard" && (
