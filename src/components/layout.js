@@ -23,7 +23,6 @@ export default function Layout({ children }) {
       } = await supabase.auth.getUser();
       setUser(user);
     };
-
     fetchUser();
   }, []);
 
@@ -105,28 +104,16 @@ export default function Layout({ children }) {
       </button>
       {menuOpen && (
         <div className="absolute right-0 mt-2 z-10 bg-white border rounded-lg shadow-md w-48">
-          <Link
-            href="/account#account"
-            className="block px-4 py-2 text-sm hover:bg-gray-50"
-          >
+          <Link href="/account#account" className="block px-4 py-2 text-sm hover:bg-gray-50">
             Account
           </Link>
-          <Link
-            href="/account#instellingen"
-            className="block px-4 py-2 text-sm hover:bg-gray-50"
-          >
+          <Link href="/account#instellingen" className="block px-4 py-2 text-sm hover:bg-gray-50">
             Instellingen
           </Link>
-          <Link
-            href="/account#facturen"
-            className="block px-4 py-2 text-sm hover:bg-gray-50"
-          >
+          <Link href="/account#facturen" className="block px-4 py-2 text-sm hover:bg-gray-50">
             Facturen
           </Link>
-          <Link
-            href="/account#betaling"
-            className="block px-4 py-2 text-sm hover:bg-gray-50"
-          >
+          <Link href="/account#betaling" className="block px-4 py-2 text-sm hover:bg-gray-50">
             Betaalmethode
           </Link>
           <button
@@ -144,10 +131,13 @@ export default function Layout({ children }) {
     <div className="min-h-[100svh] md:min-h-[100dvh] bg-white text-gray-900 flex flex-col">
       {showHeader && (
         <header className="bg-white border-b">
-          <div className="mx-auto w-full max-w-6xl px-4 py-3">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div className="flex items-center justify-between gap-3">
-                <Link href="/dashboard">
+          {/* Full-bleed: geen max width, geen horizontale padding */}
+          <div className="w-full px-0 py-3">
+            {/* Eén rij: links logo + tabs, rechts acties */}
+            <div className="flex items-center justify-between gap-3">
+              {/* LINKS: Logo + tabs direct ernaast */}
+              <div className="flex items-center gap-3 min-w-0">
+                <Link href="/dashboard" className="shrink-0">
                   <div className="flex items-center gap-2 cursor-pointer">
                     <img
                       src="/Meta_Platforms_Inc._logo.svg"
@@ -157,18 +147,15 @@ export default function Layout({ children }) {
                     <span className="font-bold text-gray-800">Mijn SaaS</span>
                   </div>
                 </Link>
-              </div>
 
-              {user && (
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
-                  <nav className="w-full md:w-auto">
-                    <ul className="flex w-full gap-2 overflow-x-auto whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {user && (
+                  <nav className="hidden md:block">
+                    <ul className="flex gap-2 overflow-x-auto whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                       {navItems.map((item) => {
                         const Icon = item.icon;
                         const isActive =
                           pathname === item.href ||
                           pathname.startsWith(`${item.href}/`);
-
                         return (
                           <li key={item.href}>
                             <Link
@@ -187,14 +174,45 @@ export default function Layout({ children }) {
                       })}
                     </ul>
                   </nav>
+                )}
+              </div>
 
-                  <div className="hidden items-center gap-2 md:flex">
-                    {showExportButton && renderExportButton()}
-                    {renderAccountMenu()}
-                  </div>
+              {/* RECHTS: Export + account */}
+              {user && (
+                <div className="flex items-center gap-2">
+                  {showExportButton && renderExportButton()}
+                  {renderAccountMenu()}
                 </div>
               )}
             </div>
+
+            {/* Mobiele tabs onder de titel (optioneel) */}
+            {user && (
+              <nav className="md:hidden mt-3">
+                <ul className="flex gap-2 overflow-x-auto whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden px-2">
+                  {navItems.map((item) => {
+                    const Icon = item.icon;
+                    const isActive =
+                      pathname === item.href || pathname.startsWith(`${item.href}/`);
+                    return (
+                      <li key={item.href}>
+                        <Link
+                          href={item.href}
+                          className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium transition ${
+                            isActive
+                              ? "bg-gray-900 text-white border-gray-900 shadow-sm"
+                              : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                          }`}
+                        >
+                          <Icon className="h-4 w-4" aria-hidden="true" />
+                          <span>{item.label}</span>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </nav>
+            )}
           </div>
         </header>
       )}
