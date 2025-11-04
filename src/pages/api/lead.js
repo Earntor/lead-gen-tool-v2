@@ -320,9 +320,13 @@ const GENERIC_TYPES = new Set(['establishment','point_of_interest','premise','ge
 
 function isBetterCategory(currentEn, currentNl, nextEn, nextNl) {
   const curIsGeneric = !currentEn || GENERIC_TYPES.has(String(currentEn).toLowerCase());
-  const nextIsSpecific = !!nextEn && !GENERIC_TYPES.has(String(nextEn).toLowerCase());
-  if (nextIsSpecific && curIsGeneric) return true; // specifieker dan generic → beter
-  if (!currentNl && !!nextNl) return true;        // NL-vertaling ontbrak → beter
+  const nextIsGeneric = !nextEn || GENERIC_TYPES.has(String(nextEn).toLowerCase());
+  const nextIsSpecific = !!nextEn && !nextIsGeneric;
+
+  if (!currentEn && !!nextEn) return true;              // nog geen categorie → altijd invullen
+  if (nextIsSpecific && curIsGeneric) return true;      // specifieker dan generic → beter
+  if (!currentNl && !!nextNl) return true;              // NL-vertaling ontbrak → beter
+  if (curIsGeneric && !!nextEn && nextIsGeneric) return false; // geen verbetering
   return false;
 }
 

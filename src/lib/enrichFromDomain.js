@@ -16,10 +16,11 @@ function formatCategory(key) {
 function pickCategory(types = []) {
   if (!Array.isArray(types)) return null;
 
-  const specific = types.find(t => !GENERIC_TYPES.has(t));
+  const specific = types.find(t => typeof t === 'string' && !GENERIC_TYPES.has(t));
   if (specific) return formatCategory(specific);
 
-  return null; // géén generieke categorie invullen
+  const fallback = types.find(t => typeof t === 'string');
+  return fallback ? formatCategory(fallback) : null;
 }
 
 

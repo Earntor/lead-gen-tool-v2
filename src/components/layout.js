@@ -57,7 +57,7 @@ const navItems = NAV_ITEMS;
   const renderExportButton = () => (
     <button
       onClick={() => window.dispatchEvent(new Event("exportLeads"))}
-      className="flex items-center gap-1 border border-gray-300 rounded px-3 py-1.5 text-sm hover:bg-gray-50 transition"
+      className="flex items-center gap-1 border border-gray-300 bg-gray-100 text-gray-700 rounded px-3 py-1.5 text-sm hover:bg-gray-200 transition"
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
