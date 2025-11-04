@@ -387,7 +387,7 @@ useEffect(() => {
                 <ChevronDown className="h-4 w-4 opacity-70" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-[400px] p-1">
+            <DropdownMenuContent align="end" className="w-[640px] p-2">
               <DropdownMenuLabel>Periode</DropdownMenuLabel>
               <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.vandaag)}>Vandaag</DropdownMenuItem>
               <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.gisteren)}>Gisteren</DropdownMenuItem>
@@ -398,20 +398,26 @@ useEffect(() => {
               <DropdownMenuSeparator />
               {/* Aangepast…: houd menu open en toon inline paneel */}
   <DropdownMenuItem
- onSelect={(e) => {
+    onSelect={(e) => {
       e.preventDefault()
-      const r = last7DaysNL()
-      setTempRange({ from: r.from, to: r.to })
+      // Onthoud vorige keuze als die er is; anders fallback naar laatste 7 dagen
+      if (range?.from && range?.to) {
+        setTempRange({ from: range.from, to: range.to })
+      } else {
+        const r = last7DaysNL()
+        setTempRange({ from: r.from, to: r.to })
+      }
       setCustomOpen(true)
     }}  >
     Aangepast…
   </DropdownMenuItem>
 
   {/* Inline kalenderpaneel direct onder het item */}
-  {customOpen && (
-    <div className="mt-1 border-t">
-    <div className="p-2">
+   {customOpen && (
+   <div className="mt-1 border-t">
+     <div className="p-3">
         <Calendar
+   className="[--cell-size:2.6rem] sm:[--cell-size:2.8rem] min-w-[600px]"
           mode="range"
           numberOfMonths={2}
          selected={{ from: tempRange.from || undefined, to: tempRange.to || undefined }}
@@ -456,9 +462,12 @@ useEffect(() => {
               variant="ghost"
               size="sm"
               onClick={() => {
-   const r = last7DaysNL()
-   setTempRange({ from: r.from, to: r.to })
- }}
+   // Reset naar laatste 7 dagen én direct toepassen (grafieken updaten), menu blijft open
+    const r = last7DaysNL()
+    setTempRange({ from: r.from, to: r.to })
+    setRange({ from: r.from, to: r.to })
+    setPreset(PRESETS.aangepast)
+  }}
               disabled={!tempRange.from && !tempRange.to}
             >
               Reset
