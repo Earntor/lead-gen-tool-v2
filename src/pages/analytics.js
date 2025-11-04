@@ -244,7 +244,7 @@ function getRangeForPreset(preset) {
 // =============== UI Component ===============
 export default function Analytics() {
   const router = useRouter()
-  const [loading, setLoading] = useState(true)
+const [userId, setUserId] = useState(null)
 
   // filter state
 const [preset, setPreset] = useState(PRESETS.dezeWeek)
@@ -259,89 +259,70 @@ const [fetching, setFetching] = useState(false)
 
   // auth
   useEffect(() => {
-    let isActive = true
-    async function boot() {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        router.replace("/login?next=/analytics")
-        return
-      }
-      if (isActive) setLoading(false)
+  let isActive = true
+  async function boot() {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      router.replace("/login?next=/analytics")
+      return
     }
-    boot()
-    return () => { isActive = false }
-  }, [router])
+    if (isActive) setUserId(user.id)
+    if (isActive) setLoading(false)
+  }
+  boot()
+  return () => { isActive = false }
+}, [router])
+
 
   // leads ophalen wanneer preset of range wijzigt
   // leads ophalen wanneer preset of range wijzigt
 // leads ophalen wanneer preset of range wijzigt
+// ✔ Helper: zet RPC-rijen om naar velden die je bestaande group-functies snappen
+function adaptForGrouping(rows) {
+  // RPC retourneert: id, lead_dt (ISO), cat (tekst / null)
+  return (rows || []).map(r => ({
+    id: r.id,
+    created_at: r.lead_dt,  // voor groupLeadsAuto (tijd-as)
+    category: r.cat,        // ruwe categorie (EN/NL)
+    category_nl: r.cat      // we mappen NL=cat; jij gebruikt toch label in chart
+  }))
+}
+
 useEffect(() => {
-  if (loading) return
+  if (loading || !userId) return
 
   async function fetchLeads(from, to) {
     setFetching(true)
 
-    const fromIso = from.toISOString()
-    const toIso = to.toISOString()
+    const { data, error } = await supabase.rpc("leads_analytics_range", {
+      p_user: userId,
+      p_from: from.toISOString(),
+      p_to: to.toISOString(),
+    })
 
-    // 1) Simpele query op created_at (snel en index-vriendelijk)
-    const q1 = supabase
-      .from("leads")
-      .select("id, created_at, timestamp, category, category_nl")
-      .gte("created_at", fromIso)
-      .lte("created_at", toIso)
-
-    const { data: rowsByCreated, error: err1 } = await q1
-
-    // 2) Tweede simpele query: alleen rijen zónder created_at, maar wél binnen timestamp
-    //    (voorkomt dubbel tellen)
-    const q2 = supabase
-      .from("leads")
-      .select("id, created_at, timestamp, category, category_nl")
-      .is("created_at", null)
-      .gte("timestamp", fromIso)
-      .lte("timestamp", toIso)
-
-    const { data: rowsByTsOnly, error: err2 } = await q2
-
-    if (err1 || err2) {
-      console.error("Supabase error:", err1?.message || err2?.message, { err1, err2 })
+    if (error) {
+      console.error("RPC error (leads_analytics_range):", error)
       setChartData([])
       setCategoryData([])
       setFetching(false)
       return
     }
 
-    // 3) Merge + de-dup op id
-    const merged = mergeUniqueById(rowsByCreated || [], rowsByTsOnly || [])
+    const rows = adaptForGrouping(data)
 
-    console.log("[Analytics] fetched",
-      { created: rowsByCreated?.length || 0, tsOnly: rowsByTsOnly?.length || 0, total: merged.length },
-      "range:", fromIso, "→", toIso
-    )
+    // 1) Tijd-as (dag/maand automatisch)
+    setChartData(groupLeadsAuto(rows, from, to))
 
-    // 4) Normaliseer velden voor aggregatie
-    const safeRows = merged.map(r => ({
-      ...r,
-      __dt: r.created_at ?? r.timestamp,                                // datumveld voor grouping
-      __cat: (r.category_nl?.trim() || r.category?.trim() || "Onbekend") // NL > EN > fallback
-    }))
-
-    // 5) Aggregaties
-    setChartData(
-      groupLeadsAutoBy(safeRows, from, to, r => r.__dt)
-    )
+    // 2) Categorie-balk (top 12, aflopend). We pakken NL-label op basis van category_nl → category → Onbekend
     setCategoryData(
-      groupCategoriesBy(safeRows, 12, r => r.__cat)
+      groupCategoriesBy(rows, 12, r => (r.category_nl?.trim() || r.category?.trim() || "Onbekend"))
     )
 
     setFetching(false)
   }
 
   fetchLeads(range.from, range.to)
-}, [loading, preset, range.from, range.to])
-
-
+}, [loading, userId, preset, range.from, range.to])
 
   // preset wisselen
   function handlePresetChange(nextPreset) {
