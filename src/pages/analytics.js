@@ -88,6 +88,13 @@ function eachDayRange(from, to) {
   return out
 }
 
+function last7DaysNL() {
+  const today = new Date()
+  const from = startOfDayNL(addDays(today, -6)) // vandaag meegeteld = 7 dagen
+  const to = endOfDayNL(today)
+  return { from, to }
+}
+
 function eachMonthRange(from, to) {
   const out = []
   let cur = new Date(from.getFullYear(), from.getMonth(), 1)
@@ -380,7 +387,7 @@ useEffect(() => {
                 <ChevronDown className="h-4 w-4 opacity-70" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-[360px] p-0">
+            <DropdownMenuContent align="end" className="w-[400px] p-1">
               <DropdownMenuLabel>Periode</DropdownMenuLabel>
               <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.vandaag)}>Vandaag</DropdownMenuItem>
               <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.gisteren)}>Gisteren</DropdownMenuItem>
@@ -391,34 +398,52 @@ useEffect(() => {
               <DropdownMenuSeparator />
               {/* Aangepast…: houd menu open en toon inline paneel */}
   <DropdownMenuItem
-    onSelect={(e) => { e.preventDefault(); setCustomOpen(v => !v); setTempRange({ from: range.from ?? null, to: range.to ?? null }) }}
-  >
+ onSelect={(e) => {
+      e.preventDefault()
+      const r = last7DaysNL()
+      setTempRange({ from: r.from, to: r.to })
+      setCustomOpen(true)
+    }}  >
     Aangepast…
   </DropdownMenuItem>
 
   {/* Inline kalenderpaneel direct onder het item */}
   {customOpen && (
     <div className="mt-1 border-t">
-      <div className="p-3">
+    <div className="p-2">
         <Calendar
           mode="range"
           numberOfMonths={2}
-          selected={{ from: tempRange.from || undefined, to: tempRange.to || undefined }}
-          onSelect={(sel) => {
-            const from = sel?.from ?? null
-            const to = sel?.to ?? null
-            setTempRange({ from, to })
-            if (from && to) {
-              const f = startOfDayNL(from)
-              const t = endOfDayNL(to)
-              setRange({ from: f, to: t })
-              setPreset(PRESETS.aangepast)
-              setMenuOpen(false)   // hele menu sluiten na complete range
-              setCustomOpen(false) // paneel dicht
+         selected={{ from: tempRange.from || undefined, to: tempRange.to || undefined }}
+          /* We sturen zelf de logica: eerste klik = vanaf; tweede klik = t/m (>= vanaf);
+             klik je eerder dan vanaf, dan wordt dat de nieuwe vanaf en t/m wordt leeggemaakt. */
+          onDayClick={(day) => {
+            const clicked = startOfDayNL(day)
+            const currentFrom = tempRange.from ? startOfDayNL(tempRange.from) : null
+            const currentTo = tempRange.to ? endOfDayNL(tempRange.to) : null
+
+            // 1) Nog geen 'vanaf' óf er staat al een compleet bereik -> start nieuw bereik
+            if (!currentFrom || (currentFrom && currentTo)) {
+              setTempRange({ from: clicked, to: null })
+              return
             }
+
+            // 2) Tweede klik: als je eerder dan 'vanaf' klikt -> nieuwe vanaf, t/m leeg
+            if (clicked < currentFrom) {
+              setTempRange({ from: clicked, to: null })
+              return
+            }
+
+            // 3) Tweede klik en >= vanaf -> zet t/m en pas direct toe (charts updaten)
+            const newFrom = currentFrom
+            const newTo = endOfDayNL(clicked)
+            setTempRange({ from: newFrom, to: newTo })
+            setRange({ from: newFrom, to: newTo })
+            setPreset(PRESETS.aangepast)
+            // Belangrijk: NIET sluiten -> menu blijft open tot je buiten klikt
           }}
         />
-        <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+      <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
           <span className="pr-2">
             {tempRange.from && tempRange.to
               ? `${tempRange.from.toLocaleDateString("nl-NL")} – ${tempRange.to.toLocaleDateString("nl-NL")}`
@@ -430,7 +455,10 @@ useEffect(() => {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => { setTempRange({ from: null, to: null }) }}
+              onClick={() => {
+   const r = last7DaysNL()
+   setTempRange({ from: r.from, to: r.to })
+ }}
               disabled={!tempRange.from && !tempRange.to}
             >
               Reset
