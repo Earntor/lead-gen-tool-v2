@@ -244,6 +244,7 @@ function getRangeForPreset(preset) {
 // =============== UI Component ===============
 export default function Analytics() {
   const router = useRouter()
+ const [loading, setLoading] = useState(true)
 const [userId, setUserId] = useState(null)
 
   // filter state
