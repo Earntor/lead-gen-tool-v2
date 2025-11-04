@@ -16,6 +16,18 @@ function toDate(value) {
   return Number.isNaN(instance.getTime()) ? null : instance
 }
 
+function startOfDayLocal(value) {
+  const date = toDate(value)
+  if (!date) return null
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0)
+}
+
+function endOfDayLocal(value) {
+  const date = toDate(value)
+  if (!date) return null
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999)
+}
+
 function normalizeRange(range) {
   if (!range) return { start: null, end: null }
 
@@ -56,12 +68,14 @@ export function DateRangePicker({
 }) {
   const [open, setOpen] = React.useState(false)
   const normalized = React.useMemo(() => normalizeRange(value), [value])
+  const [tempRange, setTempRange] = React.useState(normalized)
   const [month, setMonth] = React.useState(normalized.start || normalized.end || new Date())
   const hasSelection = Boolean(normalized.start || normalized.end)
 
   const {
     numberOfMonths = 2,
     locale: calendarLocale,
+    onDayClick: externalOnDayClick,
     ...restCalendarProps
   } = calendarProps ?? {}
 
@@ -72,6 +86,26 @@ export function DateRangePicker({
       setMonth(normalized.end)
     }
   }, [normalized.start?.getTime?.(), normalized.end?.getTime?.()])
+
+  React.useEffect(() => {
+    if (!open) {
+      setTempRange(normalized)
+    }
+  }, [open, normalized.start?.getTime?.(), normalized.end?.getTime?.()])
+
+  const handleOpenChange = React.useCallback(
+    (nextOpen) => {
+      setOpen(nextOpen)
+      if (nextOpen) {
+        setTempRange(normalized)
+        const focusDate = normalized.start || normalized.end
+        if (focusDate) {
+          setMonth(focusDate)
+        }
+      }
+    },
+    [normalized.end?.getTime?.(), normalized.start?.getTime?.()]
+  )
 
   const formatDate = React.useCallback(
     (date) => {
@@ -101,21 +135,44 @@ export function DateRangePicker({
     return ""
   }, [formatDate, normalized.end?.getTime?.(), normalized.start?.getTime?.()])
 
-  const handleSelect = React.useCallback(
-    (range) => {
-      if (!onChange) return
-      if (!range) {
-        onChange({ start: null, end: null })
+  const handleDayClick = React.useCallback(
+    (day, modifiers, event) => {
+      const clicked = startOfDayLocal(day)
+      if (!clicked) return
+
+      const currentStart = tempRange.start ? startOfDayLocal(tempRange.start) : null
+      const currentEnd = tempRange.end ? endOfDayLocal(tempRange.end) : null
+
+      // Start nieuw bereik als er nog niets is of als er al een compleet bereik stond
+      if (!currentStart || (currentStart && currentEnd)) {
+        setTempRange({ start: clicked, end: null })
+        setMonth(clicked)
+        externalOnDayClick?.(day, modifiers, event)
         return
       }
 
-      const start = range.from ? toDate(range.from) : null
-      const end = range.to ? toDate(range.to) : null
+      // Tweede klik eerder dan start -> vervang start
+      if (clicked < currentStart) {
+        setTempRange({ start: clicked, end: null })
+        setMonth(clicked)
+        externalOnDayClick?.(day, modifiers, event)
+        return
+      }
 
-      onChange({ start, end })
+      const newRange = { start: currentStart, end: endOfDayLocal(day) }
+      setTempRange(newRange)
+      onChange?.(newRange)
+      setMonth(clicked)
+      externalOnDayClick?.(day, modifiers, event)
     },
-    [onChange]
+    [externalOnDayClick, onChange, tempRange.end, tempRange.start]
   )
+
+  const handleReset = React.useCallback(() => {
+    const emptyRange = { start: null, end: null }
+    setTempRange(emptyRange)
+    onChange?.(emptyRange)
+  }, [onChange])
 
   return (
     <div className={cn("flex flex-col gap-2", className)}>
@@ -124,7 +181,7 @@ export function DateRangePicker({
           {label}
         </Label>
       ) : null}
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open} onOpenChange={handleOpenChange}>
         <PopoverTrigger asChild>
           <Button
             id={id}
@@ -152,19 +209,12 @@ export function DateRangePicker({
             mode="range"
             numberOfMonths={numberOfMonths}
             month={month}
-            selected={{ from: normalized.start ?? undefined, to: normalized.end ?? undefined }}
-            onMonthChange={setMonth}
-            onSelect={(range) => {
-              handleSelect(range)
-              if (range?.to) {
-                setMonth(range.to)
-              } else if (range?.from) {
-                setMonth(range.from)
-              }
-              if (range?.from && range?.to) {
-                setOpen(false)
-              }
+            selected={{
+              from: tempRange.start ?? undefined,
+              to: tempRange.end ?? undefined,
             }}
+            onMonthChange={setMonth}
+            onDayClick={handleDayClick}
             initialFocus
             locale={calendarLocale}
             {...restCalendarProps}
@@ -172,23 +222,29 @@ export function DateRangePicker({
           {showClearButton ? (
             <div className="flex items-center justify-between border-t px-3 py-2 text-xs text-muted-foreground">
               <span>
-                {normalized.start && normalized.end
-                  ? `${formatDate(normalized.start)} – ${formatDate(normalized.end)}`
-                  : normalized.start
-                    ? `${formatDate(normalized.start)} – …`
-                    : "Geen datum geselecteerd"}
+                {tempRange.start && tempRange.end
+                  ? `${formatDate(tempRange.start)} – ${formatDate(tempRange.end)}`
+                  : tempRange.start
+                    ? `${formatDate(tempRange.start)} – …`
+                    : "Kies een begin- en einddatum"}
               </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  handleSelect(null)
-                  setOpen(false)
-                }}
-                disabled={!hasSelection}
-              >
-                Reset
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleReset}
+                  disabled={!tempRange.start && !tempRange.end}
+                >
+                  Reset
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setOpen(false)}
+                >
+                  Sluiten
+                </Button>
+              </div>
             </div>
           ) : null}
         </PopoverContent>
