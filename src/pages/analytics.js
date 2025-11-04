@@ -13,9 +13,6 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuLabel,
-  DropdownMenuSub,
-  DropdownMenuSubTrigger,
-  DropdownMenuSubContent,
 } from "@/components/ui/dropdown-menu"
 import { Calendar } from "@/components/ui/calendar"
 import { Calendar as CalendarIcon, ChevronDown } from "lucide-react"
@@ -248,8 +245,8 @@ export default function Analytics() {
   const router = useRouter()
  const [loading, setLoading] = useState(true)
 const [userId, setUserId] = useState(null)
-const [menuOpen, setMenuOpen] = useState(false)
-
+const [customOpen, setCustomOpen] = useState(false) // toont inline kalenderpaneel
+const [tempRange, setTempRange] = useState({ from: null, to: null }) // tijdelijke selectie
   // filter state
 const [preset, setPreset] = useState(PRESETS.dezeWeek)
   const initialRange = getRangeForPreset(PRESETS.dezeWeek)
@@ -373,7 +370,7 @@ useEffect(() => {
 
         {/* Preset dropdown + Custom kalender */}
         <div className="flex items-center gap-2">
-         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+         <DropdownMenu open={menuOpen} onOpenChange={(o) => { setMenuOpen(o); if (!o) setCustomOpen(false) }}>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" className="inline-flex items-center gap-2">
                 <CalendarIcon className="h-4 w-4" />
@@ -390,38 +387,64 @@ useEffect(() => {
               <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.vorigeMaand)}>Vorige maand</DropdownMenuItem>
               <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.ditJaar)}>Dit jaar</DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuSub>
-      <DropdownMenuSubTrigger>Aangepast…</DropdownMenuSubTrigger>
-      <DropdownMenuSubContent className="p-0">
-        <div className="p-3">
-          <Calendar
-            mode="range"
-            numberOfMonths={2}
-            selected={{ from: range.from, to: range.to }}
-            onSelect={(sel) => {
-              const { from, to } = sel || {}
-              if (from && to) {
-                const f = startOfDayNL(from)
-                const t = endOfDayNL(to)
-                setRange({ from: f, to: t })
-                setPreset(PRESETS.aangepast)
-                setMenuOpen(false) // sluit hele menu/submenu
-              }
-            }}
-          />
-          <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-            <span>
-              {range.from && range.to
-                ? `${range.from.toLocaleDateString("nl-NL")} – ${range.to.toLocaleDateString("nl-NL")}`
+              {/* Aangepast…: houd menu open en toon inline paneel */}
+  <DropdownMenuItem
+    onSelect={(e) => { e.preventDefault(); setCustomOpen(v => !v); setTempRange({ from: range.from ?? null, to: range.to ?? null }) }}
+  >
+    Aangepast…
+  </DropdownMenuItem>
+
+  {/* Inline kalenderpaneel direct onder het item */}
+  {customOpen && (
+    <div className="mt-1 border-t">
+      <div className="p-3">
+        <Calendar
+          mode="range"
+          numberOfMonths={2}
+          selected={{ from: tempRange.from || undefined, to: tempRange.to || undefined }}
+          onSelect={(sel) => {
+            const from = sel?.from ?? null
+            const to = sel?.to ?? null
+            setTempRange({ from, to })
+            if (from && to) {
+              const f = startOfDayNL(from)
+              const t = endOfDayNL(to)
+              setRange({ from: f, to: t })
+              setPreset(PRESETS.aangepast)
+              setMenuOpen(false)   // hele menu sluiten na complete range
+              setCustomOpen(false) // paneel dicht
+            }
+          }}
+        />
+        <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+          <span className="pr-2">
+            {tempRange.from && tempRange.to
+              ? `${tempRange.from.toLocaleDateString("nl-NL")} – ${tempRange.to.toLocaleDateString("nl-NL")}`
+              : tempRange.from
+                ? `${tempRange.from.toLocaleDateString("nl-NL")} – …`
                 : "Kies een begin- en einddatum"}
-            </span>
-            <Button variant="ghost" size="sm" onClick={() => setMenuOpen(false)}>
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => { setTempRange({ from: null, to: null }) }}
+              disabled={!tempRange.from && !tempRange.to}
+            >
+              Reset
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => { setCustomOpen(false) }}
+            >
               Sluiten
             </Button>
           </div>
         </div>
-      </DropdownMenuSubContent>
-    </DropdownMenuSub>
+      </div>
+    </div>
+  )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
