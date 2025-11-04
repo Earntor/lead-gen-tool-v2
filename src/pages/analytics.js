@@ -1,7 +1,7 @@
 ﻿// src/pages/analytics.js
 "use client"
 
-import { useEffect, useMemo, useState, useRef } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/router"
 import { supabase } from "../lib/supabaseClient"
 
@@ -245,6 +245,7 @@ export default function Analytics() {
   const router = useRouter()
  const [loading, setLoading] = useState(true)
 const [userId, setUserId] = useState(null)
+const [menuOpen, setMenuOpen] = useState(false)
 const [customOpen, setCustomOpen] = useState(false) // toont inline kalenderpaneel
 const [tempRange, setTempRange] = useState({ from: null, to: null }) // tijdelijke selectie
   // filter state
@@ -331,6 +332,7 @@ useEffect(() => {
       const r = getRangeForPreset(nextPreset)
       setRange(r)
       setMenuOpen(false)
+      setCustomOpen(false)
     }
   }
 
@@ -378,7 +380,7 @@ useEffect(() => {
                 <ChevronDown className="h-4 w-4 opacity-70" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuContent align="end" className="w-[360px] p-0">
               <DropdownMenuLabel>Periode</DropdownMenuLabel>
               <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.vandaag)}>Vandaag</DropdownMenuItem>
               <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.gisteren)}>Gisteren</DropdownMenuItem>
