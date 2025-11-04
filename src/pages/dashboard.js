@@ -2885,7 +2885,7 @@ const handleDeleteGlobalLabel = async (labelId) => {
     // drawer sluiten op mobiel na export
     setFiltersOpen(false);
   }}
-  className="md:hidden w-full mt-2 bg-black text-white px-3 py-2 rounded-lg text-sm hover:bg-gray-800 transition"
+  className="md:hidden w-full mt-2 bg-gray-100 text-gray-700 border border-gray-300 px-3 py-2 rounded-lg text-sm hover:bg-gray-200 transition"
 >
   Export
 </button>
