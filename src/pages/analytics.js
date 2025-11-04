@@ -13,8 +13,10 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuLabel,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
 } from "@/components/ui/dropdown-menu"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
 import { Calendar as CalendarIcon, ChevronDown } from "lucide-react"
 
@@ -246,12 +248,12 @@ export default function Analytics() {
   const router = useRouter()
  const [loading, setLoading] = useState(true)
 const [userId, setUserId] = useState(null)
+const [menuOpen, setMenuOpen] = useState(false)
 
   // filter state
 const [preset, setPreset] = useState(PRESETS.dezeWeek)
   const initialRange = getRangeForPreset(PRESETS.dezeWeek)
   const [range, setRange] = useState({ from: initialRange.from, to: initialRange.to })
-  const [openCustom, setOpenCustom] = useState(false) // popover voor kalender
 
   // data
 const [chartData, setChartData] = useState([])
@@ -328,24 +330,10 @@ useEffect(() => {
   // preset wisselen
   function handlePresetChange(nextPreset) {
     setPreset(nextPreset)
-    if (nextPreset === PRESETS.aangepast) {
-      setOpenCustom(true) // toon kalender
-    } else {
+    if (nextPreset !== PRESETS.aangepast) {
       const r = getRangeForPreset(nextPreset)
       setRange(r)
-      setOpenCustom(false)
-    }
-  }
-
-  // kalenderselectie: zodra 2 datums gekozen -> toepassen
-  function handleCalendarSelect(sel) {
-    const { from, to } = sel || {}
-    if (from && to) {
-      const f = startOfDayNL(from)
-      const t = endOfDayNL(to)
-      setRange({ from: f, to: t })
-      setPreset(PRESETS.aangepast)
-      setOpenCustom(false)
+      setMenuOpen(false)
     }
   }
 
@@ -385,7 +373,7 @@ useEffect(() => {
 
         {/* Preset dropdown + Custom kalender */}
         <div className="flex items-center gap-2">
-          <DropdownMenu>
+         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" className="inline-flex items-center gap-2">
                 <CalendarIcon className="h-4 w-4" />
@@ -402,32 +390,40 @@ useEffect(() => {
               <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.vorigeMaand)}>Vorige maand</DropdownMenuItem>
               <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.ditJaar)}>Dit jaar</DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => handlePresetChange(PRESETS.aangepast)}>
-                Aangepast…
-              </DropdownMenuItem>
+              <DropdownMenuSub>
+      <DropdownMenuSubTrigger>Aangepast…</DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="p-0">
+        <div className="p-3">
+          <Calendar
+            mode="range"
+            numberOfMonths={2}
+            selected={{ from: range.from, to: range.to }}
+            onSelect={(sel) => {
+              const { from, to } = sel || {}
+              if (from && to) {
+                const f = startOfDayNL(from)
+                const t = endOfDayNL(to)
+                setRange({ from: f, to: t })
+                setPreset(PRESETS.aangepast)
+                setMenuOpen(false) // sluit hele menu/submenu
+              }
+            }}
+          />
+          <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+            <span>
+              {range.from && range.to
+                ? `${range.from.toLocaleDateString("nl-NL")} – ${range.to.toLocaleDateString("nl-NL")}`
+                : "Kies een begin- en einddatum"}
+            </span>
+            <Button variant="ghost" size="sm" onClick={() => setMenuOpen(false)}>
+              Sluiten
+            </Button>
+          </div>
+        </div>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
             </DropdownMenuContent>
           </DropdownMenu>
-
-          {/* Losse popover voor het "Aangepast" bereik */}
-          <Popover open={openCustom} onOpenChange={setOpenCustom}>
-            <PopoverTrigger asChild>
-              {/* onzichtbare anchor; we sturen openen via state */}
-              <span />
-            </PopoverTrigger>
-            <PopoverContent align="end" className="p-0">
-              <div className="p-3">
-                <Calendar
-                  mode="range"
-                  numberOfMonths={2}
-                  selected={{ from: range.from, to: range.to }}
-                  onSelect={handleCalendarSelect}
-                />
-                <div className="mt-3 flex justify-end gap-2">
-                  <Button variant="ghost" onClick={() => setOpenCustom(false)}>Sluiten</Button>
-                </div>
-              </div>
-            </PopoverContent>
-          </Popover>
         </div>
       </header>
 
@@ -435,7 +431,7 @@ useEffect(() => {
       <div className="flex flex-col gap-6">
   {/* 1) Boven: volle breedte */}
   <BarChartComponent
-    title="Leads (auto-groepeerd per dag/maand)"
+    title="Leads"
     data={chartData}
   />
 
